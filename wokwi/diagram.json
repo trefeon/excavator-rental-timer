@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "author": "Kurnia - Excavator Timer Rental",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": -100,
+      "left": -150,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-tm1637-4digit",
+      "id": "tm1",
+      "top": -30,
+      "left": 120,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buz1",
+      "top": 90,
+      "left": -50,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 90,
+      "left": 60,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn2",
+      "top": 90,
+      "left": 120,
+      "attrs": { "color": "green" }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "pot1",
+      "top": 90,
+      "left": 200,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    ["esp:3V3", "tm1:VCC", "red", []],
+    ["esp:GND.1", "tm1:GND", "black", []],
+    ["esp:GND.1", "buz1:GND", "black", []],
+    ["esp:GND.1", "btn1:GND", "black", []],
+    ["esp:GND.1", "btn2:GND", "black", []],
+    ["esp:D18", "tm1:CLK", "yellow", []],
+    ["esp:D19", "tm1:DIO", "green", []],
+    ["esp:D13", "buz1:VCC", "blue", []],
+    ["esp:D14", "btn1:VCC", "orange", []],
+    ["esp:D27", "btn2:VCC", "purple", []],
+    ["esp:3V3", "pot1:VCC", "red", []],
+    ["esp:GND.1", "pot1:GND", "black", []],
+    ["pot1:SIG", "esp:D34", "gray", []]
+  ]
+}

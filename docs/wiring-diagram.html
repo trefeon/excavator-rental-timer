@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wiring Diagram - Excavator Timer ESP32 + TM1637</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 30px; }
+  .container { max-width: 900px; width: 100%; }
+  h1 { font-size: 18px; color: #22d3ee; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
+  h1 span { width: 8px; height: 8px; background: #22d3ee; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .subtitle { font-size: 11px; color: #64748b; margin-bottom: 20px; }
+  .diagram-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 25px; margin-bottom: 20px; overflow-x: auto; }
+  svg { width: 100%; height: auto; }
+  .pin-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 10px; }
+  .pin-table th { background: #1e293b; color: #94a3b8; padding: 8px 10px; text-align: left; font-weight: normal; }
+  .pin-table td { padding: 6px 10px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+  .pin-table tr:hover td { background: #0f172a; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: bold; }
+  .badge-red { background: rgba(239,68,68,0.3); color: #fca5a5; }
+  .badge-green { background: rgba(34,197,94,0.3); color: #86efac; }
+  .badge-yellow { background: rgba(234,179,8,0.3); color: #fde047; }
+  .badge-blue { background: rgba(59,130,246,0.3); color: #93c5fd; }
+  .badge-purple { background: rgba(168,85,247,0.3); color: #c4b5fd; }
+  .badge-cyan { background: rgba(6,182,212,0.3); color: #67e8f9; }
+  .footer { font-size: 9px; color: #475569; text-align: center; margin-top: 15px; }
+  .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-top: 20px; }
+  .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; }
+  .card h3 { font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; color: #22d3ee; }
+  .card ul { list-style: none; font-size: 10px; line-height: 1.8; color: #94a3b8; }
+  .card ul li::before { content: "• "; color: #22d3ee; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1><span></span> Wiring Diagram — ESP32 + TM1637 4-Digit + Buzzer</h1>
+  <div class="subtitle">Excavator Timer Rental · 1 Unit · Komponen: ESP32 DevKit V1, TM1637 4-Digit 7-Segment, Buzzer Piezo, 2x Push Button</div>
+
+  <div class="diagram-card">
+    <svg viewBox="0 0 880 600" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+      </defs>
+      <rect width="880" height="600" fill="url(#grid)"/>
+
+      <!-- ===== ESP32 DEVKIT V1 ===== -->
+      <rect x="280" y="30" width="320" height="530" rx="10" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+      <rect x="295" y="45" width="290" height="500" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+      
+      <!-- ESP32 Chip -->
+      <rect x="340" y="55" width="120" height="50" rx="6" fill="rgba(6,182,212,0.2)" stroke="#22d3ee" stroke-width="1"/>
+      <text x="400" y="75" fill="#22d3ee" font-size="10" text-anchor="middle" font-weight="bold">ESP32 WROOM-32</text>
+      <text x="400" y="90" fill="#67e8f9" font-size="7" text-anchor="middle">BLE 4.2 + WiFi</text>
+
+      <!-- Pin header kiri -->
+      <line x1="295" y1="130" x2="295" y2="530" stroke="#475569" stroke-width="1"/>
+
+      <!-- Pin labels kiri -->
+      <text x="280" y="150" fill="#94a3b8" font-size="7" text-anchor="end">EN</text>
+      <text x="280" y="170" fill="#94a3b8" font-size="7" text-anchor="end">VP (36)</text>
+      <text x="280" y="190" fill="#94a3b8" font-size="7" text-anchor="end">VN (39)</text>
+      <text x="280" y="210" fill="#94a3b8" font-size="7" text-anchor="end">D34</text>
+      <text x="280" y="230" fill="#94a3b8" font-size="7" text-anchor="end">D35</text>
+      <text x="280" y="250" fill="#94a3b8" font-size="7" text-anchor="end">D32</text>
+      <text x="280" y="270" fill="#94a3b8" font-size="7" text-anchor="end">D33</text>
+      <text x="280" y="290" fill="#94a3b8" font-size="7" text-anchor="end">D25</text>
+      <text x="280" y="310" fill="#94a3b8" font-size="7" text-anchor="end">D26</text>
+      <text x="280" y="330" fill="#94a3b8" font-size="7" text-anchor="end">D27</text>
+      <text x="280" y="350" fill="#94a3b8" font-size="7" text-anchor="end">D14</text>
+      <text x="280" y="370" fill="#94a3b8" font-size="7" text-anchor="end">D12</text>
+      <text x="280" y="390" fill="#94a3b8" font-size="7" text-anchor="end">GND</text>
+      <text x="280" y="410" fill="#94a3b8" font-size="7" text-anchor="end">D13</text>
+      <text x="280" y="430" fill="#94a3b8" font-size="7" text-anchor="end">D9</text>
+      <text x="280" y="450" fill="#94a3b8" font-size="7" text-anchor="end">D10</text>
+      <text x="280" y="470" fill="#94a3b8" font-size="7" text-anchor="end">D11</text>
+      <text x="280" y="490" fill="#94a3b8" font-size="7" text-anchor="end">5V</text>
+      <text x="280" y="510" fill="#94a3b8" font-size="7" text-anchor="end">3.3V</text>
+      <text x="280" y="530" fill="#94a3b8" font-size="7" text-anchor="end">GND</text>
+
+      <!-- Pin labels kanan -->
+      <text x="605" y="150" fill="#94a3b8" font-size="7">D23</text>
+      <text x="605" y="170" fill="#94a3b8" font-size="7">D22</text>
+      <text x="605" y="190" fill="#94a3b8" font-size="7">TX0</text>
+      <text x="605" y="210" fill="#94a3b8" font-size="7">RX0</text>
+      <text x="605" y="230" fill="#94a3b8" font-size="7">D21</text>
+      <text x="605" y="250" fill="#94a3b8" font-size="7">GND</text>
+      <text x="605" y="270" fill="#94a3b8" font-size="7">D19</text>
+      <text x="605" y="290" fill="#94a3b8" font-size="7">D18</text>
+      <text x="605" y="310" fill="#94a3b8" font-size="7">D5</text>
+      <text x="605" y="330" fill="#94a3b8" font-size="7">D17</text>
+      <text x="605" y="350" fill="#94a3b8" font-size="7">D16</text>
+      <text x="605" y="370" fill="#94a3b8" font-size="7">D4</text>
+      <text x="605" y="390" fill="#94a3b8" font-size="7">D0</text>
+      <text x="605" y="410" fill="#94a3b8" font-size="7">D2</text>
+      <text x="605" y="430" fill="#94a3b8" font-size="7">D15</text>
+      <text x="605" y="450" fill="#94a3b8" font-size="7">D8</text>
+      <text x="605" y="470" fill="#94a3b8" font-size="7">D7</text>
+      <text x="605" y="490" fill="#94a3b8" font-size="7">D6</text>
+      <text x="605" y="520" fill="#94a3b8" font-size="7">3.3V</text>
+      <text x="605" y="540" fill="#94a3b8" font-size="7">GND</text>
+
+      <!-- ===== TM1637 4-DIGIT DISPLAY ===== -->
+      <rect x="20" y="55" width="240" height="90" rx="8" fill="rgba(136,19,55,0.2)" stroke="#fb7185" stroke-width="1.5"/>
+      
+      <!-- 4-digit segments -->
+      <rect x="40" y="70" width="30" height="50" rx="3" fill="#1e293b" stroke="#fb7185" stroke-width="0.5"/>
+      <rect x="80" y="70" width="30" height="50" rx="3" fill="#1e293b" stroke="#fb7185" stroke-width="0.5"/>
+      <!-- Colon -->
+      <circle cx="117" cy="85" r="3" fill="#fb7185"/>
+      <circle cx="117" cy="105" r="3" fill="#fb7185"/>
+      <rect x="125" y="70" width="30" height="50" rx="3" fill="#1e293b" stroke="#fb7185" stroke-width="0.5"/>
+      <rect x="165" y="70" width="30" height="50" rx="3" fill="#1e293b" stroke="#fb7185" stroke-width="0.5"/>
+
+      <!-- Segment content -->
+      <text x="55" y="102" fill="#fb7185" font-size="28" font-weight="bold" text-anchor="middle">0</text>
+      <text x="95" y="102" fill="#fb7185" font-size="28" font-weight="bold" text-anchor="middle">5</text>
+      <text x="140" y="102" fill="#fb7185" font-size="28" font-weight="bold" text-anchor="middle">:</text>
+      <text x="180" y="102" fill="#fb7185" font-size="28" font-weight="bold" text-anchor="middle">0</text>
+      <text x="220" y="102" fill="#fb7185" font-size="28" font-weight="bold" text-anchor="middle">0</text>
+
+      <text x="140" y="135" fill="#fda4af" font-size="8" text-anchor="middle">TM1637 4-Digit 7-Segment</text>
+
+      <!-- TM1637 Pin header -->
+      <rect x="60" y="148" width="160" height="14" rx="3" fill="rgba(136,19,55,0.2)" stroke="#fb7185" stroke-width="0.5"/>
+      <text x="85" y="158" fill="#fb7185" font-size="7">GND</text>
+      <text x="125" y="158" fill="#fb7185" font-size="7">VCC</text>
+      <text x="170" y="158" fill="#fb7185" font-size="7">DIO</text>
+      <text x="208" y="158" fill="#fb7185" font-size="7">CLK</text>
+
+      <!-- Wire: VCC -> 3.3V -->
+      <path d="M 125 164 L 125 200 L 400 200 L 400 505" stroke="#ef4444" stroke-width="2" fill="none"/>
+      <text x="410" y="200" fill="#ef4444" font-size="7" font-weight="bold">VCC → 3.3V</text>
+
+      <!-- Wire: GND -> GND -->
+      <path d="M 85 164 L 85 220 L 300 220 L 300 525" stroke="#1e293b" stroke-width="3" fill="none"/>
+      <text x="300" y="220" fill="#94a3b8" font-size="7" font-weight="bold">GND</text>
+
+      <!-- Wire: DIO -> GPIO19 -->
+      <path d="M 170 164 L 170 240 L 620 240 L 620 270" stroke="#22c55e" stroke-width="2" fill="none"/>
+      <text x="625" y="260" fill="#22c55e" font-size="7" font-weight="bold">DIO → GPIO19</text>
+
+      <!-- Wire: CLK -> GPIO18 -->
+      <path d="M 208 164 L 208 260 L 640 260 L 640 290" stroke="#eab308" stroke-width="2" fill="none"/>
+      <text x="645" y="280" fill="#eab308" font-size="7" font-weight="bold">CLK → GPIO18</text>
+
+      <!-- ===== BUZZER ===== -->
+      <rect x="20" y="260" width="240" height="60" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/>
+      <text x="140" y="285" fill="#fb7185" font-size="11" text-anchor="middle" font-weight="bold">🔔 BUZZER PIEZO</text>
+      <text x="140" y="305" fill="#fda4af" font-size="7" text-anchor="middle">Active Buzzer · 5V</text>
+      <rect x="50" y="325" width="180" height="14" rx="3" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="0.5"/>
+      <text x="100" y="335" fill="#fb7185" font-size="7">GND (−)</text>
+      <text x="170" y="335" fill="#fb7185" font-size="7">VCC (+)</text>
+
+      <!-- Buzzer GND -> GND -->
+      <path d="M 100 341 L 100 380 L 305 380 L 305 525" stroke="#1e293b" stroke-width="3" fill="none"/>
+
+      <!-- Buzzer VCC (+) -> GPIO13 -->
+      <path d="M 170 341 L 170 400 L 310 400 L 310 405" stroke="#3b82f6" stroke-width="2" fill="none"/>
+      <text x="315" y="395" fill="#3b82f6" font-size="7" font-weight="bold">GPIO13 → Buzzer (+)</text>
+
+      <!-- ===== BUTTON 1 (RESET) ===== -->
+      <rect x="20" y="420" width="110" height="55" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="75" y="442" fill="#fbbf24" font-size="9" text-anchor="middle" font-weight="bold">RESET</text>
+      <text x="75" y="460" fill="#fde68a" font-size="7" text-anchor="middle">Tombol Reset</text>
+      <rect x="30" y="478" width="90" height="12" rx="3" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="0.5"/>
+      <text x="60" y="487" fill="#fbbf24" font-size="7">GND</text>
+      <text x="105" y="487" fill="#fbbf24" font-size="7">GPIO14</text>
+
+      <!-- B1 GND -> GND -->
+      <path d="M 60 492 L 60 510 L 305 510 L 305 525" stroke="#1e293b" stroke-width="3" fill="none"/>
+      <!-- B1 GPIO14 -> D14 -->
+      <path d="M 105 492 L 105 520 L 290 520 L 290 350" stroke="#fbbf24" stroke-width="2" fill="none"/>
+
+      <!-- ===== BUTTON 2 (TEST BUZZER) ===== -->
+      <rect x="150" y="420" width="110" height="55" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="205" y="442" fill="#fbbf24" font-size="9" text-anchor="middle" font-weight="bold">TEST</text>
+      <text x="205" y="460" fill="#fde68a" font-size="7" text-anchor="middle">Test Buzzer</text>
+      <rect x="160" y="478" width="90" height="12" rx="3" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="0.5"/>
+      <text x="190" y="487" fill="#fbbf24" font-size="7">GND</text>
+      <text x="235" y="487" fill="#fbbf24" font-size="7">GPIO27</text>
+
+      <!-- B2 GND -> GND -->
+      <path d="M 190 492 L 190 515 L 300 515 L 300 525" stroke="#1e293b" stroke-width="3" fill="none"/>
+      <!-- B2 GPIO27 -> D27 -->
+      <path d="M 235 492 L 235 530 L 290 530 L 290 330" stroke="#fbbf24" stroke-width="2" fill="none"/>
+
+      <!-- ===== BLE ICON ===== -->
+      <text x="650" y="370" fill="#38bdf8" font-size="40">ℬ</text>
+      <text x="690" y="375" fill="#38bdf8" font-size="11" font-weight="bold">BLE 4.2</text>
+      <text x="690" y="390" fill="#93c5fd" font-size="8">GATT Server</text>
+      <text x="690" y="405" fill="#93c5fd" font-size="8">On-demand connection</text>
+
+      <!-- ===== LEGEND ===== -->
+      <rect x="640" y="420" width="200" height="150" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="740" y="440" fill="#94a3b8" font-size="10" text-anchor="middle" font-weight="bold">Legend</text>
+      <line x1="650" y1="450" x2="830" y2="450" stroke="#1e293b" stroke-width="0.5"/>
+      <line x1="655" y1="468" x2="680" y2="468" stroke="#ef4444" stroke-width="2"/>
+      <text x="685" y="471" fill="#94a3b8" font-size="8">VCC / Power (+)</text>
+      <line x1="655" y1="488" x2="680" y2="488" stroke="#1e293b" stroke-width="3"/>
+      <text x="685" y="491" fill="#94a3b8" font-size="8">GND (−)</text>
+      <line x1="655" y1="508" x2="680" y2="508" stroke="#22c55e" stroke-width="2"/>
+      <text x="685" y="511" fill="#94a3b8" font-size="8">DIO (Data)</text>
+      <line x1="655" y1="528" x2="680" y2="528" stroke="#eab308" stroke-width="2"/>
+      <text x="685" y="531" fill="#94a3b8" font-size="8">CLK (Clock)</text>
+      <line x1="655" y1="548" x2="680" y2="548" stroke="#3b82f6" stroke-width="2"/>
+      <text x="685" y="551" fill="#94a3b8" font-size="8">GPIO Signal</text>
+    </svg>
+  </div>
+
+  <!-- Wiring table -->
+  <div class="diagram-card">
+    <h2 style="color:#22d3ee; font-size:14px; margin-bottom:10px;">📋 Daftar Koneksi Lengkap</h2>
+    <table class="pin-table">
+      <tr>
+        <th>Komponen</th>
+        <th>Pin Komponen</th>
+        <th>Kabel</th>
+        <th>ESP32 Pin</th>
+        <th>Keterangan</th>
+      </tr>
+      <tr>
+        <td>TM1637 Display</td>
+        <td>VCC</td>
+        <td><span class="badge badge-red">Merah</span></td>
+        <td>3.3V</td>
+        <td>Power display</td>
+      </tr>
+      <tr>
+        <td>TM1637 Display</td>
+        <td>GND</td>
+        <td><span class="badge" style="background:#334155;color:#94a3b8;">Hitam</span></td>
+        <td>GND</td>
+        <td>Ground</td>
+      </tr>
+      <tr>
+        <td>TM1637 Display</td>
+        <td>DIO</td>
+        <td><span class="badge badge-green">Hijau</span></td>
+        <td><span class="badge badge-cyan">GPIO 19</span></td>
+        <td>Data I/O</td>
+      </tr>
+      <tr>
+        <td>TM1637 Display</td>
+        <td>CLK</td>
+        <td><span class="badge badge-yellow">Kuning</span></td>
+        <td><span class="badge badge-cyan">GPIO 18</span></td>
+        <td>Clock signal</td>
+      </tr>
+      <tr>
+        <td>Buzzer</td>
+        <td>VCC (+)</td>
+        <td><span class="badge badge-blue">Biru</span></td>
+        <td><span class="badge badge-cyan">GPIO 13</span></td>
+        <td>Buzzer control (HIGH=ON)</td>
+      </tr>
+      <tr>
+        <td>Buzzer</td>
+        <td>GND (−)</td>
+        <td><span class="badge" style="background:#334155;color:#94a3b8;">Hitam</span></td>
+        <td>GND</td>
+        <td>Ground</td>
+      </tr>
+      <tr>
+        <td>Button 1 (Reset)</td>
+        <td>VCC</td>
+        <td><span class="badge" style="background:#d97706;color:#fef3c7;">Oranye</span></td>
+        <td><span class="badge badge-cyan">GPIO 14</span></td>
+        <td>INPUT_PULLUP</td>
+      </tr>
+      <tr>
+        <td>Button 1 (Reset)</td>
+        <td>GND</td>
+        <td><span class="badge" style="background:#334155;color:#94a3b8;">Hitam</span></td>
+        <td>GND</td>
+        <td>LOW saat ditekan</td>
+      </tr>
+      <tr>
+        <td>Button 2 (Test)</td>
+        <td>VCC</td>
+        <td><span class="badge badge-purple">Ungu</span></td>
+        <td><span class="badge badge-cyan">GPIO 27</span></td>
+        <td>INPUT_PULLUP</td>
+      </tr>
+      <tr>
+        <td>Button 2 (Test)</td>
+        <td>GND</td>
+        <td><span class="badge" style="background:#334155;color:#94a3b8;">Hitam</span></td>
+        <td>GND</td>
+        <td>LOW saat ditekan</td>
+      </tr>
+      <tr>
+        <td>Baterai 3.7-5V</td>
+        <td>+</td>
+        <td><span class="badge badge-red">Merah</span></td>
+        <td>5V / VIN</td>
+        <td>Power utama</td>
+      </tr>
+      <tr>
+        <td>Baterai</td>
+        <td>−</td>
+        <td><span class="badge" style="background:#334155;color:#94a3b8;">Hitam</span></td>
+        <td>GND</td>
+        <td>Ground</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Component list -->
+  <div class="info-grid">
+    <div class="card">
+      <h3><span class="dot-cyan" style="width:8px;height:8px;background:#22d3ee;border-radius:50%;display:inline-block;"></span> Komponen per Unit</h3>
+      <ul>
+        <li>ESP32 DevKit V1 / ESP32-C3 — Rp 35-60rb</li>
+        <li><strong>TM1637 4-Digit 7-Segment (Merah)</strong> — Rp 8-15rb</li>
+        <li>Buzzer Piezo Active 5V — Rp 3-5rb</li>
+        <li>Push Button 6×6mm × 2 — Rp 2rb</li>
+        <li>Kabel Jumper M-F 20cm × 8 — Rp 4rb</li>
+        <li>Baterai 18650 + holder — Rp 25-35rb</li>
+        <li>Box 3D Print / Akrilik — Rp 20-40rb</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot-cyan" style="width:8px;height:8px;background:#22d3ee;border-radius:50%;display:inline-block;"></span> Skema Daya</h3>
+      <ul>
+        <li>Baterai 18650 (3.7V) → AMS1117 3.3V regulator</li>
+        <li>Atau 2×AA (3V) → langsung ke 3.3V pin</li>
+        <li>Total konsumsi: ~150mA saat aktif</li>
+        <li>Lebih hemat dari LCD 16x2 I2C (~80mA kurang)</li>
+        <li>18650 2600mAH = ~15 jam operasi</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">Excavator Timer Rental · Wiring Diagram v1.1 · TM1637 4-Digit 7-Segment · Lebih murah & simpel dari LCD 16x2</div>
+</div>
+</body>
+</html>
