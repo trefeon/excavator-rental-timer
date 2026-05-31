@@ -115,13 +115,13 @@ unsigned long buzzerStartedAt = 0;
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* p) {
     deviceConnected = true;
-    Serial.println("[BLE] HP connected");
+    Serial.println("[BLE]" " HP connected");
     display.showNumberDecEx(8888, 0b01000000, true);
   }
 
   void onDisconnect(BLEServer* p) {
     deviceConnected = false;
-    Serial.println("[BLE] HP disconnected");
+    Serial.println("[BLE]" " HP disconnected");
     pAdvertising->start();
   }
 };
@@ -131,14 +131,14 @@ class MyCharCallbacks : public BLECharacteristicCallbacks {
     String uuid = pChar->getUUID().toString();
     String value = pChar->getValue().c_str();
 
-    Serial.printf("[BLE] Write: %s -> %s\n", uuid.c_str(), value.c_str());
+    Serial.printf("[BLE]" " Write: %s -> %s\n", uuid.c_str(), value.c_str());
 
     if (uuid == CHAR_TIMER_VALUE) {
       timerDuration = value.toInt();
       if (timerDuration > 0 && timerDuration <= 3600) {
         timerRemaining = timerDuration;
         updateDisplay();
-        Serial.printf("[Timer] Duration set: %ds\n", timerDuration);
+        Serial.printf("[Timer]" " Duration set: %ds\n", timerDuration);
         updateCharStatus();
       }
     }
@@ -182,13 +182,13 @@ void startTimer() {
   lastSecondTick = 0;
   saveToNVS();
   updateDisplay();
-  Serial.printf("[Timer] STARTED: %ds remaining\n", timerRemaining);
+    Serial.printf("[Timer]" " STARTED: %ds remaining\n", timerRemaining);
 }
 
 void stopTimer() {
   if (currentState == RUNNING) {
     pauseTimer();
-    Serial.println("[Timer] STOPPED (paused)");
+    Serial.println("[Timer]" " STOPPED (paused)");
   }
 }
 
@@ -202,7 +202,7 @@ void resetTimer() {
   saveToNVS();
   updateDisplay();
   updateCharStatus();
-  Serial.println("[Timer] RESET");
+  Serial.println("[Timer]" " RESET");
 }
 
 void pauseTimer() {
@@ -213,7 +213,7 @@ void pauseTimer() {
     timerPausedAt = millis();
     saveToNVS();
     updateDisplay();
-    Serial.printf("[Timer] PAUSED: %ds remaining\n", timerRemaining);
+    Serial.printf("[Timer]" " PAUSED: %ds remaining\n", timerRemaining);
   }
 }
 
@@ -224,7 +224,7 @@ void finishTimer() {
   saveToNVS();
   updateDisplay();
   updateCharStatus();
-  Serial.println("[Timer] FINISHED! Buzzer ON");
+  Serial.println("[Timer]" " FINISHED! Buzzer ON");
 }
 
 // ===== NVS =====
@@ -235,7 +235,7 @@ void saveToNVS() {
   prefs.putULong(NVS_REMAINING, timerRemaining);
   prefs.putULong(NVS_DURATION, timerDuration);
   prefs.end();
-  Serial.printf("[NVS] Saved: state=%s, remaining=%ds\n",
+  Serial.printf("[NVS]" " Saved: state=%s, remaining=%ds\n",
     stateToString(currentState).c_str(), timerRemaining);
 }
 
@@ -245,7 +245,7 @@ void loadFromNVS() {
   timerRemaining = prefs.getULong(NVS_REMAINING, 0);
   timerDuration  = prefs.getULong(NVS_DURATION, 0);
 
-  Serial.printf("[NVS] Loaded: state=%s, remaining=%ds\n",
+  Serial.printf("[NVS]" " Loaded: state=%s, remaining=%ds\n",
     savedState.c_str(), timerRemaining);
 
   if (savedState == "RUNNING" || savedState == "PAUSED") {
@@ -272,7 +272,7 @@ void clearNVS() {
   prefs.begin(NVS_NAMESPACE, false);
   prefs.clear();
   prefs.end();
-  Serial.println("[NVS] Cleared");
+  Serial.println("[NVS]" " Cleared");
 }
 
 String stateToString(TimerState s) {
@@ -368,7 +368,7 @@ void setupBLE() {
   pAdvertising->start();
 
   updateCharStatus();
-  Serial.println("[BLE] Ready. Nama: " + String(DEVICE_NAME));
+  Serial.println("[BLE]" " Ready. Nama: " + String(DEVICE_NAME));
 }
 #endif
 
@@ -413,14 +413,14 @@ void checkPower() {
 
   // Low battery — warn app
   if (voltage < BATT_LOW && voltage >= BATT_CUTOFF && currentState == RUNNING) {
-    Serial.printf("[BATT] Low: %.2fV\n", voltage);
+    Serial.printf("[BATT]" " Low: %.2fV\n", voltage);
     // Don't pause yet — let app decide
     updateCharStatus();
   }
 
   // Critical battery — auto pause + notify
   if (voltage < BATT_CUTOFF && currentState == RUNNING) {
-    Serial.printf("[BATT] CRITICAL: %.2fV — auto pause\n", voltage);
+    Serial.printf("[BATT]" " CRITICAL: %.2fV — auto pause\n", voltage);
     pauseTimer();
     saveToNVS();
     updateCharStatus();
@@ -449,7 +449,7 @@ void processSerialCommand(String input) {
   if (input.length() == 0) return;
   input.toUpperCase();
 
-  Serial.printf("[Serial] Cmd: %s\n", input.c_str());
+  Serial.printf("[Serial]" " Cmd: %s\n", input.c_str());
 
   if (input.startsWith("SET ")) {
     int val = input.substring(4).toInt();
@@ -458,9 +458,9 @@ void processSerialCommand(String input) {
       timerRemaining = val;
       updateDisplay();
       updateCharStatus();
-      Serial.printf("[Timer] Duration set: %ds\n", val);
+      Serial.printf("[Timer]" " Duration set: %ds\n", val);
     } else {
-      Serial.println("[Error] SET value must be 1-3600");
+      Serial.println("[Error]" " SET value must be 1-3600");
     }
   }
   else if (input == "START" && timerRemaining > 0) {
@@ -486,7 +486,7 @@ void processSerialCommand(String input) {
       timerRemaining, timerDuration, voltage, millis() / 1000);
   }
   else {
-    Serial.println("[Help] Commands: SET <1-3600>, START, STOP, PAUSE, RESET, CLEAR, STATUS");
+    Serial.println("[Help]" " Commands: SET <1-3600>, START, STOP, PAUSE, RESET, CLEAR, STATUS");
   }
 }
 
@@ -496,8 +496,8 @@ void setup() {
   delay(1000); // Wait for Serial Monitor connection
   Serial.println("\n=== EXCAVATOR TIMER RENTAL v2.1 ===");
 #ifdef WOKWI_SIMULATION
-  Serial.println("[MODE] Wokwi Simulation — BLE disabled, use Serial commands");
-  Serial.println("[Help] Commands: SET <1-3600>, START, STOP, PAUSE, RESET, CLEAR, STATUS");
+  Serial.println("[MODE]" " Wokwi Simulation — BLE disabled, use Serial commands");
+  Serial.println("[Help]" " Commands: SET <1-3600>, START, STOP, PAUSE, RESET, CLEAR, STATUS");
 #endif
 
   pinMode(BUZZER_PIN, OUTPUT);
@@ -519,7 +519,7 @@ void setup() {
 #endif
 
   updateDisplay();
-  Serial.println("[BOOT] Ready!");
+  Serial.println("[BOOT]" " Ready!");
 }
 
 // ===== LOOP =====
@@ -581,7 +581,7 @@ void loop() {
     if (millis() - buzzerStartedAt >= 30000) {
       digitalWrite(BUZZER_PIN, LOW);
       buzzerStartedAt = 0;
-      Serial.println("[Buzzer] Auto-off after 30s");
+      Serial.println("[Buzzer]" " Auto-off after 30s");
       saveToNVS();
     }
   } else if (currentState != FINISHED) {

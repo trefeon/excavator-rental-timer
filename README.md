@@ -1,7 +1,24 @@
 # Excavator Timer Rental — ESP32 Firmware
 
 > Sistem timer sewa excavator RC di mall. ESP32 + TM1637 4-digit display + BLE.  
-> Android app sebagai source of truth. 10 unit excavator.
+> Legacy Wokwi sketch. MVP terbaru memakai ESP32 sebagai source of truth timer.
+
+# Current MVP - BLE Direct + Relay Murah + TM1637
+
+Dokumen MVP terbaru:
+
+- [MVP_SPEC.md](MVP_SPEC.md)
+- [Client proposal](PROPOSAL.md)
+- [Mermaid diagrams](docs/MERMAID_DIAGRAMS.md)
+- [Relay wiring](docs/RELAY_WIRING.md)
+- [BLE protocol](docs/BLE_PROTOCOL_SPEC.md)
+- [ESP32 firmware skeleton](firmware/esp32_ble_direct_mvp/esp32_ble_direct_mvp.ino)
+- [Android app flow](docs/ANDROID_APP_FLOW.md)
+- [Android dashboard mockup](docs/android-dashboard-mockup.html)
+
+Catatan: repo lama memakai TM1637 4-digit display. MVP baru tetap memakai display itu, ditambah relay murah untuk memutus power mainan.
+
+---
 
 ## Overview
 

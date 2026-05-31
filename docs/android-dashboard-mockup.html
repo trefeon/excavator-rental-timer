@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Excavator Rental Dashboard Mockup</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #eef2f7;
+      color: #172033;
+      font-family: Arial, sans-serif;
+      padding: 22px;
+    }
+    .app {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 390px 1fr;
+      gap: 16px;
+    }
+    .screen {
+      background: #ffffff;
+      border: 1px solid #d8dee9;
+      border-radius: 8px;
+      overflow: hidden;
+      min-height: 720px;
+    }
+    .top {
+      padding: 16px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    h1, h2, h3 { margin: 0; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 18px; }
+    h3 { font-size: 14px; color: #475569; }
+    .muted { color: #64748b; font-size: 13px; }
+    .scan { color: #047857; font-weight: 700; font-size: 13px; }
+    .list { padding: 10px; display: grid; gap: 8px; }
+    .row {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 70px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      background: #fff;
+    }
+    .row.active { border-color: #2563eb; background: #eff6ff; }
+    .toy { font-weight: 700; }
+    .status { font-size: 12px; font-weight: 700; }
+    .running { color: #047857; }
+    .paused { color: #b45309; }
+    .locked { color: #475569; }
+    .low { color: #b91c1c; }
+    .offline { color: #94a3b8; }
+    .time { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 52px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #f1f5f9;
+    }
+    .pill.ok { background: #dcfce7; color: #047857; }
+    .pill.warn { background: #fef3c7; color: #92400e; }
+    .pill.bad { background: #fee2e2; color: #991b1b; }
+    .detail { padding: 18px; }
+    .hero {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+    .detail-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 22px;
+    }
+    .big-time { font-size: 56px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .metric {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      background: #f8fafc;
+    }
+    .metric b { display: block; font-size: 18px; margin-top: 6px; }
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+    button {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 13px 10px;
+      background: #fff;
+      color: #172033;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+    .log {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .log-row {
+      display: grid;
+      grid-template-columns: 90px 1fr auto;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid #edf2f7;
+      font-size: 13px;
+    }
+    .sheet {
+      border: 1px solid #d8dee9;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 14px;
+      background: #f8fafc;
+    }
+    .qrbox {
+      border: 2px dashed #94a3b8;
+      border-radius: 8px;
+      height: 150px;
+      display: grid;
+      place-items: center;
+      color: #64748b;
+      font-weight: 700;
+      margin-top: 10px;
+    }
+    @media (max-width: 900px) {
+      body { padding: 10px; }
+      .app { grid-template-columns: 1fr; }
+      .screen { min-height: auto; }
+      .metrics, .actions { grid-template-columns: 1fr 1fr; }
+      .big-time { font-size: 42px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="screen">
+      <div class="top">
+        <div>
+          <h1>Excavator Rental</h1>
+          <div class="muted">10 toys nearby</div>
+        </div>
+        <div class="scan">Scanning BLE</div>
+      </div>
+
+      <div class="list">
+        <div class="row active">
+          <div class="toy">EXC-01</div>
+          <div>
+            <div class="status running">RUNNING</div>
+            <div class="muted">last seen 1s ago</div>
+          </div>
+          <div>
+            <div class="time">03:20</div>
+            <span class="pill ok">OK</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="toy">EXC-02</div>
+          <div>
+            <div class="status locked">LOCKED</div>
+            <div class="muted">last seen 2s ago</div>
+          </div>
+          <div>
+            <div class="time">--</div>
+            <span class="pill ok">OK</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="toy">EXC-03</div>
+          <div>
+            <div class="status paused">PAUSED</div>
+            <div class="muted">battery swapped</div>
+          </div>
+          <div>
+            <div class="time">02:40</div>
+            <span class="pill ok">OK</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="toy">EXC-04</div>
+          <div>
+            <div class="status low">LOW_BATT</div>
+            <div class="muted">replace battery</div>
+          </div>
+          <div>
+            <div class="time">01:55</div>
+            <span class="pill bad">LOW</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="toy">EXC-05</div>
+          <div>
+            <div class="status offline">OFFLINE</div>
+            <div class="muted">last seen 22s ago</div>
+          </div>
+          <div>
+            <div class="time">--</div>
+            <span class="pill">--</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen">
+      <div class="top">
+        <div>
+          <h2>EXC-01</h2>
+          <div class="muted">BLE direct command mode</div>
+        </div>
+        <span class="pill ok">ONLINE</span>
+      </div>
+
+      <div class="detail">
+        <div class="hero">
+          <div class="detail-head">
+            <div>
+              <h3>Remaining</h3>
+              <div class="big-time">03:20</div>
+            </div>
+            <div>
+              <span class="pill ok">RUNNING</span>
+            </div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric">
+              <span class="muted">Battery</span>
+              <b>OK</b>
+            </div>
+            <div class="metric">
+              <span class="muted">Toy Display</span>
+              <b>03:20</b>
+            </div>
+            <div class="metric">
+              <span class="muted">Session</span>
+              <b>S-1042</b>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="primary">+5 menit</button>
+            <button>+10 menit</button>
+            <button>Pause</button>
+            <button>Resume</button>
+            <button class="danger">Stop</button>
+            <button>Clear Fault</button>
+          </div>
+        </div>
+
+        <div class="sheet">
+          <h3>Provision QR</h3>
+          <div class="muted">Scan sticker untuk tambah mainan baru.</div>
+          <div class="qrbox">QR CAMERA AREA</div>
+        </div>
+
+        <div class="sheet">
+          <h3>Recent Commands</h3>
+          <div class="log">
+            <div class="log-row"><span>20:31</span><span>ADD_TIME 300</span><b>OK</b></div>
+            <div class="log-row"><span>20:26</span><span>RESUME</span><b>OK</b></div>
+            <div class="log-row"><span>20:25</span><span>Battery changed</span><b>PAUSED</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
