@@ -5,22 +5,16 @@
   "parts": [
     { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": -100, "left": -150, "attrs": {} },
     { "type": "wokwi-tm1637-7segment", "id": "tm1", "top": 67.16, "left": -21.77, "attrs": {} },
-    { "type": "wokwi-buzzer", "id": "buz1", "top": -141.6, "left": -36.6, "attrs": {} },
     {
       "type": "wokwi-pushbutton",
       "id": "btn1",
       "top": -118.6,
       "left": 86.4,
-      "attrs": { "color": "red", "label": "RESET" }
+      "attrs": { "color": "red", "label": "SERVICE" }
     },
-    {
-      "type": "wokwi-pushbutton",
-      "id": "btn2",
-      "top": -118.6,
-      "left": 192,
-      "attrs": { "color": "green", "label": "TEST" }
-    },
-    { "type": "wokwi-potentiometer", "id": "pot1", "top": 133.1, "left": 172.6, "attrs": {} }
+    { "type": "wokwi-potentiometer", "id": "pot1", "top": 133.1, "left": 172.6, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay1", "top": -200, "left": 200, "attrs": { "transistor": "pnp" } },
+    { "type": "wokwi-led", "id": "led1", "top": -50, "left": 200, "attrs": { "color": "red" } }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
@@ -29,15 +23,16 @@
     [ "esp:GND.1", "tm1:GND", "black", [] ],
     [ "esp:18", "tm1:CLK", "yellow", [ "h221.5", "v114.3" ] ],
     [ "esp:19", "tm1:DIO", "green", [ "h211.9", "v133.4" ] ],
-    [ "esp:13", "buz1:2", "blue", [] ],
-    [ "esp:GND.1", "buz1:1", "black", [] ],
     [ "esp:14", "btn1:1.l", "orange", [ "h221.8", "v-125.6" ] ],
     [ "esp:GND.1", "btn1:2.l", "black", [ "h135.1", "v-135.6" ] ],
-    [ "esp:27", "btn2:1.l", "purple", [] ],
-    [ "esp:GND.1", "btn2:2.l", "black", [ "h231.1", "v-145.2" ] ],
     [ "esp:3V3", "pot1:VCC", "red", [ "h317.5", "v152.7", "h-47.2" ] ],
     [ "esp:GND.1", "pot1:GND", "black", [ "h336.7", "v181.4", "h-86.4" ] ],
-    [ "pot1:SIG", "esp:34", "gray", [ "v19.2", "h-356.6" ] ]
+    [ "pot1:SIG", "esp:34", "gray", [ "v19.2", "h-356.6" ] ],
+    [ "esp:26", "relay1:IN", "blue", [] ],
+    [ "esp:3V3", "relay1:VCC", "red", [] ],
+    [ "esp:GND.1", "relay1:GND", "black", [] ],
+    [ "esp:2", "led1:A", "red", [] ],
+    [ "esp:GND.1", "led1:K", "black", [] ]
   ],
   "dependencies": {}
 }

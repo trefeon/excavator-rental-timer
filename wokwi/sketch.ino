@@ -1,592 +1,736 @@
 /*
- * EXCAVATOR TIMER RENTAL — ESP32 Firmware v2.1
- * ==============================================
- * Konteks: Sewa mainan excavator RC di mall untuk dewasa
- * 
- * Arsitektur Daya — 1 Batre untuk RC + ESP32
- *   Batre RC (LiPo 7.4V) → Buck Converter 3.3V → ESP32
- *                           └→ Motor RC (ESC/Receiver) langsung
- *   Kapasitor 1000µF di output buck nahan drop motor.
- * 
- * Source of Truth — Android App
- *   ESP32 NVS cuma buffer sementara. Aplikasi Android yg decide.
- *   Pas boot: ESP32 baca NVS, kirim ke app. App bandingkan dgn
- *   datanya sendiri, lalu kirim perintah yg sesuai.
- * 
- * Fitur:
- * - BLE GATT Server (on-demand connection)
- * - NVS buffer sementara (IDLE / RUNNING / PAUSED / FINISHED / TIMEOUT)
- * - 4-Digit 7-Segment TM1637 (MM:SS countdown)
- * - Buzzer pas timer habis
- * - Battery monitoring via ADC (7.4V LiPo via divider)
- * - Tombol fisik untuk reset lokal (opsional)
- * - Serial command bridge (for Wokwi simulation / debugging)
- * 
- * Wiring:
- *   TM1637   : CLK -> GPIO18, DIO -> GPIO19, VCC -> 3.3V, GND -> GND
- *   Buzzer   : GPIO13 (+), GND (-)
- *   Button 1 : GPIO14 (reset/stop) — pullup
- *   Button 2 : GPIO27 (test buzzer) — pullup
- *   Batre RC : Via divider (R1=100k, R2=33k) -> GPIO34 ADC
- *   Buck     : 7.4V → 3.3V, output + kapasitor 1000µF
- * 
- * BLE Service:
- *   UUID: 4fafc201-1fb5-459e-8fcc-c5c9c331914b
- *   Char 1 — TimerValue (write): set timer duration in seconds
- *   Char 2 — TimerStatus (read/notify): JSON {remaining, state, voltage}
- *   Char 3 — Command (write): "START" / "STOP" / "RESET" / "PAUSE" / "CLEAR"
- *   Char 4 — DeviceName (read): "EX-XX"
- *   Char 5 — DeviceInfo (read): full JSON state dump
+ * Excavator Rental Timer - BLE Direct MVP
  *
- * Serial Commands (for Wokwi / debug):
- *   SET <seconds>  — set timer duration (e.g. SET 300)
- *   START          — start countdown
- *   STOP           — stop (pause) countdown
- *   PAUSE          — pause countdown
- *   RESET          — reset timer to IDLE
- *   CLEAR          — clear NVS + reset
- *   STATUS         — print current state JSON
+ * Hardware:
+ * - ESP32 / ESP32-C3 style module
+ * - 1x 18650 shared battery
+ * - 3.3V regulator for ESP32
+ * - 3V/3.3V relay with transistor driver + flyback diode
+ * - TM1637 4-digit display mounted on toy
+ * - ADC voltage divider for battery status
+ *
+ * Safety:
+ * - Relay is OFF on boot/reset.
+ * - Timer is stored in NVS.
+ * - Battery swap boots into PAUSED, never auto-runs.
  */
 
-// Uncomment for Wokwi simulation (disables BLE, enables serial commands)
-#define WOKWI_SIMULATION
-
-#ifndef WOKWI_SIMULATION
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEServer.h>
-#endif
+#include <Arduino.h>
 #include <Preferences.h>
 #include <TM1637Display.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include "mbedtls/md.h"
 
-// ===== PINOUT =====
-#define BUZZER_PIN     13
-#define BTN_RESET      14
-#define BTN_TEST       27
-#define ADC_POWER_PIN  34    // ADC — baca tegangan batre
-#define TM1637_CLK     18
-#define TM1637_DIO     19
+// ===== DEVICE CONFIG =====
+static const char *TOY_ID = "EXC-01";
+static const uint8_t TOY_NUMERIC_ID = 1;
+static const char *DEVICE_SECRET = "replace-with-unique-secret";
+static const bool ALLOW_UNSIGNED_DEBUG_COMMANDS = true;
 
-// ===== BLE =====
-#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHAR_TIMER_VALUE    "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define CHAR_TIMER_STATUS   "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-#define CHAR_COMMAND        "beb5483e-36e1-4688-b7f5-ea07361b26aa"
-#define CHAR_DEVICE_NAME    "beb5483e-36e1-4688-b7f5-ea07361b26ab"
-#define CHAR_DEVICE_INFO    "beb5483e-36e1-4688-b7f5-ea07361b26ac"
-#define DEVICE_NAME         "EX-01"    // ganti per unit
+// ===== PINS =====
+static const uint8_t RELAY_PIN = 26;
+static const uint8_t BATTERY_ADC_PIN = 34;
+static const uint8_t DISPLAY_CLK_PIN = 18;
+static const uint8_t DISPLAY_DIO_PIN = 19;
+static const uint8_t STATUS_LED_PIN = 2;
+static const uint8_t SERVICE_BUTTON_PIN = 14;
 
-// ===== STATE =====
-enum TimerState { IDLE, RUNNING, PAUSED, FINISHED, TIMEOUT };
-TimerState currentState = IDLE;
+static const bool RELAY_ACTIVE_HIGH = true;
 
-// ===== TIMER =====
-unsigned long timerDuration  = 0;
-unsigned long timerRemaining = 0;
-unsigned long timerStartedAt = 0;
-unsigned long timerPausedAt  = 0;
-unsigned long lastSecondTick = 0;
+// ===== BLE UUIDS =====
+static const char *SERVICE_UUID = "7b7d0001-8f2a-4f6b-9b2e-2f3ad5a10001";
+static const char *STATE_CHAR_UUID = "7b7d0002-8f2a-4f6b-9b2e-2f3ad5a10001";
+static const char *COMMAND_CHAR_UUID = "7b7d0003-8f2a-4f6b-9b2e-2f3ad5a10001";
+static const char *ACK_CHAR_UUID = "7b7d0004-8f2a-4f6b-9b2e-2f3ad5a10001";
+static const char *INFO_CHAR_UUID = "7b7d0005-8f2a-4f6b-9b2e-2f3ad5a10001";
 
-// ===== NVS =====
+// ===== STORAGE =====
+static const char *NVS_NAMESPACE = "rental";
+static const uint32_t STORAGE_MAGIC = 0xE7CA2026;
+static const uint32_t SAVE_INTERVAL_MS = 5000;
+static const uint32_t NOTIFY_INTERVAL_MS = 1000;
+static const uint32_t ADVERTISE_REFRESH_MS = 2000;
+static const uint32_t MAX_REMAINING_SECONDS = 3600;
+
+// ===== BATTERY =====
+static const float ADC_REFERENCE_V = 3.3f;
+static const float ADC_DIVIDER_RATIO = 3.2f;  // R1=220k, R2=100k
+static const float BATTERY_LOW_V = 3.55f;
+static const float BATTERY_CRITICAL_V = 3.30f;
+static const float BATTERY_CUTOFF_V = 3.15f;
+static const uint8_t CUTOFF_CONFIRM_COUNT = 5;
+
+enum RentalState : uint8_t {
+  STATE_LOCKED = 0,
+  STATE_RUNNING = 1,
+  STATE_PAUSED = 2,
+  STATE_LOW_BATT = 3,
+  STATE_ENDED = 4,
+  STATE_FAULT = 5,
+};
+
+enum BatteryStatus : uint8_t {
+  BAT_UNKNOWN = 0,
+  BAT_OK = 1,
+  BAT_LOW = 2,
+  BAT_CRITICAL = 3,
+};
+
+enum FaultCode : uint8_t {
+  FAULT_NONE = 0,
+  FAULT_LOW_BATT_CUTOFF = 1,
+  FAULT_STORAGE_CRC = 2,
+  FAULT_RELAY_STUCK = 3,
+  FAULT_COMMAND_AUTH = 4,
+};
+
 Preferences prefs;
-#define NVS_NAMESPACE "timer"
-#define NVS_STATE     "state"
-#define NVS_REMAINING "remaining"
-#define NVS_DURATION  "duration"
+TM1637Display display(DISPLAY_CLK_PIN, DISPLAY_DIO_PIN);
 
-// ===== 4-Digit 7-Segment =====
-TM1637Display display(TM1637_CLK, TM1637_DIO);
+BLEServer *bleServer = nullptr;
+BLEAdvertising *bleAdvertising = nullptr;
+BLECharacteristic *stateChar = nullptr;
+BLECharacteristic *ackChar = nullptr;
+BLECharacteristic *infoChar = nullptr;
 
-// ===== BLE =====
-#ifndef WOKWI_SIMULATION
-BLEServer      *pServer       = NULL;
-BLECharacteristic *charStatus = NULL;
-BLECharacteristic *charInfo   = NULL;
-BLEAdvertising *pAdvertising  = NULL;
-#endif
-bool deviceConnected          = false;
+RentalState state = STATE_LOCKED;
+BatteryStatus batteryStatus = BAT_UNKNOWN;
+FaultCode faultCode = FAULT_NONE;
 
-// ===== BUZZER AUTO-OFF =====
-unsigned long buzzerStartedAt = 0;
+uint32_t remainingSeconds = 0;
+uint32_t totalPaidSeconds = 0;
+uint32_t lastCommandId = 0;
+uint32_t lastAppliedCommandId = 0;
+String sessionId = "";
+String lastAckPayload = "";
 
-// ===== CALLBACKS =====
+uint8_t seq = 0;
+uint8_t cutoffCount = 0;
+bool bleConnected = false;
 
-#ifndef WOKWI_SIMULATION
-class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* p) {
-    deviceConnected = true;
-    Serial.println("[BLE]" " HP connected");
-    display.showNumberDecEx(8888, 0b01000000, true);
-  }
+uint32_t lastTickMs = 0;
+uint32_t lastSaveMs = 0;
+uint32_t lastNotifyMs = 0;
+uint32_t lastAdvertiseMs = 0;
+uint32_t lastBatteryMs = 0;
 
-  void onDisconnect(BLEServer* p) {
-    deviceConnected = false;
-    Serial.println("[BLE]" " HP disconnected");
-    pAdvertising->start();
-  }
+const uint8_t SEG_LOCKED[] = { SEG_G, SEG_G, SEG_G, SEG_G };
+const uint8_t SEG_LOW[] = {
+  0,
+  SEG_D | SEG_E | SEG_F,
+  SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,
+  0
+};
+const uint8_t SEG_ERR[] = {
+  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G,
+  SEG_E | SEG_G,
+  SEG_E | SEG_G,
+  0
 };
 
-class MyCharCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pChar) {
-    String uuid = pChar->getUUID().toString();
-    String value = pChar->getValue().c_str();
-
-    Serial.printf("[BLE]" " Write: %s -> %s\n", uuid.c_str(), value.c_str());
-
-    if (uuid == CHAR_TIMER_VALUE) {
-      timerDuration = value.toInt();
-      if (timerDuration > 0 && timerDuration <= 3600) {
-        timerRemaining = timerDuration;
-        updateDisplay();
-        Serial.printf("[Timer]" " Duration set: %ds\n", timerDuration);
-        updateCharStatus();
-      }
-    }
-    else if (uuid == CHAR_COMMAND) {
-      value.toUpperCase();
-      if (value == "START" && timerRemaining > 0) {
-        startTimer();
-      }
-      else if (value == "STOP") {
-        stopTimer();
-      }
-      else if (value == "RESET") {
-        resetTimer();
-      }
-      else if (value == "PAUSE") {
-        pauseTimer();
-      }
-      else if (value == "CLEAR") {
-        // From app: "I'm the source of truth, clear your NVS"
-        clearNVS();
-        resetTimer();
-      }
-      updateCharStatus();
-    }
+String stateName(RentalState value) {
+  switch (value) {
+    case STATE_LOCKED: return "LOCKED";
+    case STATE_RUNNING: return "RUNNING";
+    case STATE_PAUSED: return "PAUSED";
+    case STATE_LOW_BATT: return "LOW_BATT";
+    case STATE_ENDED: return "ENDED";
+    case STATE_FAULT: return "FAULT";
   }
-};
-#endif
+  return "FAULT";
+}
 
-// ===== FUNGSI TIMER =====
+String batteryName(BatteryStatus value) {
+  switch (value) {
+    case BAT_OK: return "OK";
+    case BAT_LOW: return "LOW";
+    case BAT_CRITICAL: return "CRITICAL";
+    default: return "UNKNOWN";
+  }
+}
 
-void startTimer() {
-  if (timerRemaining <= 0) return;
+String displayText() {
+  if (state == STATE_LOCKED) return "----";
+  if (state == STATE_LOW_BATT) return "Lo";
+  if (state == STATE_ENDED) return "0000";
+  if (state == STATE_FAULT) return "Err";
 
-  if (currentState == PAUSED) {
-    timerStartedAt = millis() - (timerDuration - timerRemaining) * 1000;
+  uint32_t minutes = remainingSeconds / 60;
+  uint32_t seconds = remainingSeconds % 60;
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)minutes, (unsigned long)seconds);
+  return String(buf);
+}
+
+uint32_t storageCrc() {
+  uint32_t crc = STORAGE_MAGIC;
+  crc ^= remainingSeconds * 2654435761UL;
+  crc ^= totalPaidSeconds * 2246822519UL;
+  crc ^= lastCommandId * 3266489917UL;
+  crc ^= static_cast<uint8_t>(state) << 8;
+  for (size_t i = 0; i < sessionId.length(); i++) {
+    crc = (crc << 5) ^ (crc >> 2) ^ sessionId[i];
+  }
+  return crc;
+}
+
+void relayOff() {
+  digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? LOW : HIGH);
+}
+
+void relayOn() {
+  digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? HIGH : LOW);
+}
+
+bool canRelayRun() {
+  return state == STATE_RUNNING &&
+         remainingSeconds > 0 &&
+         batteryStatus != BAT_CRITICAL &&
+         faultCode == FAULT_NONE;
+}
+
+void applyRelay() {
+  if (canRelayRun()) {
+    relayOn();
+    digitalWrite(STATUS_LED_PIN, HIGH);
   } else {
-    timerStartedAt = millis();
-  }
-  
-  currentState = RUNNING;
-  lastSecondTick = 0;
-  saveToNVS();
-  updateDisplay();
-    Serial.printf("[Timer]" " STARTED: %ds remaining\n", timerRemaining);
-}
-
-void stopTimer() {
-  if (currentState == RUNNING) {
-    pauseTimer();
-    Serial.println("[Timer]" " STOPPED (paused)");
+    relayOff();
+    digitalWrite(STATUS_LED_PIN, LOW);
   }
 }
 
-void resetTimer() {
-  currentState = IDLE;
-  timerRemaining = 0;
-  timerDuration = 0;
-  timerStartedAt = 0;
-  timerPausedAt = 0;
-  digitalWrite(BUZZER_PIN, LOW);
-  saveToNVS();
-  updateDisplay();
-  updateCharStatus();
-  Serial.println("[Timer]" " RESET");
+void showRemaining(bool colon) {
+  uint32_t minutes = min<uint32_t>(remainingSeconds / 60, 99);
+  uint32_t seconds = remainingSeconds % 60;
+  uint16_t value = minutes * 100 + seconds;
+  display.showNumberDecEx(value, colon ? 0b01000000 : 0, true);
 }
-
-void pauseTimer() {
-  if (currentState == RUNNING) {
-    unsigned long elapsed = (millis() - timerStartedAt) / 1000;
-    timerRemaining = (elapsed >= timerDuration) ? 0 : timerDuration - elapsed;
-    currentState = PAUSED;
-    timerPausedAt = millis();
-    saveToNVS();
-    updateDisplay();
-    Serial.printf("[Timer]" " PAUSED: %ds remaining\n", timerRemaining);
-  }
-}
-
-void finishTimer() {
-  currentState = FINISHED;
-  timerRemaining = 0;
-  digitalWrite(BUZZER_PIN, HIGH);
-  saveToNVS();
-  updateDisplay();
-  updateCharStatus();
-  Serial.println("[Timer]" " FINISHED! Buzzer ON");
-}
-
-// ===== NVS =====
-
-void saveToNVS() {
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putString(NVS_STATE, stateToString(currentState));
-  prefs.putULong(NVS_REMAINING, timerRemaining);
-  prefs.putULong(NVS_DURATION, timerDuration);
-  prefs.end();
-  Serial.printf("[NVS]" " Saved: state=%s, remaining=%ds\n",
-    stateToString(currentState).c_str(), timerRemaining);
-}
-
-void loadFromNVS() {
-  prefs.begin(NVS_NAMESPACE, true);
-  String savedState = prefs.getString(NVS_STATE, "IDLE");
-  timerRemaining = prefs.getULong(NVS_REMAINING, 0);
-  timerDuration  = prefs.getULong(NVS_DURATION, 0);
-
-  Serial.printf("[NVS]" " Loaded: state=%s, remaining=%ds\n",
-    savedState.c_str(), timerRemaining);
-
-  if (savedState == "RUNNING" || savedState == "PAUSED") {
-    // ⚡ SOURCE OF TRUTH: Android App yg decide.
-    // ESP32 cuma report state ke app. App akan:
-    //   a) Kalo ada sesi aktif di app → resume timer
-    //   b) Kalo nggak ada sesi → kirim CLEAR ke ESP32
-    // Sementara: set TIMEOUT, tunjukin "----"
-    currentState = TIMEOUT;
-    saveToNVS();
-    updateDisplay();
-  } else if (savedState == "FINISHED") {
-    currentState = FINISHED;
-    digitalWrite(BUZZER_PIN, HIGH);
-  } else {
-    currentState = IDLE;
-  }
-
-  prefs.end();
-  updateCharStatus();
-}
-
-void clearNVS() {
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.clear();
-  prefs.end();
-  Serial.println("[NVS]" " Cleared");
-}
-
-String stateToString(TimerState s) {
-  switch (s) {
-    case IDLE:     return "IDLE";
-    case RUNNING:  return "RUNNING";
-    case PAUSED:   return "PAUSED";
-    case FINISHED: return "FINISHED";
-    case TIMEOUT:  return "TIMEOUT";
-    default:       return "UNKNOWN";
-  }
-}
-
-// ===== 4-Digit Display — MM:SS format =====
-
-const uint8_t segDASH[] = { 0x40, 0x40, 0x40, 0x40 };  // ----
-const uint8_t segZERO[] = { 0x3F, 0x3F, 0x3F, 0x3F };  // 0000
-const uint8_t segBLANK[] = { 0x00, 0x00, 0x00, 0x00 };
 
 void updateDisplay() {
-  if (currentState == IDLE || currentState == TIMEOUT) {
-    display.setSegments((uint8_t*)segDASH, 4, 0);
-    return;
+  static bool blink = false;
+  blink = !blink;
+
+  switch (state) {
+    case STATE_LOCKED:
+      display.setSegments(SEG_LOCKED);
+      break;
+    case STATE_RUNNING:
+      showRemaining(true);
+      break;
+    case STATE_PAUSED:
+      showRemaining(blink);
+      break;
+    case STATE_LOW_BATT:
+      display.setSegments(blink ? SEG_LOW : SEG_LOCKED);
+      break;
+    case STATE_ENDED:
+      if (blink) display.showNumberDecEx(0, 0, true);
+      else display.clear();
+      break;
+    case STATE_FAULT:
+      display.setSegments(SEG_ERR);
+      break;
   }
-
-  if (currentState == FINISHED) {
-    static bool toggle = false;
-    toggle = !toggle;
-    if (toggle) {
-      display.setSegments((uint8_t*)segZERO, 4, 0);
-    } else {
-      display.showNumberDecEx(0, 0b01000000, true);
-    }
-    return;
-  }
-
-  // RUNNING or PAUSED — show MM:SS
-  int mins = timerRemaining / 60;
-  int secs = timerRemaining % 60;
-  if (mins > 99) mins = 99;
-  
-  int value = mins * 100 + secs;
-  bool colonOn = (currentState == RUNNING);
-  
-  display.showNumberDecEx(value, colonOn ? 0b01000000 : 0, true);
 }
-
-// ===== BLE =====
-
-#ifndef WOKWI_SIMULATION
-void setupBLE() {
-  BLEDevice::init(DEVICE_NAME);
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
-
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-
-  BLECharacteristic *pCharVal = pService->createCharacteristic(
-    CHAR_TIMER_VALUE,
-    BLECharacteristic::PROPERTY_WRITE
-  );
-  pCharVal->setCallbacks(new MyCharCallbacks());
-
-  charStatus = pService->createCharacteristic(
-    CHAR_TIMER_STATUS,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
-  );
-
-  BLECharacteristic *pCharCmd = pService->createCharacteristic(
-    CHAR_COMMAND,
-    BLECharacteristic::PROPERTY_WRITE
-  );
-  pCharCmd->setCallbacks(new MyCharCallbacks());
-
-  BLECharacteristic *pCharName = pService->createCharacteristic(
-    CHAR_DEVICE_NAME,
-    BLECharacteristic::PROPERTY_READ
-  );
-  pCharName->setValue(DEVICE_NAME);
-
-  charInfo = pService->createCharacteristic(
-    CHAR_DEVICE_INFO,
-    BLECharacteristic::PROPERTY_READ
-  );
-
-  pService->start();
-
-  pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);
-  pAdvertising->setMinPreferred(0x12);
-  pAdvertising->start();
-
-  updateCharStatus();
-  Serial.println("[BLE]" " Ready. Nama: " + String(DEVICE_NAME));
-}
-#endif
-
-void updateCharStatus() {
-#ifndef WOKWI_SIMULATION
-  if (!charStatus) return;
-  char buf[64];
-  snprintf(buf, sizeof(buf), "{\"s\":%lu,\"t\":\"%s\"}",
-    timerRemaining, stateToString(currentState).c_str());
-  charStatus->setValue((uint8_t*)buf, strlen(buf));
-  charStatus->notify();
-#endif
-}
-  // ===== BATTERY MONITORING =====
-// Batre RC: LiPo 7.4V (2S)
-// Divider: R1=100kΩ, R2=33kΩ → ratio = (100+33)/33 = 4.03
-// ADC: 0-4095 → 0-3.3V
-// Full: 8.4V, Low: 6.2V, Cut-off: 6.0V
-
-#define ADC_DIVIDER_RATIO  4.03f
-#define BATT_FULL          8.4f
-#define BATT_LOW           6.2f
-#define BATT_CUTOFF        6.0f
 
 float readBatteryVoltage() {
-  int adcVal = 0;
-  // Average 16 readings for stability
+  uint32_t sum = 0;
   for (int i = 0; i < 16; i++) {
-    adcVal += analogRead(ADC_POWER_PIN);
-    delayMicroseconds(100);
+    sum += analogRead(BATTERY_ADC_PIN);
+    delay(2);
   }
-  adcVal /= 16;
-  float voltage = (adcVal * 3.3f / 4095.0f) * ADC_DIVIDER_RATIO;
-  return voltage;
+  float raw = sum / 16.0f;
+  float vadc = (raw / 4095.0f) * ADC_REFERENCE_V;
+  return vadc * ADC_DIVIDER_RATIO;
 }
 
-void checkPower() {
+void updateBatteryStatus(bool force = false) {
+  static BatteryStatus previous = BAT_UNKNOWN;
   float voltage = readBatteryVoltage();
 
-  // Update charInfo with voltage
-  updateCharInfo();
-
-  // Low battery — warn app
-  if (voltage < BATT_LOW && voltage >= BATT_CUTOFF && currentState == RUNNING) {
-    Serial.printf("[BATT]" " Low: %.2fV\n", voltage);
-    // Don't pause yet — let app decide
-    updateCharStatus();
+  if (voltage < BATTERY_CUTOFF_V) {
+    cutoffCount = min<uint8_t>(cutoffCount + 1, CUTOFF_CONFIRM_COUNT);
+  } else {
+    cutoffCount = 0;
   }
 
-  // Critical battery — auto pause + notify
-  if (voltage < BATT_CUTOFF && currentState == RUNNING) {
-    Serial.printf("[BATT]" " CRITICAL: %.2fV — auto pause\n", voltage);
-    pauseTimer();
-    saveToNVS();
-    updateCharStatus();
+  if (voltage < BATTERY_CRITICAL_V) batteryStatus = BAT_CRITICAL;
+  else if (voltage < BATTERY_LOW_V) batteryStatus = BAT_LOW;
+  else batteryStatus = BAT_OK;
+
+  if (force || batteryStatus != previous) {
+    seq++;
+    previous = batteryStatus;
   }
 }
 
-void updateCharInfo() {
-#ifndef WOKWI_SIMULATION
-  if (!charInfo) return;
-  float voltage = readBatteryVoltage();
-  char buf[160];
-  snprintf(buf, sizeof(buf),
-    "{\"d\":\"%s\",\"s\":\"%s\",\"r\":%lu,\"du\":%lu,\"v\":%.2f,\"u\":%lu}",
-    DEVICE_NAME, stateToString(currentState).c_str(),
-    timerRemaining, timerDuration, voltage, millis() / 1000);
-  charInfo->setValue((uint8_t*)buf, strlen(buf));
-#endif
+void saveSession() {
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putUInt("magic", STORAGE_MAGIC);
+  prefs.putUInt("state", static_cast<uint32_t>(state));
+  prefs.putUInt("rem", remainingSeconds);
+  prefs.putUInt("paid", totalPaidSeconds);
+  prefs.putUInt("lastcmd", lastCommandId);
+  prefs.putString("sid", sessionId);
+  prefs.putUInt("crc", storageCrc());
+  prefs.end();
+  lastSaveMs = millis();
 }
 
-// ===== SERIAL COMMAND BRIDGE =====
-// Works in both Wokwi and production (useful for debugging)
-// Commands: SET <sec>, START, STOP, PAUSE, RESET, CLEAR, STATUS
+void loadSession() {
+  prefs.begin(NVS_NAMESPACE, true);
+  uint32_t magic = prefs.getUInt("magic", 0);
+  RentalState savedState = static_cast<RentalState>(prefs.getUInt("state", STATE_LOCKED));
+  remainingSeconds = prefs.getUInt("rem", 0);
+  totalPaidSeconds = prefs.getUInt("paid", 0);
+  lastCommandId = prefs.getUInt("lastcmd", 0);
+  sessionId = prefs.getString("sid", "");
+  uint32_t savedCrc = prefs.getUInt("crc", 0);
+  prefs.end();
 
-void processSerialCommand(String input) {
-  input.trim();
-  if (input.length() == 0) return;
-  input.toUpperCase();
+  if (magic != STORAGE_MAGIC) {
+    state = STATE_LOCKED;
+    remainingSeconds = 0;
+    totalPaidSeconds = 0;
+    sessionId = "";
+    lastCommandId = 0;
+    return;
+  }
 
-  Serial.printf("[Serial]" " Cmd: %s\n", input.c_str());
+  state = savedState;
+  if (savedCrc != storageCrc()) {
+    state = STATE_FAULT;
+    faultCode = FAULT_STORAGE_CRC;
+    remainingSeconds = 0;
+    return;
+  }
 
-  if (input.startsWith("SET ")) {
-    int val = input.substring(4).toInt();
-    if (val > 0 && val <= 3600) {
-      timerDuration = val;
-      timerRemaining = val;
-      updateDisplay();
-      updateCharStatus();
-      Serial.printf("[Timer]" " Duration set: %ds\n", val);
+  if (remainingSeconds > 0) {
+    if (savedState == STATE_LOW_BATT || batteryStatus == BAT_CRITICAL) {
+      state = STATE_LOW_BATT;
+      faultCode = FAULT_LOW_BATT_CUTOFF;
     } else {
-      Serial.println("[Error]" " SET value must be 1-3600");
+      state = STATE_PAUSED;
+      faultCode = FAULT_NONE;
+    }
+  } else {
+    state = STATE_LOCKED;
+    faultCode = FAULT_NONE;
+  }
+}
+
+String hmacSha256(const String &message) {
+  unsigned char hmac[32];
+  char hex[65];
+
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  mbedtls_md_setup(&ctx, info, 1);
+  mbedtls_md_hmac_starts(&ctx, reinterpret_cast<const unsigned char *>(DEVICE_SECRET), strlen(DEVICE_SECRET));
+  mbedtls_md_hmac_update(&ctx, reinterpret_cast<const unsigned char *>(message.c_str()), message.length());
+  mbedtls_md_hmac_finish(&ctx, hmac);
+  mbedtls_md_free(&ctx);
+
+  for (int i = 0; i < 32; i++) {
+    snprintf(hex + (i * 2), 3, "%02x", hmac[i]);
+  }
+  hex[64] = '\0';
+  return String(hex);
+}
+
+bool verifySignature(uint32_t commandId, const String &command, uint32_t value, const String &sid, const String &nonce, const String &signature) {
+  if (ALLOW_UNSIGNED_DEBUG_COMMANDS && signature == "debug") {
+    return true;
+  }
+
+  String canonical = String(TOY_ID) + "|" + String(commandId) + "|" + command + "|" + String(value) + "|" + sid + "|" + nonce;
+  String expected = hmacSha256(canonical);
+  return expected.equalsIgnoreCase(signature);
+}
+
+String buildStatePayload() {
+  return "v1;toy=" + String(TOY_ID) +
+         ";state=" + stateName(state) +
+         ";rem=" + String(remainingSeconds) +
+         ";disp=" + displayText() +
+         ";paid=" + String(totalPaidSeconds) +
+         ";bat=" + batteryName(batteryStatus) +
+         ";fault=" + String(static_cast<uint8_t>(faultCode)) +
+         ";seq=" + String(seq) +
+         ";sid=" + sessionId;
+}
+
+std::string buildManufacturerData() {
+  std::string data;
+  data.push_back(static_cast<char>(0xFF)); // test company id low
+  data.push_back(static_cast<char>(0xFF)); // test company id high
+  data.push_back(static_cast<char>(1));    // protocol version
+  data.push_back(static_cast<char>(TOY_NUMERIC_ID));
+  data.push_back(static_cast<char>(state));
+  data.push_back(static_cast<char>(min<uint32_t>(remainingSeconds / 60, 255)));
+  data.push_back(static_cast<char>(batteryStatus));
+  data.push_back(static_cast<char>(faultCode));
+  data.push_back(static_cast<char>(seq));
+
+  uint8_t flags = 0;
+  if (bleConnected) flags |= 0x01;
+  if (ALLOW_UNSIGNED_DEBUG_COMMANDS) flags |= 0x08;
+  data.push_back(static_cast<char>(flags));
+  data.push_back(static_cast<char>(remainingSeconds & 0xFF));
+  data.push_back(static_cast<char>((remainingSeconds >> 8) & 0xFF));
+  return data;
+}
+
+void refreshAdvertising() {
+  if (!bleAdvertising) return;
+
+  BLEAdvertisementData adv;
+  adv.setName(TOY_ID);
+  adv.setManufacturerData(buildManufacturerData());
+  adv.setCompleteServices(BLEUUID(SERVICE_UUID));
+
+  bleAdvertising->setAdvertisementData(adv);
+  if (!bleConnected) {
+    bleAdvertising->start();
+  }
+  lastAdvertiseMs = millis();
+}
+
+void publishState(bool force = false) {
+  if (!stateChar) return;
+  if (!force && millis() - lastNotifyMs < NOTIFY_INTERVAL_MS) return;
+
+  String payload = buildStatePayload();
+  stateChar->setValue(payload.c_str());
+  if (bleConnected) {
+    stateChar->notify();
+  }
+  lastNotifyMs = millis();
+}
+
+void sendAck(uint32_t commandId, bool ok, const String &code) {
+  lastAckPayload = "v1;cmd=" + String(commandId) +
+                   ";ok=" + String(ok ? 1 : 0) +
+                   ";code=" + code +
+                   ";state=" + stateName(state) +
+                   ";rem=" + String(remainingSeconds);
+
+  if (ackChar) {
+    ackChar->setValue(lastAckPayload.c_str());
+    if (bleConnected) {
+      ackChar->notify();
     }
   }
-  else if (input == "START" && timerRemaining > 0) {
-    startTimer();
-  }
-  else if (input == "STOP") {
-    stopTimer();
-  }
-  else if (input == "PAUSE") {
-    pauseTimer();
-  }
-  else if (input == "RESET") {
-    resetTimer();
-  }
-  else if (input == "CLEAR") {
-    clearNVS();
-    resetTimer();
-  }
-  else if (input == "STATUS") {
-    float voltage = readBatteryVoltage();
-    Serial.printf("{\"device\":\"%s\",\"state\":\"%s\",\"remaining\":%lu,\"duration\":%lu,\"voltage\":%.2f,\"uptime\":%lu}\n",
-      DEVICE_NAME, stateToString(currentState).c_str(),
-      timerRemaining, timerDuration, voltage, millis() / 1000);
-  }
-  else {
-    Serial.println("[Help]" " Commands: SET <1-3600>, START, STOP, PAUSE, RESET, CLEAR, STATUS");
-  }
 }
 
-// ===== SETUP =====
-void setup() {
-  Serial.begin(115200);
-  delay(1000); // Wait for Serial Monitor connection
-  Serial.println("\n=== EXCAVATOR TIMER RENTAL v2.1 ===");
-#ifdef WOKWI_SIMULATION
-  Serial.println("[MODE]" " Wokwi Simulation — BLE disabled, use Serial commands");
-  Serial.println("[Help]" " Commands: SET <1-3600>, START, STOP, PAUSE, RESET, CLEAR, STATUS");
-#endif
+void changeState(RentalState nextState) {
+  if (state != nextState) {
+    state = nextState;
+    seq++;
+  }
+  applyRelay();
+  updateDisplay();
+  publishState(true);
+  refreshAdvertising();
+}
 
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  pinMode(BTN_RESET, INPUT_PULLUP);
-  pinMode(BTN_TEST, INPUT_PULLUP);
-  pinMode(ADC_POWER_PIN, INPUT);
+bool splitCommand(const String &input, String parts[], int expected) {
+  int start = 0;
+  int count = 0;
+  while (count < expected) {
+    int pos = input.indexOf('|', start);
+    if (pos < 0) {
+      parts[count++] = input.substring(start);
+      break;
+    }
+    parts[count++] = input.substring(start, pos);
+    start = pos + 1;
+  }
+  return count == expected;
+}
 
-  // 4-Digit Display
-  display.setBrightness(7);  // 0=min, 7=max
-  display.setSegments((uint8_t*)segDASH, 4, 0);
+void processCommand(const String &input) {
+  String parts[7];
+  if (!splitCommand(input, parts, 7) || parts[0] != "v1") {
+    sendAck(0, false, "BAD_FORMAT");
+    return;
+  }
 
-  // NVS
-  loadFromNVS();
+  uint32_t commandId = parts[1].toInt();
+  String command = parts[2];
+  command.toUpperCase();
+  uint32_t value = parts[3].toInt();
+  String sid = parts[4];
+  String nonce = parts[5];
+  String signature = parts[6];
 
-  // BLE (disabled in Wokwi simulation)
-#ifndef WOKWI_SIMULATION
-  setupBLE();
-#endif
+  if (commandId == lastAppliedCommandId) {
+    if (ackChar && lastAckPayload.length() > 0) {
+      ackChar->setValue(lastAckPayload.c_str());
+      if (bleConnected) ackChar->notify();
+    }
+    return;
+  }
+
+  if (commandId <= lastCommandId) {
+    sendAck(commandId, false, "BAD_COUNTER");
+    return;
+  }
+
+  if (!verifySignature(commandId, command, value, sid, nonce, signature)) {
+    faultCode = FAULT_COMMAND_AUTH;
+    sendAck(commandId, false, "BAD_SIGNATURE");
+    publishState(true);
+    return;
+  }
+
+  bool ok = false;
+  String code = "OK";
+
+  if (command == "ADD_TIME") {
+    if (value == 0 || value % 300 != 0 || remainingSeconds + value > MAX_REMAINING_SECONDS) {
+      code = "LIMIT";
+    } else if (state == STATE_FAULT) {
+      code = "FAULT";
+    } else {
+      remainingSeconds += value;
+      totalPaidSeconds += value;
+      if (sessionId.length() == 0) sessionId = sid;
+      faultCode = FAULT_NONE;
+
+      if (state == STATE_LOCKED || state == STATE_ENDED) {
+        changeState(batteryStatus == BAT_CRITICAL ? STATE_LOW_BATT : STATE_RUNNING);
+      } else if (state == STATE_LOW_BATT) {
+        changeState(STATE_LOW_BATT);
+      } else {
+        changeState(state);
+      }
+      ok = true;
+    }
+  } else if (command == "PAUSE") {
+    if (remainingSeconds > 0 && state == STATE_RUNNING) {
+      changeState(STATE_PAUSED);
+      ok = true;
+    } else {
+      code = "BAD_STATE";
+    }
+  } else if (command == "RESUME") {
+    if (remainingSeconds == 0) {
+      code = "BAD_STATE";
+    } else if (batteryStatus == BAT_CRITICAL) {
+      changeState(STATE_LOW_BATT);
+      code = "LOW_BATT";
+    } else {
+      faultCode = FAULT_NONE;
+      changeState(STATE_RUNNING);
+      ok = true;
+    }
+  } else if (command == "STOP") {
+    remainingSeconds = 0;
+    totalPaidSeconds = 0;
+    sessionId = "";
+    faultCode = FAULT_NONE;
+    changeState(STATE_LOCKED);
+    ok = true;
+  } else if (command == "CLEAR_FAULT") {
+    if (state == STATE_FAULT || state == STATE_LOW_BATT) {
+      faultCode = FAULT_NONE;
+      changeState(remainingSeconds > 0 ? STATE_PAUSED : STATE_LOCKED);
+      ok = true;
+    } else {
+      code = "BAD_STATE";
+    }
+  } else if (command == "GET_STATE") {
+    publishState(true);
+    ok = true;
+  } else {
+    code = "BAD_FORMAT";
+  }
+
+  if (ok) {
+    lastCommandId = commandId;
+    lastAppliedCommandId = commandId;
+    saveSession();
+  }
+
+  sendAck(commandId, ok, code);
+  publishState(true);
+  refreshAdvertising();
+}
+
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *server) override {
+    bleConnected = true;
+    seq++;
+    refreshAdvertising();
+    publishState(true);
+  }
+
+  void onDisconnect(BLEServer *server) override {
+    bleConnected = false;
+    seq++;
+    refreshAdvertising();
+  }
+};
+
+class CommandCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) override {
+    String value = characteristic->getValue().c_str();
+    processCommand(value);
+  }
+};
+
+void setupBle() {
+  BLEDevice::init(TOY_ID);
+  bleServer = BLEDevice::createServer();
+  bleServer->setCallbacks(new ServerCallbacks());
+
+  BLEService *service = bleServer->createService(SERVICE_UUID);
+
+  stateChar = service->createCharacteristic(
+    STATE_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+  );
+  stateChar->addDescriptor(new BLE2902());
+
+  BLECharacteristic *commandChar = service->createCharacteristic(
+    COMMAND_CHAR_UUID,
+    BLECharacteristic::PROPERTY_WRITE
+  );
+  commandChar->setCallbacks(new CommandCallbacks());
+
+  ackChar = service->createCharacteristic(
+    ACK_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+  );
+  ackChar->addDescriptor(new BLE2902());
+
+  infoChar = service->createCharacteristic(
+    INFO_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ
+  );
+  infoChar->setValue((String("v1;toy=") + TOY_ID + ";fw=ble-direct-mvp;display=tm1637;relay=cheap").c_str());
+
+  service->start();
+
+  bleAdvertising = BLEDevice::getAdvertising();
+  bleAdvertising->addServiceUUID(SERVICE_UUID);
+  bleAdvertising->setScanResponse(true);
+  refreshAdvertising();
+}
+
+void handleTimerTick() {
+  if (state != STATE_RUNNING) return;
+
+  uint32_t now = millis();
+  if (now - lastTickMs < 1000) return;
+  lastTickMs = now;
+
+  if (remainingSeconds > 0) {
+    remainingSeconds--;
+  }
+
+  if (remainingSeconds == 0) {
+    changeState(STATE_ENDED);
+    saveSession();
+  } else if (now - lastSaveMs >= SAVE_INTERVAL_MS) {
+    saveSession();
+  }
 
   updateDisplay();
-  Serial.println("[BOOT]" " Ready!");
+  publishState(false);
 }
 
-// ===== LOOP =====
+void handleBatteryCutoff() {
+  if (state != STATE_RUNNING) return;
+  if (cutoffCount < CUTOFF_CONFIRM_COUNT) return;
+
+  faultCode = FAULT_LOW_BATT_CUTOFF;
+  changeState(STATE_LOW_BATT);
+  saveSession();
+}
+
+void handleSerialDebug() {
+  if (!Serial.available()) return;
+
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  line.toUpperCase();
+
+  if (line == "+5") {
+    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|300|SERIAL|debug|debug");
+  } else if (line == "+10") {
+    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|600|SERIAL|debug|debug");
+  } else if (line == "PAUSE") {
+    processCommand("v1|" + String(lastCommandId + 1) + "|PAUSE|0|SERIAL|debug|debug");
+  } else if (line == "RESUME") {
+    processCommand("v1|" + String(lastCommandId + 1) + "|RESUME|0|SERIAL|debug|debug");
+  } else if (line == "STOP") {
+    processCommand("v1|" + String(lastCommandId + 1) + "|STOP|0|SERIAL|debug|debug");
+  } else if (line == "STATUS") {
+    Serial.println(buildStatePayload());
+  }
+}
+
+void setup() {
+  digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? LOW : HIGH);
+  pinMode(RELAY_PIN, OUTPUT);
+  relayOff();
+
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, LOW);
+  pinMode(SERVICE_BUTTON_PIN, INPUT_PULLUP);
+
+  Serial.begin(115200);
+  delay(100);
+
+  display.setBrightness(5);
+  display.setSegments(SEG_LOCKED);
+
+  analogReadResolution(12);
+#ifdef ADC_11db
+  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
+#endif
+
+  updateBatteryStatus(true);
+  loadSession();
+  applyRelay();
+  updateDisplay();
+  saveSession();
+
+  setupBle();
+  publishState(true);
+  refreshAdvertising();
+
+  Serial.println("Excavator BLE Direct MVP ready");
+  Serial.println(buildStatePayload());
+  lastTickMs = millis();
+}
+
 void loop() {
-  // === Serial command bridge ===
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    processSerialCommand(cmd);
+  uint32_t now = millis();
+
+  if (now - lastBatteryMs >= 1000) {
+    lastBatteryMs = now;
+    updateBatteryStatus();
+    handleBatteryCutoff();
   }
 
-  // === Timer countdown ===
-  if (currentState == RUNNING) {
-    unsigned long elapsed = (millis() - timerStartedAt) / 1000;
+  handleTimerTick();
 
-    if (elapsed >= timerDuration) {
-      finishTimer();
-    } else {
-      timerRemaining = timerDuration - elapsed;
-
-      unsigned long now = millis();
-      if (now - lastSecondTick >= 1000) {
-        lastSecondTick = now;
-        updateDisplay();
-        updateCharStatus();
-      }
-    }
+  if (now - lastNotifyMs >= NOTIFY_INTERVAL_MS) {
+    updateDisplay();
+    publishState(false);
   }
 
-  // === Tombol fisik ===
-  if (digitalRead(BTN_RESET) == LOW) {
-    delay(50);
-    if (digitalRead(BTN_RESET) == LOW) {
-      resetTimer();
-      digitalWrite(BUZZER_PIN, LOW);
-      display.setSegments((uint8_t*)segDASH, 4, 0);
-      delay(500);
-    }
+  if (now - lastAdvertiseMs >= ADVERTISE_REFRESH_MS) {
+    refreshAdvertising();
   }
 
-  if (digitalRead(BTN_TEST) == LOW) {
-    delay(50);
-    if (digitalRead(BTN_TEST) == LOW) {
-      digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN));
-      delay(500);
-    }
-  }
-
-  // === Power check tiap 5 detik ===
-  static unsigned long lastPowerCheck = 0;
-  if (millis() - lastPowerCheck >= 5000) {
-    lastPowerCheck = millis();
-    checkPower();
-    updateCharInfo();
-  }
-
-  // === Buzzer mati otomatis setelah 30 detik (kalo FINISHED) ===
-  if (currentState == FINISHED && digitalRead(BUZZER_PIN) == HIGH) {
-    if (buzzerStartedAt == 0) buzzerStartedAt = millis();
-    if (millis() - buzzerStartedAt >= 30000) {
-      digitalWrite(BUZZER_PIN, LOW);
-      buzzerStartedAt = 0;
-      Serial.println("[Buzzer]" " Auto-off after 30s");
-      saveToNVS();
-    }
-  } else if (currentState != FINISHED) {
-    buzzerStartedAt = 0;  // reset when not in FINISHED state
-  }
-
+  handleSerialDebug();
   delay(10);
 }
