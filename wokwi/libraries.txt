@@ -1,1 +1,1 @@
-TM1637
+TM1637Display
