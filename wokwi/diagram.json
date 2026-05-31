@@ -59,6 +59,8 @@
     ["esp:GND.1", "btn2:2.l", "black", []],
     ["esp:3V3", "pot1:VCC", "red", []],
     ["esp:GND.1", "pot1:GND", "black", []],
-    ["pot1:SIG", "esp:D34", "gray", []]
+    ["pot1:SIG", "esp:D34", "gray", []],
+    ["esp:TX0", "$serialMonitor:RX", "", []],
+    ["esp:RX0", "$serialMonitor:TX", "", []]
   ]
 }
