@@ -493,6 +493,7 @@ void processSerialCommand(String input) {
 // ===== SETUP =====
 void setup() {
   Serial.begin(115200);
+  delay(1000); // Wait for Serial Monitor connection
   Serial.println("\n=== EXCAVATOR TIMER RENTAL v2.1 ===");
 #ifdef WOKWI_SIMULATION
   Serial.println("[MODE] Wokwi Simulation — BLE disabled, use Serial commands");
