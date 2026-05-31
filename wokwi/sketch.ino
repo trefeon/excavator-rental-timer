@@ -446,6 +446,7 @@ void updateCharInfo() {
 
 void processSerialCommand(String input) {
   input.trim();
+  if (input.length() == 0) return;
   input.toUpperCase();
 
   Serial.printf("[Serial] Cmd: %s\n", input.c_str());
