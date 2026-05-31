@@ -2,295 +2,635 @@
 <html lang="id">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Excavator Rental Dashboard Mockup</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+  <title>Dashboard BLE - Excavator Rental</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; }
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #e2e8f0;
+      --panel: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      
+      --success: #10b981;
+      --success-bg: #d1fae5;
+      --warning: #f59e0b;
+      --warning-bg: #fef3c7;
+      --danger: #ef4444;
+      --danger-bg: #fee2e2;
+      --offline: #94a3b8;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    
     body {
-      margin: 0;
-      background: #eef2f7;
-      color: #172033;
-      font-family: Arial, sans-serif;
-      padding: 22px;
+      background: var(--bg); color: var(--text-main);
+      display: flex; justify-content: center;
+      min-height: 100vh; margin: 0;
     }
-    .app {
-      max-width: 1180px;
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 390px 1fr;
-      gap: 16px;
+
+    .app-container {
+      width: 100%; max-width: 480px; height: 100vh;
+      background: var(--panel); position: relative;
+      overflow: hidden; box-shadow: 0 0 40px rgba(0,0,0,0.1);
     }
+
+    @media (max-width: 480px) {
+      .app-container { box-shadow: none; }
+      body { background: var(--panel); }
+    }
+
     .screen {
-      background: #ffffff;
-      border: 1px solid #d8dee9;
-      border-radius: 8px;
-      overflow: hidden;
-      min-height: 720px;
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; background: #f8fafc;
+      transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
     }
-    .top {
-      padding: 16px;
-      border-bottom: 1px solid #e2e8f0;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
+    
+    #screen-list { transform: translateX(0); }
+    #screen-detail { transform: translateX(100%); background: #ffffff; }
+
+    /* Header */
+    .header {
+      background: #ffffff; padding: 20px 20px 15px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px; z-index: 10;
     }
-    h1, h2, h3 { margin: 0; }
-    h1 { font-size: 20px; }
-    h2 { font-size: 18px; }
-    h3 { font-size: 14px; color: #475569; }
-    .muted { color: #64748b; font-size: 13px; }
-    .scan { color: #047857; font-weight: 700; font-size: 13px; }
-    .list { padding: 10px; display: grid; gap: 8px; }
-    .row {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 12px;
-      display: grid;
-      grid-template-columns: 70px 1fr auto;
-      gap: 10px;
-      align-items: center;
-      background: #fff;
+    .header-text { flex: 1; }
+    .header h1 { font-size: 18px; font-weight: 700; }
+    .header-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    
+    .back-btn {
+      background: none; border: none; padding: 8px; margin-left: -8px;
+      cursor: pointer; color: var(--primary);
     }
-    .row.active { border-color: #2563eb; background: #eff6ff; }
-    .toy { font-weight: 700; }
-    .status { font-size: 12px; font-weight: 700; }
-    .running { color: #047857; }
-    .paused { color: #b45309; }
-    .locked { color: #475569; }
-    .low { color: #b91c1c; }
-    .offline { color: #94a3b8; }
-    .time { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 52px;
-      padding: 4px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      background: #f1f5f9;
+
+    /* Summary Dashboard */
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 20px; background: #ffffff; border-bottom: 1px solid var(--border); }
+    .summary-box { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .summary-box .label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 4px; }
+    .summary-box .val { font-size: 18px; font-weight: 800; color: var(--primary); }
+    .summary-box .val.money { color: var(--success); }
+
+    /* Scanner Bar */
+    .scanner-bar {
+      background: #eff6ff; border-bottom: 1px solid #bfdbfe;
+      padding: 10px 20px; display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: #1e3a8a; font-weight: 600;
     }
-    .pill.ok { background: #dcfce7; color: #047857; }
-    .pill.warn { background: #fef3c7; color: #92400e; }
-    .pill.bad { background: #fee2e2; color: #991b1b; }
-    .detail { padding: 18px; }
-    .hero {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 18px;
-      margin-bottom: 14px;
+    .pulse-dot {
+      width: 10px; height: 10px; background: var(--primary); border-radius: 50%;
+      animation: pulse-ring 1.5s infinite;
     }
-    .detail-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-      margin-bottom: 22px;
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
     }
-    .big-time { font-size: 56px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin-bottom: 14px;
+
+    /* List View */
+    .list-content {
+      flex: 1; overflow-y: auto; padding: 16px;
+      display: flex; flex-direction: column; gap: 12px;
     }
-    .metric {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 12px;
-      background: #f8fafc;
+
+    .card {
+      background: #ffffff; border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 16px; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .metric b { display: block; font-size: 18px; margin-top: 6px; }
-    .actions {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 16px;
+    .card:active { transform: scale(0.98); background: #f8fafc; }
+    
+    .card-info h3 { font-size: 16px; font-weight: 700; margin-bottom: 2px; display:flex; align-items:center; gap: 8px; }
+    .card-mac { font-size: 11px; color: var(--text-muted); font-family: monospace; margin-bottom: 6px; }
+    .card-time { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; margin-bottom: 4px; }
+    
+    .badge {
+      display: inline-block; padding: 4px 8px; border-radius: 6px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
     }
+    .badge.running { background: var(--success-bg); color: var(--success); }
+    .badge.paused { background: var(--warning-bg); color: var(--warning); }
+    .badge.locked { background: var(--danger-bg); color: var(--danger); }
+    .badge.offline { background: #e2e8f0; color: var(--offline); }
+
+    .signal-indicator { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .signal-online { background: #10b981; box-shadow: 0 0 6px #10b981; }
+    .signal-weak { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+    .signal-offline { background: #94a3b8; }
+
+    .last-seen { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+
+    /* Detail View */
+    .detail-content { flex: 1; overflow-y: auto; padding: 20px; }
+
+    .hero-timer {
+      background: linear-gradient(135deg, #1e293b, #0f172a); color: white;
+      border-radius: 20px; padding: 30px 20px; text-align: center;
+      margin-bottom: 24px; position: relative; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+    }
+
+    .time-display {
+      font-size: 64px; font-weight: 800; font-variant-numeric: tabular-nums;
+      line-height: 1; margin-bottom: 12px; text-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+    
+    .hero-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.1); padding: 6px 14px; border-radius: 20px;
+      font-size: 13px; font-weight: 600; backdrop-filter: blur(4px);
+    }
+    .hero-status .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .hero-status.running .dot { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .hero-status.paused .dot { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+    .hero-status.locked .dot { background: #f87171; box-shadow: 0 0 8px #f87171; }
+    .hero-status.offline .dot { background: #94a3b8; }
+
+    /* Controls */
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
     button {
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      padding: 13px 10px;
-      background: #fff;
-      color: #172033;
-      font-weight: 700;
-      font-size: 14px;
+      border: none; border-radius: 12px; padding: 14px; font-size: 14px; font-weight: 600;
+      cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px;
     }
-    .primary { background: #2563eb; color: #fff; border-color: #2563eb; }
-    .danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
-    .log {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    .log-row {
-      display: grid;
-      grid-template-columns: 90px 1fr auto;
-      gap: 8px;
-      padding: 10px 12px;
-      border-bottom: 1px solid #edf2f7;
-      font-size: 13px;
-    }
-    .sheet {
-      border: 1px solid #d8dee9;
-      border-radius: 8px;
-      padding: 16px;
-      margin-top: 14px;
-      background: #f8fafc;
-    }
-    .qrbox {
-      border: 2px dashed #94a3b8;
-      border-radius: 8px;
-      height: 150px;
-      display: grid;
-      place-items: center;
-      color: #64748b;
-      font-weight: 700;
-      margin-top: 10px;
-    }
-    @media (max-width: 900px) {
-      body { padding: 10px; }
-      .app { grid-template-columns: 1fr; }
-      .screen { min-height: auto; }
-      .metrics, .actions { grid-template-columns: 1fr 1fr; }
-      .big-time { font-size: 42px; }
-    }
+    button:active { transform: scale(0.95); }
+    button:disabled { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
+    
+    .btn-add { background: var(--success-bg); color: #047857; }
+    .btn-pause { background: var(--warning-bg); color: #b45309; }
+    .btn-stop { background: var(--danger-bg); color: #b91c1c; }
+    .btn-start { background: var(--primary); color: white; }
+
+    .section-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; color: var(--text-main); }
+    .info-box { background: #f8fafc; border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 24px; }
+    .metric-row { display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+    .metric-row:last-child { border: none; padding-bottom: 0; margin-bottom: 0; }
+    .metric-label { color: var(--text-muted); font-size: 13px; }
+    .metric-value { font-weight: 700; font-size: 13px; }
+
+    .log-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .log-item:last-child { border: none; padding-bottom: 0; }
+    .log-time { color: var(--text-muted); font-family: monospace; }
+    .log-msg { font-weight: 500; flex: 1; margin: 0 10px; }
+
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   </style>
 </head>
 <body>
-  <main class="app">
-    <section class="screen">
-      <div class="top">
-        <div>
-          <h1>Excavator Rental</h1>
-          <div class="muted">10 toys nearby</div>
-        </div>
-        <div class="scan">Scanning BLE</div>
-      </div>
 
-      <div class="list">
-        <div class="row active">
-          <div class="toy">EXC-01</div>
-          <div>
-            <div class="status running">RUNNING</div>
-            <div class="muted">last seen 1s ago</div>
-          </div>
-          <div>
-            <div class="time">03:20</div>
-            <span class="pill ok">OK</span>
-          </div>
-        </div>
-        <div class="row">
-          <div class="toy">EXC-02</div>
-          <div>
-            <div class="status locked">LOCKED</div>
-            <div class="muted">last seen 2s ago</div>
-          </div>
-          <div>
-            <div class="time">--</div>
-            <span class="pill ok">OK</span>
-          </div>
-        </div>
-        <div class="row">
-          <div class="toy">EXC-03</div>
-          <div>
-            <div class="status paused">PAUSED</div>
-            <div class="muted">battery swapped</div>
-          </div>
-          <div>
-            <div class="time">02:40</div>
-            <span class="pill ok">OK</span>
-          </div>
-        </div>
-        <div class="row">
-          <div class="toy">EXC-04</div>
-          <div>
-            <div class="status low">LOW_BATT</div>
-            <div class="muted">replace battery</div>
-          </div>
-          <div>
-            <div class="time">01:55</div>
-            <span class="pill bad">LOW</span>
-          </div>
-        </div>
-        <div class="row">
-          <div class="toy">EXC-05</div>
-          <div>
-            <div class="status offline">OFFLINE</div>
-            <div class="muted">last seen 22s ago</div>
-          </div>
-          <div>
-            <div class="time">--</div>
-            <span class="pill">--</span>
-          </div>
+  <div class="app-container">
+    
+    <!-- SCREEN 1: LIST -->
+    <div id="screen-list" class="screen">
+      <div class="header">
+        <div class="header-text">
+          <h1>Rental Excavator</h1>
+          <div class="header-sub">Pemantauan Armada (BLE Advertising)</div>
         </div>
       </div>
-    </section>
-
-    <section class="screen">
-      <div class="top">
-        <div>
-          <h2>EXC-01</h2>
-          <div class="muted">BLE direct command mode</div>
+      <div class="summary-grid">
+        <div class="summary-box">
+          <div class="label">Pendapatan Hari Ini</div>
+          <div class="val money" id="global-revenue">Rp 0</div>
         </div>
-        <span class="pill ok">ONLINE</span>
-      </div>
-
-      <div class="detail">
-        <div class="hero">
-          <div class="detail-head">
-            <div>
-              <h3>Remaining</h3>
-              <div class="big-time">03:20</div>
-            </div>
-            <div>
-              <span class="pill ok">RUNNING</span>
-            </div>
-          </div>
-
-          <div class="metrics">
-            <div class="metric">
-              <span class="muted">Battery</span>
-              <b>OK</b>
-            </div>
-            <div class="metric">
-              <span class="muted">Toy Display</span>
-              <b>03:20</b>
-            </div>
-            <div class="metric">
-              <span class="muted">Session</span>
-              <b>S-1042</b>
-            </div>
-          </div>
-
-          <div class="actions">
-            <button class="primary">+5 menit</button>
-            <button>+10 menit</button>
-            <button>Pause</button>
-            <button>Resume</button>
-            <button class="danger">Stop</button>
-            <button>Clear Fault</button>
-          </div>
-        </div>
-
-        <div class="sheet">
-          <h3>Provision QR</h3>
-          <div class="muted">Scan sticker untuk tambah mainan baru.</div>
-          <div class="qrbox">QR CAMERA AREA</div>
-        </div>
-
-        <div class="sheet">
-          <h3>Recent Commands</h3>
-          <div class="log">
-            <div class="log-row"><span>20:31</span><span>ADD_TIME 300</span><b>OK</b></div>
-            <div class="log-row"><span>20:26</span><span>RESUME</span><b>OK</b></div>
-            <div class="log-row"><span>20:25</span><span>Battery changed</span><b>PAUSED</b></div>
-          </div>
+        <div class="summary-box">
+          <div class="label">Total Waktu Main</div>
+          <div class="val" id="global-played">0j 0m</div>
         </div>
       </div>
-    </section>
-  </main>
+      <div class="scanner-bar">
+        <div class="pulse-dot"></div>
+        Mendengarkan BLE Broadcasts...
+      </div>
+      <div class="list-content" id="unit-list">
+        <!-- Static DOM elements updated by JS -->
+      </div>
+    </div>
+
+    <!-- SCREEN 2: DETAIL -->
+    <div id="screen-detail" class="screen">
+      <div class="header">
+        <button class="back-btn" onclick="goBack()">
+          <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+        <div class="header-text">
+          <h1 id="detail-title">EXC-00</h1>
+          <div class="header-sub" id="detail-mac">MAC: --</div>
+        </div>
+      </div>
+      
+      <div class="detail-content">
+        <div style="text-align:center; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:16px; display: flex; justify-content: center; align-items: center; gap: 6px;" id="detail-last-seen">
+          Last Broadcast: <span id="dt-seen" style="color:var(--text-main)">0s ago</span>
+          <svg id="global-spinner" style="display:none; animation: spin 1s linear infinite;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+        </div>
+
+        <div class="hero-timer">
+          <div class="time-display" id="hero-time">00:00</div>
+          <div class="hero-status running" id="hero-status">
+            <div class="dot"></div>
+            <span id="hero-status-text">RUNNING</span>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls" id="action-controls">
+          <button class="btn-add" onclick="openTimeModal('add')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+            <div style="line-height:1.2;">
+              <div>Tambah Waktu</div>
+            </div>
+          </button>
+          <button class="btn-stop" style="background:#fee2e2; color:#b91c1c;" onclick="openTimeModal('sub')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+            <div style="line-height:1.2;">
+              <div>Kurangi Waktu</div>
+            </div>
+          </button>
+          <button class="btn-pause" id="btn-toggle-pause" onclick="sendCommand('TOGGLE_PAUSE')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="icon-pause"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span id="txt-toggle-pause">Pause</span>
+          </button>
+          <button class="btn-stop" id="btn-toggle-power" onclick="sendCommand('TOGGLE_POWER')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="icon-power"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>
+            <span id="txt-toggle-power">Stop</span>
+          </button>
+        </div>
+
+        <h3 class="section-title">Data Broadcast (Advertising)</h3>
+        <div class="info-box">
+          <div class="metric-row">
+            <span class="metric-label">Baterai</span>
+            <span class="metric-value" id="hw-batt">OK</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Sinyal (RSSI)</span>
+            <span class="metric-value" style="font-family: monospace;" id="hw-rssi">-0 dBm</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Koneksi BLE</span>
+            <span class="metric-value" style="color:var(--text-muted)">On-Demand</span>
+          </div>
+        </div>
+
+        <h3 class="section-title">Statistik Mesin</h3>
+        <div class="info-box">
+          <div class="metric-row">
+            <span class="metric-label">Pendapatan Mesin</span>
+            <span class="metric-value" style="color:var(--success)" id="det-rev">Rp 0</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Total Dimainkan</span>
+            <span class="metric-value" id="det-played">0j 0m</span>
+          </div>
+        </div>
+
+        <h3 class="section-title">Local Session Log</h3>
+        <div class="info-box" id="command-log" style="padding: 10px 16px;"></div>
+      </div>
+    </div>
+
+    <!-- Time Adjust Modal -->
+    <div id="modal-time" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:100; flex-direction:column; justify-content:flex-end;">
+      <div style="background:#fff; border-radius:20px 20px 0 0; padding:24px; animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);">
+        <h3 id="modal-time-title" style="margin-bottom:16px; font-size:16px; font-weight:700; color:var(--text-main);">Tambah Waktu</h3>
+        <div id="modal-time-options" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+        </div>
+        <button onclick="closeTimeModal()" style="width:100%; background:#f1f5f9; color:#475569; padding:14px; border-radius:12px; font-weight:700; border:none; font-size:14px; cursor:pointer;">Batal</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    /* 
+      BLE Protocol Simulator
+      Based on ANDROID_APP_FLOW.md and BLE_PROTOCOL_SPEC.md 
+    */
+
+    // Source of truth for our mock devices
+    let devices = {
+      'EXC-01': { mac: 'E0:5A:1B:A1:00:11', status: 'running', time: 300, battery: 'OK', lastSeen: Date.now(), rssi: -60, rev: 10000, played: 120 },
+      'EXC-02': { mac: 'E0:5A:1B:A1:00:22', status: 'locked', time: 0, battery: 'OK', lastSeen: Date.now() - 6000, rssi: -75, rev: 0, played: 0 },
+      'EXC-03': { mac: 'E0:5A:1B:A1:00:33', status: 'paused', time: 180, battery: 'OK', lastSeen: Date.now() - 2000, rssi: -55, rev: 15000, played: 420 },
+      'EXC-04': { mac: 'E0:5A:1B:A1:00:44', status: 'low_batt', time: 10, battery: 'LOW', lastSeen: Date.now() - 20000, rssi: -85, rev: 25000, played: 900 }
+    };
+    
+    let activeUnitId = null;
+    let logs = {};
+    let isProcessing = false;
+
+    function formatTime(s) {
+      if (s <= 0) return "00:00";
+      return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
+    }
+
+    function formatRp(val) {
+      return 'Rp ' + val.toLocaleString('id-ID');
+    }
+
+    function formatPlayedTime(s) {
+      if (s === 0) return "0j 0m";
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return `${h}j ${m}m`;
+    }
+
+    // INITIALIZE DOM LIST
+    function buildListDOM() {
+      const container = document.getElementById('unit-list');
+      container.innerHTML = '';
+      Object.keys(devices).forEach(id => {
+        container.innerHTML += `
+          <div class="card" onclick="goDetail('${id}')">
+            <div class="card-info">
+              <h3><div class="signal-indicator" id="sig-${id}"></div> ${id}</h3>
+              <div class="card-mac">${devices[id].mac}</div>
+              <div class="badge" id="badge-${id}">--</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="card-time" id="time-${id}">00:00</div>
+              <div class="last-seen" id="seen-${id}">0s ago</div>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    // UI UPDATER LOOP (Runs every 100ms for smooth UI updates)
+    setInterval(() => {
+      const now = Date.now();
+      let totalRev = 0;
+      let totalPlayed = 0;
+      
+      Object.keys(devices).forEach(id => {
+        const dev = devices[id];
+        const ageSecs = Math.floor((now - dev.lastSeen) / 1000);
+        
+        // Offline Handling Logic (from ANDROID_APP_FLOW.md)
+        let signalClass = 'signal-offline';
+        let isOffline = false;
+        
+        if (ageSecs < 5) signalClass = 'signal-online';
+        else if (ageSecs <= 15) signalClass = 'signal-weak';
+        else { signalClass = 'signal-offline'; isOffline = true; }
+        
+        // Update List Nodes
+        document.getElementById(`seen-${id}`).innerText = `${ageSecs}s ago`;
+        document.getElementById(`sig-${id}`).className = `signal-indicator ${signalClass}`;
+        document.getElementById(`time-${id}`).innerText = dev.status === 'locked' ? '--:--' : formatTime(dev.time);
+        
+        const badgeNode = document.getElementById(`badge-${id}`);
+        if (isOffline) {
+          badgeNode.className = 'badge offline';
+          badgeNode.innerText = 'OFFLINE';
+        } else {
+          badgeNode.className = `badge ${dev.status.replace('_','-')}`;
+          badgeNode.innerText = dev.status.toUpperCase();
+        }
+
+        // Update Detail View if Active
+        if (activeUnitId === id) {
+          document.getElementById('dt-seen').innerText = `${ageSecs}s ago`;
+          document.getElementById('hw-rssi').innerText = isOffline ? '--' : `${dev.rssi} dBm`;
+          document.getElementById('det-rev').innerText = formatRp(dev.rev);
+          document.getElementById('det-played').innerText = formatPlayedTime(dev.played);
+          
+          // Disable controls if offline or processing
+          if (!isProcessing) {
+            const controls = document.getElementById('action-controls').querySelectorAll('button');
+            controls.forEach(btn => btn.disabled = isOffline);
+            updateDetailButtons(dev);
+          }
+          
+          document.getElementById('hero-time').innerText = formatTime(dev.time);
+          const heroSt = document.getElementById('hero-status');
+          if (isOffline) {
+            heroSt.className = `hero-status offline`;
+            document.getElementById('hero-status-text').innerText = 'OFFLINE';
+          } else {
+            heroSt.className = `hero-status ${dev.status.replace('_','-')}`;
+            document.getElementById('hero-status-text').innerText = dev.status.toUpperCase();
+          }
+        }
+      });
+      document.getElementById('global-revenue').innerText = formatRp(totalRev);
+      document.getElementById('global-played').innerText = formatPlayedTime(totalPlayed);
+    }, 500);
+
+    // ESP32 BLE ADVERTISEMENT SIMULATOR (Background)
+    // ESPs decrement their own time and broadcast their state periodically
+    setInterval(() => {
+      Object.keys(devices).forEach(id => {
+        const dev = devices[id];
+        
+        // ESP hardware ticks down if running
+        if (dev.status === 'running' && dev.time > 0) {
+          dev.time--;
+          dev.played++;
+          if (dev.time <= 0) { dev.time = 0; dev.status = 'locked'; }
+        }
+
+        // Simulate BLE Advertisement Packet (Variable intervals)
+        // RUNNING: 0.5s-1s, LOCKED/PAUSED: 1s-2s
+        const isBroadcastTime = Math.random() > 0.3; // 70% chance to broadcast this second
+        
+        if (isBroadcastTime && id !== 'EXC-04') { // Let EXC-04 stay offline
+          dev.lastSeen = Date.now();
+          dev.rssi = -50 - Math.floor(Math.random() * 20); // fluctuate signal
+        }
+      });
+    }, 1000);
+
+
+    // Navigation
+    function goDetail(id) {
+      activeUnitId = id;
+      const dev = devices[id];
+      document.getElementById('detail-title').innerText = id;
+      document.getElementById('detail-mac').innerText = `MAC: ${dev.mac}`;
+      document.getElementById('hw-batt').innerText = dev.battery;
+      if(dev.battery === 'LOW') document.getElementById('hw-batt').style.color = 'var(--danger)';
+      else document.getElementById('hw-batt').style.color = 'var(--success)';
+      
+      renderLogs();
+      document.getElementById('screen-list').style.transform = 'translateX(-30%)';
+      document.getElementById('screen-detail').style.transform = 'translateX(0)';
+    }
+
+    function goBack() {
+      activeUnitId = null;
+      document.getElementById('screen-list').style.transform = 'translateX(0)';
+      document.getElementById('screen-detail').style.transform = 'translateX(100%)';
+    }
+
+    function updateDetailButtons(dev) {
+      const btnPause = document.getElementById('btn-toggle-pause');
+      const txtPause = document.getElementById('txt-toggle-pause');
+      const iconPause = document.getElementById('icon-pause');
+      
+      if (dev.status === 'running') {
+        txtPause.innerText = 'Pause';
+        iconPause.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
+      } else if (dev.status === 'paused') {
+        txtPause.innerText = 'Resume';
+        iconPause.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
+      } else {
+        txtPause.innerText = 'Pause';
+        btnPause.disabled = true; // Hard disable if locked
+      }
+
+      const btnPower = document.getElementById('btn-toggle-power');
+      const txtPower = document.getElementById('txt-toggle-power');
+      const iconPower = document.getElementById('icon-power');
+      if (dev.status === 'running' || dev.status === 'paused') {
+        btnPower.className = 'btn-stop'; txtPower.innerText = 'Stop';
+        iconPower.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>';
+      } else {
+        btnPower.className = 'btn-start'; txtPower.innerText = 'Start';
+        iconPower.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
+      }
+    }
+
+    // ON-DEMAND COMMAND SENDING
+    function sendCommand(cmd, payload=null) {
+      if (isProcessing) return;
+      const dev = devices[activeUnitId];
+      if (!dev) return;
+
+      if (cmd === 'TOGGLE_POWER' && (dev.status === 'running' || dev.status === 'paused')) {
+        if (!confirm("Peringatan: Menghentikan (Stop) akan me-reset sisa waktu menjadi 00:00. Anda yakin ingin melanjutkan?")) return;
+      }
+
+      isProcessing = true;
+
+      // Lock buttons
+      const btns = document.getElementById('action-controls').querySelectorAll('button');
+      btns.forEach(b => b.disabled = true);
+      
+      const spinner = document.getElementById('global-spinner');
+      if (spinner) spinner.style.display = 'inline-block';
+      
+      setTimeout(() => {
+        let isSuccess = true;
+        let failReason = '';
+        
+        // Apply Logic (Simulating ESP32 processing it successfully)
+        if (cmd === 'ADD_TIME') {
+          dev.time += payload * 60;
+          if (payload === 5) dev.rev += 10000;
+          else if (payload === 10) dev.rev += 15000;
+          else dev.rev += payload * 1500;
+          // Waktu ditambahkan tapi mesin tetap locked sampai ditekan Start
+        } else if (cmd === 'SUB_TIME') {
+          dev.time -= payload * 60;
+          if (dev.time < 0) dev.time = 0;
+          
+          if (payload === 5) dev.rev -= 10000;
+          else if (payload === 10) dev.rev -= 15000;
+          else dev.rev -= payload * 1500;
+          
+          if (dev.rev < 0) dev.rev = 0; // prevent negative revenue
+
+          if (dev.time === 0 && dev.status === 'running') {
+             dev.status = 'locked'; // Auto lock if time runs out
+          }
+        } else if (cmd === 'TOGGLE_PAUSE') {
+          dev.status = dev.status === 'running' ? 'paused' : 'running';
+        } else if (cmd === 'TOGGLE_POWER') {
+          if (dev.status === 'running' || dev.status === 'paused') {
+            dev.time = 0; dev.status = 'locked';
+          } else {
+            if (dev.time <= 0) {
+              isSuccess = false;
+              failReason = "Waktu habis, tambah waktu dulu!";
+            } else {
+              dev.status = 'running';
+            }
+          }
+        }
+
+        // Mock updating last seen directly since we just connected
+        dev.lastSeen = Date.now();
+        
+        // Log local transaction
+        if(!logs[activeUnitId]) logs[activeUnitId] = [];
+        const d = new Date();
+        const ts = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+        logs[activeUnitId].unshift({ ts, msg: `${cmd} ${payload||''}`, res: isSuccess ? 'ACK OK' : 'ACK ERR' });
+        if (logs[activeUnitId].length > 5) logs[activeUnitId].pop();
+        renderLogs();
+
+        if (!isSuccess) {
+          alert("Gagal (Ditolak ESP32): " + failReason);
+        }
+
+        if (spinner) spinner.style.display = 'none';
+        isProcessing = false;
+        // Buttons will automatically unlock on the next UI update loop
+      }, 1000); // simulate 1 second loading
+    }
+
+    function openTimeModal(type) {
+      if (isProcessing) return;
+      const dev = devices[activeUnitId];
+      if (!dev || (Date.now() - dev.lastSeen > 15000)) return; // Offline check
+      
+      const title = document.getElementById('modal-time-title');
+      const opts = document.getElementById('modal-time-options');
+      
+      if (type === 'add') {
+        title.innerText = 'Tambah Waktu';
+        opts.innerHTML = `
+          <button class="btn-add" style="padding:16px;" onclick="doTimeAdjust('ADD_TIME', 5)">
+            <div style="font-size:15px; margin-bottom:4px;">+5 Menit</div><div style="font-size:11px;">Rp 10.000</div>
+          </button>
+          <button class="btn-add" style="padding:16px;" onclick="doTimeAdjust('ADD_TIME', 10)">
+            <div style="font-size:15px; margin-bottom:4px;">+10 Menit</div><div style="font-size:11px;">Rp 15.000</div>
+          </button>
+        `;
+      } else {
+        title.innerText = 'Kurangi Waktu (Koreksi)';
+        opts.innerHTML = `
+          <button class="btn-stop" style="background:#fee2e2; color:#b91c1c; padding:16px;" onclick="doTimeAdjust('SUB_TIME', 5)">
+            <div style="font-size:15px; margin-bottom:4px;">-5 Menit</div><div style="font-size:11px;">- Rp 10.000</div>
+          </button>
+          <button class="btn-stop" style="background:#fee2e2; color:#b91c1c; padding:16px;" onclick="doTimeAdjust('SUB_TIME', 10)">
+            <div style="font-size:15px; margin-bottom:4px;">-10 Menit</div><div style="font-size:11px;">- Rp 15.000</div>
+          </button>
+        `;
+      }
+      document.getElementById('modal-time').style.display = 'flex';
+    }
+
+    function closeTimeModal() {
+      document.getElementById('modal-time').style.display = 'none';
+    }
+
+    function doTimeAdjust(cmd, payload) {
+      closeTimeModal();
+      sendCommand(cmd, payload);
+    }
+
+    function renderLogs() {
+      const list = document.getElementById('command-log');
+      const l = logs[activeUnitId] || [];
+      if (l.length === 0) { list.innerHTML = `<div style="font-size:12px; color:var(--text-muted); text-align:center;">Tidak ada riwayat lokal.</div>`; return; }
+      
+      list.innerHTML = l.map(entry => `
+        <div class="log-item">
+          <span class="log-time">${entry.ts}</span>
+          <span class="log-msg">${entry.msg}</span>
+          <span style="font-weight:700; color:var(--success)">${entry.res}</span>
+        </div>
+      `).join('');
+    }
+
+    // Init
+    buildListDOM();
+  </script>
 </body>
 </html>
