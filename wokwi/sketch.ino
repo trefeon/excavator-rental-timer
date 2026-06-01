@@ -9,22 +9,46 @@
  * - TM1637 4-digit display mounted on toy
  * - ADC voltage divider for battery status
  *
+ *
  * Safety:
  * - Relay is OFF on boot/reset.
  * - Timer is stored in NVS.
  * - Battery swap boots into PAUSED, never auto-runs.
+ *
+ * ==========================================================
+ * DEMO MODE NOTES:
+ * - The strict 5-minute (300s) ADD_TIME rule has been removed for testing.
+ * - Serial commands `+5` and `+10` now add 5 seconds and 10 seconds, instead of minutes.
+ * 
+ * HOW TO DEMO BLE:
+ * 1. Since Wokwi runs in the browser, you can interact with its simulated BLE
+ *    using Web Bluetooth.
+ * 2. You can use Chrome and go to: `chrome://bluetooth-internals/#devices`
+ *    and start scanning to see "EXC-01".
+ * 3. Or, if you run this on real hardware, use the "nRF Connect" app on your 
+ *    phone to connect, write to the Command Characteristic 
+ *    (7b7d0003-8f2a-4f6b-9b2e-2f3ad5a10001), and subscribe to the State 
+ *    Characteristic (7b7d0002-...).
+ * ==========================================================
  */
+
+#define WOKWI_SIMULATION 1
 
 #include <Arduino.h>
 #include <Preferences.h>
 #include <TM1637Display.h>
+#ifndef WOKWI_SIMULATION
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#endif
 #include "mbedtls/md.h"
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
 
 // ===== DEVICE CONFIG =====
+
 static const char *TOY_ID = "EXC-01";
 static const uint8_t TOY_NUMERIC_ID = 1;
 static const char *DEVICE_SECRET = "replace-with-unique-secret";
@@ -37,6 +61,15 @@ static const uint8_t DISPLAY_CLK_PIN = 18;
 static const uint8_t DISPLAY_DIO_PIN = 19;
 static const uint8_t STATUS_LED_PIN = 2;
 static const uint8_t SERVICE_BUTTON_PIN = 14;
+
+// ===== DEMO PINS =====
+static const uint8_t DEMO_BTN_ADD_PIN = 12;
+static const uint8_t DEMO_BTN_PAUSE_PIN = 13;
+static const uint8_t DEMO_BTN_STOP_PIN = 15;
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+uint32_t lastBtnAddMs = 0;
+uint32_t lastBtnPauseMs = 0;
+uint32_t lastBtnStopMs = 0;
 
 static const bool RELAY_ACTIVE_HIGH = true;
 
@@ -90,11 +123,13 @@ enum FaultCode : uint8_t {
 Preferences prefs;
 TM1637Display display(DISPLAY_CLK_PIN, DISPLAY_DIO_PIN);
 
+#ifndef WOKWI_SIMULATION
 BLEServer *bleServer = nullptr;
 BLEAdvertising *bleAdvertising = nullptr;
 BLECharacteristic *stateChar = nullptr;
 BLECharacteristic *ackChar = nullptr;
 BLECharacteristic *infoChar = nullptr;
+#endif
 
 RentalState state = STATE_LOCKED;
 BatteryStatus batteryStatus = BAT_UNKNOWN;
@@ -268,6 +303,7 @@ void updateBatteryStatus(bool force = false) {
 }
 
 void saveSession() {
+#ifndef WOKWI_SIMULATION
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putUInt("magic", STORAGE_MAGIC);
   prefs.putUInt("state", static_cast<uint32_t>(state));
@@ -277,10 +313,12 @@ void saveSession() {
   prefs.putString("sid", sessionId);
   prefs.putUInt("crc", storageCrc());
   prefs.end();
+#endif
   lastSaveMs = millis();
 }
 
 void loadSession() {
+#ifndef WOKWI_SIMULATION
   prefs.begin(NVS_NAMESPACE, true);
   uint32_t magic = prefs.getUInt("magic", 0);
   RentalState savedState = static_cast<RentalState>(prefs.getUInt("state", STATE_LOCKED));
@@ -320,6 +358,13 @@ void loadSession() {
     state = STATE_LOCKED;
     faultCode = FAULT_NONE;
   }
+#else
+  state = STATE_LOCKED;
+  remainingSeconds = 0;
+  totalPaidSeconds = 0;
+  sessionId = "";
+  lastCommandId = 0;
+#endif
 }
 
 String hmacSha256(const String &message) {
@@ -386,29 +431,80 @@ std::string buildManufacturerData() {
 }
 
 void refreshAdvertising() {
+#ifndef WOKWI_SIMULATION
   if (!bleAdvertising) return;
 
   BLEAdvertisementData adv;
   adv.setName(TOY_ID);
-  adv.setManufacturerData(buildManufacturerData());
+  std::string mfgData = buildManufacturerData();
+  adv.setManufacturerData(String(mfgData.c_str(), mfgData.length()));
   adv.setCompleteServices(BLEUUID(SERVICE_UUID));
 
   bleAdvertising->setAdvertisementData(adv);
   if (!bleConnected) {
     bleAdvertising->start();
   }
+#endif
   lastAdvertiseMs = millis();
 }
 
+void updateLCD() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("St:");
+  lcd.print(stateName(state));
+  lcd.setCursor(0, 1);
+  lcd.print("Bat:");
+  lcd.print(batteryName(batteryStatus));
+  lcd.setCursor(9, 1);
+  lcd.print("T:");
+  lcd.print(displayText());
+}
+
+void handleDemoButtons() {
+  uint32_t now = millis();
+  
+  if (digitalRead(DEMO_BTN_ADD_PIN) == LOW && (now - lastBtnAddMs > 300)) {
+    lastBtnAddMs = now;
+    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|5|BTN|demo|demo");
+  }
+  
+  if (digitalRead(DEMO_BTN_PAUSE_PIN) == LOW && (now - lastBtnPauseMs > 300)) {
+    lastBtnPauseMs = now;
+    if (state == STATE_PAUSED) {
+      processCommand("v1|" + String(lastCommandId + 1) + "|RESUME|0|BTN|demo|demo");
+    } else {
+      processCommand("v1|" + String(lastCommandId + 1) + "|PAUSE|0|BTN|demo|demo");
+    }
+  }
+
+  if (digitalRead(DEMO_BTN_STOP_PIN) == LOW && (now - lastBtnStopMs > 300)) {
+    lastBtnStopMs = now;
+    processCommand("v1|" + String(lastCommandId + 1) + "|STOP|0|BTN|demo|demo");
+  }
+
+  static uint32_t lastServiceBtnMs = 0;
+  if (digitalRead(SERVICE_BUTTON_PIN) == LOW && (now - lastServiceBtnMs > 500)) {
+    lastServiceBtnMs = now;
+    if (state == STATE_FAULT || state == STATE_LOW_BATT) {
+      processCommand("v1|" + String(lastCommandId + 1) + "|CLEAR_FAULT|0|BTN|demo|demo");
+    }
+  }
+}
+
 void publishState(bool force = false) {
-  if (!stateChar) return;
   if (!force && millis() - lastNotifyMs < NOTIFY_INTERVAL_MS) return;
 
-  String payload = buildStatePayload();
-  stateChar->setValue(payload.c_str());
-  if (bleConnected) {
-    stateChar->notify();
+  updateLCD();
+#ifndef WOKWI_SIMULATION
+  if (stateChar) {
+    String payload = buildStatePayload();
+    stateChar->setValue(payload.c_str());
+    if (bleConnected) {
+      stateChar->notify();
+    }
   }
+#endif
   lastNotifyMs = millis();
 }
 
@@ -419,12 +515,14 @@ void sendAck(uint32_t commandId, bool ok, const String &code) {
                    ";state=" + stateName(state) +
                    ";rem=" + String(remainingSeconds);
 
+#ifndef WOKWI_SIMULATION
   if (ackChar) {
     ackChar->setValue(lastAckPayload.c_str());
     if (bleConnected) {
       ackChar->notify();
     }
   }
+#endif
 }
 
 void changeState(RentalState nextState) {
@@ -492,7 +590,8 @@ void processCommand(const String &input) {
   String code = "OK";
 
   if (command == "ADD_TIME") {
-    if (value == 0 || value % 300 != 0 || remainingSeconds + value > MAX_REMAINING_SECONDS) {
+    // DEMO: Removed the (value % 300 != 0) check to allow 5s / 10s additions
+    if (value == 0 || remainingSeconds + value > MAX_REMAINING_SECONDS) {
       code = "LIMIT";
     } else if (state == STATE_FAULT) {
       code = "FAULT";
@@ -562,6 +661,7 @@ void processCommand(const String &input) {
   refreshAdvertising();
 }
 
+#ifndef WOKWI_SIMULATION
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *server) override {
     bleConnected = true;
@@ -583,8 +683,10 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
     processCommand(value);
   }
 };
+#endif
 
 void setupBle() {
+#ifndef WOKWI_SIMULATION
   BLEDevice::init(TOY_ID);
   bleServer = BLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
@@ -621,6 +723,7 @@ void setupBle() {
   bleAdvertising->addServiceUUID(SERVICE_UUID);
   bleAdvertising->setScanResponse(true);
   refreshAdvertising();
+#endif
 }
 
 void handleTimerTick() {
@@ -662,9 +765,9 @@ void handleSerialDebug() {
   line.toUpperCase();
 
   if (line == "+5") {
-    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|300|SERIAL|debug|debug");
+    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|5|SERIAL|debug|debug");
   } else if (line == "+10") {
-    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|600|SERIAL|debug|debug");
+    processCommand("v1|" + String(lastCommandId + 1) + "|ADD_TIME|10|SERIAL|debug|debug");
   } else if (line == "PAUSE") {
     processCommand("v1|" + String(lastCommandId + 1) + "|PAUSE|0|SERIAL|debug|debug");
   } else if (line == "RESUME") {
@@ -677,6 +780,11 @@ void handleSerialDebug() {
 }
 
 void setup() {
+  Serial.begin(115200);
+  delay(200);
+  Serial.println("\n--- DEBUG: ESP32 Booted! Starting setup()... ---");
+
+  Serial.println("DEBUG: Setting up Relay & LED...");
   digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? LOW : HIGH);
   pinMode(RELAY_PIN, OUTPUT);
   relayOff();
@@ -684,24 +792,42 @@ void setup() {
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
   pinMode(SERVICE_BUTTON_PIN, INPUT_PULLUP);
+  
+  pinMode(DEMO_BTN_ADD_PIN, INPUT_PULLUP);
+  pinMode(DEMO_BTN_PAUSE_PIN, INPUT_PULLUP);
+  pinMode(DEMO_BTN_STOP_PIN, INPUT_PULLUP);
 
-  Serial.begin(115200);
-  delay(100);
+  Serial.println("DEBUG: Initializing LCD...");
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Booting...");
+  Serial.println("DEBUG: LCD Initialized!");
 
+  Serial.println("DEBUG: Initializing 7-segment display...");
   display.setBrightness(5);
   display.setSegments(SEG_LOCKED);
 
+  Serial.println("DEBUG: Setting ADC resolution...");
   analogReadResolution(12);
 #ifdef ADC_11db
   analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
 #endif
 
+  Serial.println("DEBUG: Checking Battery Status...");
   updateBatteryStatus(true);
+  
+  Serial.println("DEBUG: Loading NVS session...");
   loadSession();
+  
+  Serial.println("DEBUG: Applying Relay and Display...");
   applyRelay();
   updateDisplay();
+  
+  Serial.println("DEBUG: Saving NVS session...");
   saveSession();
 
+  Serial.println("DEBUG: Setting up BLE...");
   setupBle();
   publishState(true);
   refreshAdvertising();
@@ -732,5 +858,6 @@ void loop() {
   }
 
   handleSerialDebug();
+  handleDemoButtons();
   delay(10);
 }

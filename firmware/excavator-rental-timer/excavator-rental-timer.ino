@@ -390,7 +390,8 @@ void refreshAdvertising() {
 
   BLEAdvertisementData adv;
   adv.setName(TOY_ID);
-  adv.setManufacturerData(buildManufacturerData());
+  std::string mfgData = buildManufacturerData();
+  adv.setManufacturerData(String(mfgData.c_str(), mfgData.length()));
   adv.setCompleteServices(BLEUUID(SERVICE_UUID));
 
   bleAdvertising->setAdvertisementData(adv);
