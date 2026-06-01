@@ -1,427 +1,231 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Business Flow - Excavator Rental Mall v2</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 30px; }
-  .container { max-width: 1000px; width: 100%; }
-  h1 { font-size: 18px; color: #22d3ee; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
-  h1 span { width: 8px; height: 8px; background: #22d3ee; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  .subtitle { font-size: 11px; color: #64748b; margin-bottom: 20px; }
-  .diagram-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 25px; margin-bottom: 20px; overflow-x: auto; }
-  svg { width: 100%; height: auto; }
-  .info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-top: 20px; }
-  .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; }
-  .card h3 { font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-  .card ul { list-style: none; font-size: 10px; line-height: 1.8; color: #94a3b8; }
-  .card ul li::before { content: "• "; color: #22d3ee; }
-  .dot-cyan { width: 8px; height: 8px; background: #22d3ee; border-radius: 50%; display: inline-block; }
-  .dot-emerald { width: 8px; height: 8px; background: #34d399; border-radius: 50%; display: inline-block; }
-  .dot-amber { width: 8px; height: 8px; background: #fbbf24; border-radius: 50%; display: inline-block; }
-  .dot-rose { width: 8px; height: 8px; background: #fb7185; border-radius: 50%; display: inline-block; }
-  .dot-violet { width: 8px; height: 8px; background: #a78bfa; border-radius: 50%; display: inline-block; }
-  .dot-sky { width: 8px; height: 8px; background: #38bdf8; border-radius: 50%; display: inline-block; }
-  .footer { font-size: 9px; color: #475569; text-align: center; margin-top: 15px; }
-  .warning { background: rgba(239,68,68,0.1); border: 1px solid #fb7185; border-radius: 8px; padding: 12px; margin: 10px 0; }
-  .warning h4 { color: #fb7185; font-size: 11px; margin-bottom: 4px; }
-  .warning p { color: #fda4af; font-size: 9px; line-height: 1.6; }
-  .pricing-box { background: rgba(120,53,15,0.15); border: 1px solid #fbbf24; border-radius: 8px; padding: 12px; margin-top: 10px; }
-  .pricing-box h4 { color: #fbbf24; font-size: 11px; margin-bottom: 6px; }
-  .pricing-box p { color: #fde68a; font-size: 9px; line-height: 1.6; }
-  table { width: 100%; border-collapse: collapse; font-size: 10px; margin: 10px 0; }
-  th { background: #1e293b; color: #94a3b8; padding: 8px 10px; text-align: left; font-weight: normal; }
-  td { padding: 6px 10px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dokumentasi Business Flow - Excavator Rental Mall v2</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      background-color: #0f172a; /* Slate 900 */
+      color: #94a3b8; /* Slate 400 */
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    /* Simple Block Diagram Style */
+    .diagram-box {
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 16px;
+      color: #e2e8f0;
+    }
+    .diagram-box h4 {
+      margin-top: 0;
+      color: #38bdf8;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .diagram-box ul {
+      margin: 0;
+      padding-left: 16px;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+    .diagram-arrow {
+      color: #64748b;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  </style>
 </head>
-<body>
-<div class="container">
-  <h1><span></span> Business Flow v2 — Sewa Excavator RC (Single Battery, Android Source of Truth)</h1>
-  <div class="subtitle">1 sumber batre untuk RC + ESP32 · Android app sebagai source of truth · 10 unit</div>
+<body class="p-6 md:p-12">
 
-  <!-- POWER ARCHITECTURE -->
-  <div class="diagram-card">
-    <h2 style="color:#22d3ee; font-size:14px; margin-bottom:12px;">🔌 Arsitektur Daya — 1 Batre untuk RC + ESP32</h2>
-    <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="grid2" width="40" height="40" patternUnits="userSpaceOnUse">
-          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
-        </pattern>
-        <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#fbbf24"/>
-        </marker>
-      </defs>
-      <rect width="900" height="300" fill="url(#grid2)"/>
+  <main class="max-w-4xl mx-auto bg-[#111827] border border-gray-800 p-8 md:p-12 rounded-xl shadow-xl">
+    
+    <article class="prose prose-invert prose-slate max-w-none">
+      
+      <h1>Dokumentasi Business Flow v2</h1>
+      <p class="lead">Sewa Excavator RC (Single Battery) dengan <strong>Android App sebagai Source of Truth</strong>. Mendukung operasional mall hingga 10 unit.</p>
 
-      <!-- Battery -->
-      <rect x="40" y="80" width="160" height="140" rx="12" fill="rgba(34,197,94,0.1)" stroke="#34d399" stroke-width="2"/>
-      <rect x="215" y="125" width="20" height="50" rx="4" fill="rgba(34,197,94,0.2)" stroke="#34d399" stroke-width="1.5"/>
-      <text x="120" y="110" fill="#34d399" font-size="13" text-anchor="middle" font-weight="bold">🔋 BATERAI UTAMA</text>
-      <text x="120" y="130" fill="#86efac" font-size="9" text-anchor="middle">LiPo 7.4V 1500mAh</text>
-      <text x="120" y="148" fill="#86efac" font-size="9" text-anchor="middle">(standar RC excavator)</text>
-      <line x1="60" y1="158" x2="180" y2="158" stroke="#065f46" stroke-width="0.5"/>
-      <text x="120" y="176" fill="#86efac" font-size="8" text-anchor="middle">(+) → Motor RC Controller</text>
-      <text x="120" y="192" fill="#86efac" font-size="8" text-anchor="middle">(+) → Buck Converter ESP32</text>
-      <text x="120" y="208" fill="#86efac" font-size="8" text-anchor="middle">(−) → GND bersama</text>
+      <hr>
 
-      <!-- Buck Converter -->
-      <rect x="280" y="80" width="160" height="100" rx="8" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
-      <text x="360" y="105" fill="#fbbf24" font-size="10" text-anchor="middle" font-weight="bold">⬇ BUCK CONVERTER</text>
-      <text x="360" y="122" fill="#fde68a" font-size="8" text-anchor="middle">LM2596 / Mini360</text>
-      <text x="360" y="138" fill="#fde68a" font-size="8" text-anchor="middle">7.4V → 3.3V</text>
-      <text x="360" y="155" fill="#fde68a" font-size="8" text-anchor="middle">+ Kapasitor 1000µF</text>
-      <text x="360" y="172" fill="#fde68a" font-size="7" text-anchor="middle">(nahan drop motor)</text>
+      <h2>1. Arsitektur Daya (Hardware)</h2>
+      <p>Sistem ini menggunakan 1 baterai utama (LiPo 7.4V) untuk menghidupkan seluruh komponen RC dan modul timer (ESP32).</p>
 
-      <path d="M 200 150 L 260 150" stroke="#ef4444" stroke-width="2"/>
-      <path d="M 200 170 L 260 170" stroke="#1e293b" stroke-width="3"/>
-      <text x="230" y="142" fill="#ef4444" font-size="7" text-anchor="middle">+</text>
-      <text x="230" y="178" fill="#94a3b8" font-size="7" text-anchor="middle">−</text>
+      <div class="not-prose my-8">
+        <div class="flex flex-col md:flex-row gap-4 items-stretch">
+          
+          <!-- Box 1 -->
+          <div class="diagram-box flex-1">
+            <h4>BATERAI UTAMA</h4>
+            <ul>
+              <li>LiPo 7.4V 1500mAh</li>
+              <li>(+) Ke Motor RC Controller</li>
+              <li>(+) Ke Buck Converter ESP32</li>
+              <li>(-) GND Bersama</li>
+            </ul>
+          </div>
+          
+          <!-- Arrow -->
+          <div class="diagram-arrow rotate-90 md:rotate-0">→</div>
+          
+          <!-- Box 2 (Split) -->
+          <div class="flex-1 flex flex-col gap-4">
+            
+            <div class="diagram-box border-l-4 border-l-rose-500">
+              <h4 class="!text-rose-400">Jalur A: RC Controller</h4>
+              <ul>
+                <li>ESC / Receiver / Motor Servo</li>
+                <li>Menerima tegangan murni (7.4V)</li>
+              </ul>
+            </div>
 
-      <!-- RC Controller -->
-      <rect x="460" y="50" width="180" height="70" rx="8" fill="rgba(8,51,68,0.3)" stroke="#22d3ee" stroke-width="1.5"/>
-      <text x="550" y="72" fill="#22d3ee" font-size="9" text-anchor="middle" font-weight="bold">🎮 RC Controller + Motor</text>
-      <text x="550" y="90" fill="#67e8f9" font-size="8" text-anchor="middle">ESC / Receiver / Motor servo</text>
-      <text x="550" y="106" fill="#67e8f9" font-size="8" text-anchor="middle">Menerima tegangan batre langsung</text>
+            <div class="diagram-box border-l-4 border-l-cyan-500">
+              <h4 class="!text-cyan-400">Jalur B: Modul Timer (ESP32)</h4>
+              <ul>
+                <li><strong>Buck Converter:</strong> Menurunkan 7.4V ke 3.3V</li>
+                <li><strong>Kapasitor 1000µF:</strong> Wajib untuk menahan lonjakan arus motor</li>
+                <li><strong>ESP32-C3:</strong> Menyala stabil dengan 3.3V</li>
+              </ul>
+            </div>
 
-      <path d="M 440 130 L 460 85" stroke="#ef4444" stroke-width="2"/>
-      <path d="M 440 130 L 460 105" stroke="#1e293b" stroke-width="3"/>
-
-      <!-- ESP32 Module -->
-      <rect x="460" y="145" width="180" height="90" rx="8" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1.5"/>
-      <text x="550" y="165" fill="#a78bfa" font-size="9" text-anchor="middle" font-weight="bold">🔲 ESP32 MODULE</text>
-      <text x="550" y="183" fill="#c4b5fd" font-size="8" text-anchor="middle">ESP32-C3 + TM1637 + Buzzer</text>
-      <text x="550" y="200" fill="#c4b5fd" font-size="8" text-anchor="middle">Daya 3.3V dari buck converter</text>
-      <text x="550" y="217" fill="#c4b5fd" font-size="8" text-anchor="middle">ADC monitor tegangan batre</text>
-
-      <path d="M 440 150 L 460 185" stroke="#ef4444" stroke-width="2"/>
-      <path d="M 440 170 L 460 210" stroke="#1e293b" stroke-width="3"/>
-
-      <!-- Ground rail -->
-      <path d="M 40 230 L 700 230" stroke="#334155" stroke-width="1" stroke-dasharray="3,2"/>
-      <text x="30" y="233" fill="#64748b" font-size="7">GND rail bersama</text>
-
-      <!-- Annotations -->
-      <text x="300" y="260" fill="#64748b" font-size="8">⚠️ Buck converter harus rated utk max arus motor RC (3-5A)</text>
-      <text x="300" y="275" fill="#64748b" font-size="8">⚠️ Kapasitor 1000-2200µF di output buck untuk stabilisasi</text>
-      <text x="300" y="290" fill="#64748b" font-size="8">⚠️ Rectifier diode sebelum buck untuk proteksi polarity terbalik</text>
-    </svg>
-
-    <div class="warning">
-      <h4>⚠️ Catatan Penting — 1 Batre untuk Semua</h4>
-      <p>1. Buck converter harus mampu 3-5A (bukan 1A doang). Motor RC narik gede pas start/load.<br>
-      2. Kapasitor 1000µF minimum di output buck — tanpa ini ESP32 reset tiap motor nyentak.<br>
-      3. Voltage drop pas motor start: batre 7.4V bisa turun ke 5V. Buck converter harus survive di input drop.<br>
-      4. ADC di ESP32 baca tegangan batre via voltage divider — kirim ke app buat monitoring.<br>
-      5. Low voltage cut-off: kalo tegangan batre &lt;6.0V (2.8V/cell LiPo), ESP32 pause timer + simpan state + kirim notifikasi ke app — operator ganti batre.</p>
-    </div>
-  </div>
-
-  <!-- SYSTEM ARCHITECTURE -->
-  <div class="diagram-card">
-    <h2 style="color:#22d3ee; font-size:14px; margin-bottom:12px;">🏗️ Arsitektur Sistem — Android App sebagai Source of Truth</h2>
-    <svg viewBox="0 0 920 380" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="grid3" width="40" height="40" patternUnits="userSpaceOnUse">
-          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
-        </pattern>
-        <marker id="arrow-c" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#22d3ee"/>
-        </marker>
-        <marker id="arrow-e" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#34d399"/>
-        </marker>
-        <marker id="arrow-a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#fbbf24"/>
-        </marker>
-      </defs>
-      <rect width="920" height="380" fill="url(#grid3)"/>
-
-      <!-- Android App - SOURCE OF TRUTH -->
-      <rect x="330" y="30" width="260" height="100" rx="10" fill="rgba(59,130,246,0.15)" stroke="#38bdf8" stroke-width="2" stroke-dasharray="8,3"/>
-      <text x="460" y="55" fill="#38bdf8" font-size="12" text-anchor="middle" font-weight="bold">📱 ANDROID APP</text>
-      <text x="460" y="72" fill="#93c5fd" font-size="8" text-anchor="middle">SOURCE OF TRUTH</text>
-      <line x1="350" y1="80" x2="570" y2="80" stroke="#1e4a7a" stroke-width="0.5"/>
-      <text x="460" y="96" fill="#93c5fd" font-size="8" text-anchor="middle">SQLite Local DB — Room Database</text>
-      <text x="460" y="112" fill="#93c5fd" font-size="8" text-anchor="middle">Semua sesi, status, billing, history</text>
-      <text x="460" y="126" fill="#93c5fd" font-size="8" text-anchor="middle">Data tetap ada walau HP mati/restart</text>
-
-      <!-- ESP32 -->
-      <rect x="40" y="180" width="200" height="100" rx="8" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1.5"/>
-      <text x="140" y="203" fill="#a78bfa" font-size="9" text-anchor="middle" font-weight="bold">🔲 ESP32 (EX-01 sd EX-10)</text>
-      <line x1="55" y1="212" x2="225" y2="212" stroke="#4c1d95" stroke-width="0.5"/>
-      <text x="140" y="228" fill="#c4b5fd" font-size="7" text-anchor="middle">NVS: buffer sementara (state sisa)</text>
-      <text x="140" y="244" fill="#c4b5fd" font-size="7" text-anchor="middle">BLE: advertise, accept connection</text>
-      <text x="140" y="260" fill="#c4b5fd" font-size="7" text-anchor="middle">Display: MM:SS via TM1637</text>
-      <text x="140" y="275" fill="#c4b5fd" font-size="7" text-anchor="middle">Perintah: start / stop / reset / set</text>
-
-      <!-- Cloud (optional) -->
-      <rect x="680" y="30" width="200" height="100" rx="8" fill="rgba(120,53,15,0.2)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6,3"/>
-      <text x="780" y="55" fill="#fbbf24" font-size="10" text-anchor="middle" font-weight="bold">☁️ CLOUD DB (Opsional)</text>
-      <text x="780" y="72" fill="#fde68a" font-size="8" text-anchor="middle">Firebase Firestore / Supabase</text>
-      <line x1="695" y1="80" x2="865" y2="80" stroke="#92400e" stroke-width="0.5"/>
-      <text x="780" y="95" fill="#fde68a" font-size="7" text-anchor="middle">Backup data rental + billing</text>
-      <text x="780" y="110" fill="#fde68a" font-size="7" text-anchor="middle">Pantau dari HP owner terpisah</text>
-      <text x="780" y="125" fill="#fde68a" font-size="7" text-anchor="middle">Analytics pendapatan harian</text>
-
-      <!-- Arrows -->
-      <!-- ESP32 ↔ Android (BLE) -->
-      <path d="M 240 200 L 310 200 L 310 150" stroke="#22d3ee" stroke-width="1.5" fill="none" marker-end="url(#arrow-c)"/>
-      <rect x="250" y="178" width="60" height="14" rx="3" fill="#0f172a" stroke="#22d3ee" stroke-width="0.5"/>
-      <text x="280" y="188" fill="#22d3ee" font-size="6" text-anchor="middle">BLE</text>
-
-      <path d="M 310 150 L 310 190 L 240 190" stroke="#34d399" stroke-width="1" fill="none" marker-end="url(#arrow-e)" stroke-dasharray="3,2"/>
-
-      <!-- Android → Cloud -->
-      <path d="M 590 80 L 670 80" stroke="#fbbf24" stroke-width="1" fill="none" marker-end="url(#arrow-a)" stroke-dasharray="5,3"/>
-      <text x="630" y="73" fill="#fbbf24" font-size="6" text-anchor="middle">WiFi sync</text>
-
-      <!-- ESP32 → Cloud (IF WiFi) -->
-      <path d="M 240 260 L 680 260 L 680 135" stroke="#64748b" stroke-width="0.5" fill="none" stroke-dasharray="3,2" marker-end="url(#arrow-a)"/>
-      <text x="460" y="273" fill="#64748b" font-size="6" text-anchor="middle">ESP-NOW / MQTT (if BLE range exceeded — future upgrade)</text>
-
-      <!-- === DATA FLOW (bottom) === -->
-      <rect x="40" y="310" width="840" height="55" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
-      <text x="460" y="330" fill="#22d3ee" font-size="9" text-anchor="middle" font-weight="bold">📦 Data Flow — Setiap Transaksi BLE</text>
-      <text x="75" y="350" fill="#94a3b8" font-size="7">1. Staff tap excavator → BLE connect</text>
-      <text x="420" y="350" fill="#94a3b8" font-size="7">2. Baca status ESP32 (NVS state)</text>
-      <text x="75" y="362" fill="#94a3b8" font-size="7">3. App bandingkan dengan data lokal (source of truth)</text>
-      <text x="420" y="362" fill="#94a3b8" font-size="7">4. App decide: set timer / clear / alert staff</text>
-    </svg>
-  </div>
-
-  <!-- OPERATIONAL FLOW -->
-  <div class="diagram-card">
-    <h2 style="color:#22d3ee; font-size:14px; margin-bottom:12px;">🔄 Operational Flow Lengkap</h2>
-    <svg viewBox="0 0 920 480" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="grid4" width="40" height="40" patternUnits="userSpaceOnUse">
-          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
-        </pattern>
-        <marker id="a-c" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#22d3ee"/>
-        </marker>
-        <marker id="a-e" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#34d399"/>
-        </marker>
-        <marker id="a-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#fb7185"/>
-        </marker>
-        <marker id="a-a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M 0 0 L 8 3 L 0 6 Z" fill="#fbbf24"/>
-        </marker>
-      </defs>
-      <rect width="920" height="480" fill="url(#grid4)"/>
-
-      <!-- PHASE 1: MORNING SETUP -->
-      <rect x="15" y="10" width="890" height="12" rx="3" fill="#1e293b" stroke="#22d3ee" stroke-width="0.5"/>
-      <text x="460" y="18" fill="#22d3ee" font-size="7" text-anchor="middle">PHASE 1: PERSIAPAN PAGI</text>
-
-      <rect x="40" y="30" width="260" height="60" rx="8" fill="rgba(8,51,68,0.3)" stroke="#22d3ee" stroke-width="1.5"/>
-      <text x="170" y="48" fill="#22d3ee" font-size="9" text-anchor="middle" font-weight="bold">1. Charging + Setup</text>
-      <text x="170" y="64" fill="#67e8f9" font-size="7" text-anchor="middle">Pasang batre RC ke 10 excavator (terisi penuh)</text>
-      <text x="170" y="78" fill="#67e8f9" font-size="7" text-anchor="middle">Staff buka app → scan → verifikasi semua online</text>
-
-      <path d="M 300 60 L 340 60" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#a-c)"/>
-
-      <rect x="350" y="30" width="220" height="60" rx="8" fill="rgba(6,78,59,0.3)" stroke="#34d399" stroke-width="1.5"/>
-      <text x="460" y="48" fill="#34d399" font-size="9" text-anchor="middle" font-weight="bold">2. Verifikasi + Clear Sesi</text>
-      <text x="460" y="64" fill="#6ee7b7" font-size="7" text-anchor="middle">App cek tiap ESP32: NVS vs Local DB</text>
-      <text x="460" y="78" fill="#6ee7b7" font-size="7" text-anchor="middle">Kalo ada sisa sesi kemarin → app reset + clear NVS</text>
-
-      <!-- PHASE 2: RENTAL LOOP -->
-      <rect x="15" y="100" width="890" height="12" rx="3" fill="#1e293b" stroke="#fbbf24" stroke-width="0.5"/>
-      <text x="460" y="108" fill="#fbbf24" font-size="7" text-anchor="middle">PHASE 2: LOOP SEWA (BERULANG)</text>
-
-      <!-- Customer arrives -->
-      <rect x="40" y="120" width="180" height="65" rx="8" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
-      <text x="130" y="138" fill="#fbbf24" font-size="9" text-anchor="middle" font-weight="bold">A. Customer Bayar</text>
-      <text x="130" y="154" fill="#fde68a" font-size="7" text-anchor="middle">Pilih paket (5/10/15 menit)</text>
-      <text x="130" y="168" fill="#fde68a" font-size="7" text-anchor="middle">Bayar QRIS/Tunai</text>
-      <text x="130" y="182" fill="#fde68a" font-size="7" text-anchor="middle">Staff catat nama customer</text>
-
-      <path d="M 220 152 L 260 152" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#a-a)"/>
-
-      <!-- Staff set timer -->
-      <rect x="270" y="120" width="200" height="65" rx="8" fill="rgba(8,51,68,0.3)" stroke="#38bdf8" stroke-width="1.5"/>
-      <text x="370" y="138" fill="#38bdf8" font-size="9" text-anchor="middle" font-weight="bold">B. Staff Set Timer</text>
-      <text x="370" y="154" fill="#93c5fd" font-size="7" text-anchor="middle">Pilih excavator di app</text>
-      <text x="370" y="168" fill="#93c5fd" font-size="7" text-anchor="middle">Set durasi → tap START</text>
-      <text x="370" y="182" fill="#93c5fd" font-size="7" text-anchor="middle">BLE write → ESP32 mulai countdown</text>
-
-      <path d="M 470 152 L 510 152" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#a-c)"/>
-
-      <!-- Customer plays -->
-      <rect x="520" y="120" width="180" height="65" rx="8" fill="rgba(6,78,59,0.3)" stroke="#34d399" stroke-width="1.5"/>
-      <text x="610" y="138" fill="#34d399" font-size="9" text-anchor="middle" font-weight="bold">C. Customer Main</text>
-      <text x="610" y="154" fill="#6ee7b7" font-size="7" text-anchor="middle">Excavator nyala + 4-digit countdown</text>
-      <text x="610" y="168" fill="#6ee7b7" font-size="7" text-anchor="middle">RC + timer dari batre yg sama</text>
-      <text x="610" y="182" fill="#6ee7b7" font-size="7" text-anchor="middle">Staff pantau dari app</text>
-
-      <path d="M 700 152 L 740 152" stroke="#34d399" stroke-width="1.5" marker-end="url(#a-e)"/>
-
-      <!-- Timer ends -->
-      <rect x="750" y="120" width="150" height="65" rx="8" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/>
-      <text x="825" y="138" fill="#fb7185" font-size="9" text-anchor="middle" font-weight="bold">D. Timer Habis</text>
-      <text x="825" y="154" fill="#fda4af" font-size="7" text-anchor="middle">Buzzer 🔔 (30 detik)</text>
-      <text x="825" y="168" fill="#fda4af" font-size="7" text-anchor="middle">4-digit: 0000 kedip</text>
-      <text x="825" y="182" fill="#fda4af" font-size="7" text-anchor="middle">Customer kembalikan</text>
-
-      <!-- Return loop -->
-      <path d="M 825 190 L 825 215 L 130 215 L 130 190" stroke="#22d3ee" stroke-width="1" fill="none" stroke-dasharray="5,3" marker-end="url(#a-c)"/>
-      <text x="460" y="228" fill="#64748b" font-size="7" text-anchor="middle">↻ Customer berikutnya — looping step A-D</text>
-
-      <!-- PHASE 3: EXCEPTIONS -->
-      <rect x="15" y="240" width="890" height="12" rx="3" fill="#1e293b" stroke="#fb7185" stroke-width="0.5"/>
-      <text x="460" y="248" fill="#fb7185" font-size="7" text-anchor="middle">PHASE 3: HANDLE EXCEPTION</text>
-
-      <!-- Exception: Battery low -->
-      <rect x="40" y="260" width="200" height="70" rx="8" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/>
-      <text x="140" y="278" fill="#fb7185" font-size="9" text-anchor="middle" font-weight="bold">⚡ Batre RC Lemah</text>
-      <text x="140" y="294" fill="#fda4af" font-size="7" text-anchor="middle">ADC detect ≤6.0V</text>
-      <text x="140" y="308" fill="#fda4af" font-size="7" text-anchor="middle">ESP32: pause timer + save NVS</text>
-      <text x="140" y="322" fill="#fda4af" font-size="7" text-anchor="middle">Kirim status ke app</text>
-
-      <path d="M 240 295 L 290 295" stroke="#fb7185" stroke-width="1.5" marker-end="url(#a-r)"/>
-
-      <!-- Exception: App handles -->
-      <rect x="300" y="260" width="250" height="70" rx="8" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
-      <text x="425" y="278" fill="#fbbf24" font-size="9" text-anchor="middle" font-weight="bold">📱 App Handle</text>
-      <text x="425" y="294" fill="#fde68a" font-size="7" text-anchor="middle">App lihat: EX-03 PAUSED, sisa 3:20</text>
-      <text x="425" y="308" fill="#fde68a" font-size="7" text-anchor="middle">Notif staff: "Ganti batre EX-03"</text>
-      <text x="425" y="322" fill="#fde68a" font-size="7" text-anchor="middle">App simpan sesi = PAUSED di local DB</text>
-
-      <path d="M 550 295 L 600 295" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#a-a)"/>
-
-      <!-- Exception: Battery replaced -->
-      <rect x="610" y="260" width="270" height="70" rx="8" fill="rgba(6,78,59,0.3)" stroke="#34d399" stroke-width="1.5"/>
-      <text x="745" y="278" fill="#34d399" font-size="9" text-anchor="middle" font-weight="bold">🔄 Ganti Batre + Resume</text>
-      <text x="745" y="294" fill="#6ee7b7" font-size="7" text-anchor="middle">Staff ganti batre RC (5 detik)</text>
-      <text x="745" y="308" fill="#6ee7b7" font-size="7" text-anchor="middle">ESP32 boot → NVS: PAUSED</text>
-      <text x="745" y="322" fill="#6ee7b7" font-size="7" text-anchor="middle">App decide: resume timer / reset sesi</text>
-
-      <!-- PHASE 4: CLOSING -->
-      <rect x="15" y="350" width="890" height="12" rx="3" fill="#1e293b" stroke="#34d399" stroke-width="0.5"/>
-      <text x="460" y="358" fill="#34d399" font-size="7" text-anchor="middle">PHASE 4: TUTUP OPERASIONAL</text>
-
-      <rect x="40" y="370" width="250" height="60" rx="8" fill="rgba(8,51,68,0.3)" stroke="#22d3ee" stroke-width="1.5"/>
-      <text x="165" y="388" fill="#22d3ee" font-size="9" text-anchor="middle" font-weight="bold">1. Staff Tutup Sesi</text>
-      <text x="165" y="404" fill="#67e8f9" font-size="7" text-anchor="middle">Tap "Tutup Operasional" di app</text>
-      <text x="165" y="418" fill="#67e8f9" font-size="7" text-anchor="middle">App finalisasi semua sesi hari ini</text>
-
-      <path d="M 290 400 L 340 400" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#a-c)"/>
-
-      <rect x="350" y="370" width="230" height="60" rx="8" fill="rgba(6,78,59,0.3)" stroke="#34d399" stroke-width="1.5"/>
-      <text x="465" y="388" fill="#34d399" font-size="9" text-anchor="middle" font-weight="bold">2. Charging Batre RC</text>
-      <text x="465" y="404" fill="#6ee7b7" font-size="7" text-anchor="middle">Lepas batre RC Excavator → cas</text>
-      <text x="465" y="418" fill="#6ee7b7" font-size="7" text-anchor="middle">Charger 10 slot, siap besok</text>
-
-      <path d="M 580 400 L 620 400" stroke="#34d399" stroke-width="1.5" marker-end="url(#a-e)"/>
-
-      <rect x="630" y="370" width="250" height="60" rx="8" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1.5"/>
-      <text x="755" y="388" fill="#a78bfa" font-size="9" text-anchor="middle" font-weight="bold">3. Laporan Harian</text>
-      <text x="755" y="404" fill="#c4b5fd" font-size="7" text-anchor="middle">App generate: Rp pendapatan, sesi, durasi</text>
-      <text x="755" y="418" fill="#c4b5fd" font-size="7" text-anchor="middle">Kalo pake cloud → ke HP owner otomatis</text>
-    </svg>
-  </div>
-
-  <!-- ANDROID APP SOURCE OF TRUTH DETAIL -->
-  <div class="diagram-card">
-    <h2 style="color:#22d3ee; font-size:14px; margin-bottom:12px;">📱 Android App — Source of Truth Logic</h2>
-    <svg viewBox="0 0 920 300" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="grid5" width="40" height="40" patternUnits="userSpaceOnUse">
-          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
-        </pattern>
-      </defs>
-      <rect width="920" height="300" fill="url(#grid5)"/>
-
-      <!-- App DB schema -->
-      <rect x="40" y="30" width="400" height="240" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="1"/>
-      <text x="240" y="55" fill="#38bdf8" font-size="11" text-anchor="middle" font-weight="bold">🗃️ Local Database (Room/SQLite)</text>
-      <line x1="55" y1="65" x2="425" y2="65" stroke="#1e293b" stroke-width="0.5"/>
-
-      <text x="60" y="85" fill="#fbbf24" font-size="9" font-weight="bold">TABLE: sessions</text>
-      <text x="60" y="100" fill="#94a3b8" font-size="7">session_id (PK) | INTEGER auto</text>
-      <text x="60" y="115" fill="#94a3b8" font-size="7">device_id | TEXT "EX-01"</text>
-      <text x="60" y="130" fill="#94a3b8" font-size="7">customer_name | TEXT "Budi"</text>
-      <text x="60" y="145" fill="#94a3b8" font-size="7">start_time | TIMESTAMP "2026-05-30 14:30"</text>
-      <text x="60" y="160" fill="#94a3b8" font-size="7">end_time | TIMESTAMP (null saat masih jalan)</text>
-      <text x="60" y="175" fill="#94a3b8" font-size="7">duration_set | INT 300 (detik)</text>
-      <text x="60" y="190" fill="#94a3b8" font-size="7">timer_status | TEXT "RUNNING" | "FINISHED"</text>
-      <text x="60" y="205" fill="#94a3b8" font-size="7">last_remaining | INT 150 (detik)</text>
-      <text x="60" y="220" fill="#94a3b8" font-size="7">price_paid | INT 40000 (rupiah)</text>
-      <text x="60" y="235" fill="#94a3b8" font-size="7">staff_id | TEXT "staff-01"</text>
-      <text x="60" y="255" fill="#94a3b8" font-size="7">notes | TEXT (events: battery change, pause, dll)</text>
-
-      <!-- Logic -->
-      <rect x="480" y="30" width="400" height="240" rx="8" fill="#0f172a" stroke="#34d399" stroke-width="1"/>
-      <text x="680" y="55" fill="#34d399" font-size="11" text-anchor="middle" font-weight="bold">🧠 App Decision Logic</text>
-      <line x1="495" y1="65" x2="865" y2="65" stroke="#1e293b" stroke-width="0.5"/>
-
-      <text x="500" y="85" fill="#fbbf24" font-size="8" font-weight="bold">KASUS 1: SET TIMER BARU</text>
-      <text x="510" y="100" fill="#94a3b8" font-size="7">App: INSERT session (RUNNING)</text>
-      <text x="510" y="115" fill="#94a3b8" font-size="7">BLE write: set duration + START</text>
-
-      <text x="500" y="140" fill="#fbbf24" font-size="8" font-weight="bold">KASUS 2: RE-CONNECT (CEK)</text>
-      <text x="510" y="155" fill="#94a3b8" font-size="7">App cek: ada sesi RUNNING utk EX-01?</text>
-      <text x="510" y="170" fill="#94a3b8" font-size="7">→ YA: update last_remaining</text>
-      <text x="510" y="185" fill="#94a3b8" font-size="7">→ TIDAK: staff bisa set sesi baru</text>
-
-      <text x="500" y="210" fill="#fbbf24" font-size="8" font-weight="bold">KASUS 3: POWER LOSS / BOOT ULANG</text>
-      <text x="510" y="225" fill="#94a3b8" font-size="7">ESP32 NVS: TIMEOUT / PAUSED</text>
-      <text x="510" y="240" fill="#94a3b8" font-size="7">App: "adu data NVS vs Local DB"</text>
-      <text x="510" y="255" fill="#94a3b8" font-size="7">→ App yg menang (source of truth)</text>
-    </svg>
-  </div>
-
-  <!-- APP FEATURES -->
-  <div class="info-grid">
-    <div class="card">
-      <h3><span class="dot-sky"></span> 📱 Fitur Android App</h3>
-      <ul>
-        <li>BLE scan — daftar semua excavator + status</li>
-        <li>Set timer — pilih durasi (5/10/15/custom)</li>
-        <li>Start / Stop / Pause / Reset</li>
-        <li>View sisa waktu real-time (BLE re-read)</li>
-        <li>Session history — per device, per customer</li>
-        <li>Notifikasi: batre lemah, timer habis, missing</li>
-        <li>Dashboard: 10 excavator status grid</li>
-        <li>Report harian: pendapatan, sesi, durasi</li>
-        <li>Multi-staff: login + log aktivitas</li>
-      </ul>
-    </div>
-    <div class="card">
-      <h3><span class="dot-amber"></span> 💰 Paket Harga Sewa (Mall)</h3>
-      <ul>
-        <li>5 menit: Rp 25.000</li>
-        <li>10 menit: Rp 40.000</li>
-        <li>15 menit: Rp 55.000</li>
-      </ul>
-      <div class="pricing-box">
-        <h4>📈 Estimasi Revenue</h4>
-        <p><strong>10 excavator × 3 sesi/jam × 8 jam × Rp 5.000/menit × 7 menit rata-rata</strong><br>
-        = Rp 8.400.000/hari kotor<br>
-        ≈ Rp 252jt/bulan (30 hari)<br>
-        Modal hardware 10 unit ≈ Rp 3-4jt</p>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="card">
-      <h3><span class="dot-rose"></span> ⚠️ Risiko + Mitigasi (1 Batre)</h3>
-      <ul>
-        <li>Motor RC narik arus → ESP32 reset → pake kapasitor 1000µF</li>
-        <li>Batre drop <6.0V → ADC detect → auto pause + notif ke app</li>
-        <li>Range BLE ~10m → staff HP harus dekat arena</li>
-        <li>Bucket converter rusak → ganti (stock spare 2 unit)</li>
-        <li>ESP32 boot cepat (~2 detik) dibanding ganti batre (5 detik)</li>
-        <li>Best practice: charging 10 slot + 2 unit cadangan total 12</li>
-      </ul>
-    </div>
-  </div>
 
-  <div class="footer">Excavator Timer Rental v2 · Single Battery · Android Source of Truth · mall operation for adults</div>
-</div>
+      <blockquote>
+        <strong>Catatan Hardware:</strong> Pastikan buck converter memiliki rating arus minimal 3-5 Ampere. Motor RC menarik arus sangat besar saat dinyalakan (start/load), yang dapat menyebabkan ESP32 mati tiba-tiba jika tidak ditahan oleh kapasitor 1000µF.
+      </blockquote>
+
+      <hr>
+
+      <h2>2. Arsitektur Sistem (Data)</h2>
+      <p>Aplikasi Android berfungsi sebagai otak utama (<em>Master Source of Truth</em>). Modul ESP32 hanya bertindak sebagai pelaksana perintah sementara.</p>
+
+      <div class="not-prose my-8">
+        <div class="flex flex-col md:flex-row gap-4 items-stretch">
+          
+          <!-- ESP32 -->
+          <div class="diagram-box flex-1 border-l-4 border-l-purple-500">
+            <h4 class="!text-purple-400">Modul ESP32 (10 Unit)</h4>
+            <ul>
+              <li>Membuka server Bluetooth (BLE GATT)</li>
+              <li>Menyimpan state sementara (NVS)</li>
+              <li>Menyalakan/mematikan Relay Motor</li>
+              <li>Menampilkan hitung mundur (TM1637)</li>
+            </ul>
+          </div>
+
+          <!-- Arrow -->
+          <div class="diagram-arrow flex-col text-sm">
+            <span>BLE</span>
+            <span class="text-xl rotate-90 md:rotate-0">↔</span>
+          </div>
+
+          <!-- Android -->
+          <div class="diagram-box flex-1 border-l-4 border-l-blue-500 bg-blue-900/10">
+            <h4 class="!text-blue-400">Android App (Master)</h4>
+            <ul>
+              <li>Menyimpan SQLite DB (Room)</li>
+              <li>Menyimpan waktu dan histori permanen</li>
+              <li>Menimpa data ESP32 jika terjadi konflik</li>
+            </ul>
+          </div>
+
+          <!-- Arrow -->
+          <div class="diagram-arrow flex-col text-sm">
+            <span>Wi-Fi</span>
+            <span class="text-xl rotate-90 md:rotate-0">→</span>
+          </div>
+
+          <!-- Cloud -->
+          <div class="diagram-box flex-1 border-l-4 border-l-amber-500">
+            <h4 class="!text-amber-400">Cloud DB (Opsional)</h4>
+            <ul>
+              <li>Firebase / Supabase</li>
+              <li>Backup harian</li>
+              <li>Laporan jarak jauh untuk owner</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+
+      <hr>
+
+      <h2>3. Alur Operasional Harian</h2>
+
+      <h3>Fase 1: Persiapan Pagi</h3>
+      <ul>
+        <li><strong>Setup:</strong> Pasang baterai penuh ke 10 unit Excavator.</li>
+        <li><strong>Sinkronisasi:</strong> Staff membuka aplikasi Android, memastikan 10 unit muncul di layar utama, dan aplikasi akan otomatis membersihkan sisa sesi dari hari sebelumnya.</li>
+      </ul>
+
+      <h3>Fase 2: Siklus Sewa</h3>
+      <ol>
+        <li><strong>Pembayaran:</strong> Customer membayar (contoh: 10 menit via QRIS).</li>
+        <li><strong>Inisiasi:</strong> Staff menekan tombol "Start" (+10 Menit) di aplikasi Android.</li>
+        <li><strong>Berjalan:</strong> ESP32 menerima sinyal BLE, menyalakan relay motor, dan mulai menghitung mundur di layar LED.</li>
+        <li><strong>Selesai:</strong> Waktu mencapai 00:00, relay motor diputus secara otomatis, buzzer berbunyi, dan mainan dikembalikan.</li>
+      </ol>
+
+      <h3>Fase 3: Skenario Darurat (Baterai Lemah)</h3>
+      <ul>
+        <li><strong>Deteksi:</strong> ADC di ESP32 mendeteksi voltase baterai turun drastis (&lt;6.0V).</li>
+        <li><strong>Auto-Pause:</strong> ESP32 otomatis menghentikan motor dan menyimpan sisa waktu ke memori.</li>
+        <li><strong>Notifikasi:</strong> Aplikasi Android mendapat sinyal <em>Low Battery</em> dan memberikan peringatan ke staff.</li>
+        <li><strong>Resume:</strong> Setelah baterai diganti, staff tinggal menekan "Start/Resume", dan sisa waktu akan dilanjutkan secara otomatis.</li>
+      </ul>
+
+      <hr>
+
+      <h2>4. Resolusi Konflik (Conflict Resolution)</h2>
+      <p>Karena menggunakan sistem nirkabel (BLE) dan baterai terpisah, rentan terjadi putus koneksi atau daya mati mendadak. Aturan utama sistem ini adalah: <strong>Aplikasi Android Selalu Benar</strong>.</p>
+
+      <ul>
+        <li><strong>Jika ESP32 mati mendadak:</strong> Data waktu tersisa tetap aman di Database Android. Saat ESP32 kembali menyala, Android akan mengirim ulang sisa waktu yang benar.</li>
+        <li><strong>Jika koneksi Bluetooth putus:</strong> ESP32 tetap berjalan mandiri melanjutkan hitung mundur. Aplikasi Android hanya akan memperbarui sisa waktu saat koneksi tersambung kembali.</li>
+      </ul>
+
+      <hr>
+
+      <h2>5. Harga Sewa & Estimasi Mall</h2>
+      <p>Sistem ini dirancang untuk operasional berkecepatan tinggi dengan asumsi tarif sewa berikut:</p>
+      <ul>
+        <li>5 Menit: Rp 10.000</li>
+        <li>10 Menit: Rp 15.000</li>
+        <li>15 Menit: Rp 20.000</li>
+      </ul>
+      
+      <p><strong>Potensi (10 Unit):</strong> Jika rata-rata 10 unit berjalan 3 kali dalam satu jam selama 8 jam operasional, potensi pendapatan kotor dapat mencapai <strong>~Rp 2.500.000 per hari</strong>.</p>
+
+    </article>
+
+  </main>
+
+  <footer class="text-center mt-12 text-slate-500 text-sm">
+    &copy; 2026 Excavator Rental System
+  </footer>
+
 </body>
 </html>

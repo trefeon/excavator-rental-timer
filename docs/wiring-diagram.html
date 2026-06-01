@@ -1,244 +1,245 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Diagram Pengkabelan - Sistem Timer Excavator</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagram Pengkabelan Lengkap (MVP) - Sistem Timer Excavator</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
   <style>
-    * { box-sizing: border-box; }
-    @page { margin: 1cm; size: A4 portrait; }
     body {
-      margin: 0;
-      background: #ffffff;
-      color: #1e293b;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      padding: 2rem;
-      line-height: 1.5;
-    }
-    .header {
-      border-bottom: 2px solid #e2e8f0;
-      padding-bottom: 1rem;
-      margin-bottom: 2rem;
-    }
-    h1 { font-size: 28px; margin: 0 0 8px; color: #0f172a; }
-    .subtitle { color: #64748b; font-size: 16px; margin: 0; }
-    
-    .panel {
-      background: #f8fafc;
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      padding: 1.5rem;
-      margin-bottom: 2rem;
+      background-color: #0f172a; /* Slate 900 */
+      color: #94a3b8; /* Slate 400 */
+      -webkit-font-smoothing: antialiased;
     }
     
-    svg { width: 100%; height: auto; display: block; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem; }
-    
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1.5rem;
-      margin-bottom: 2rem;
+    .diagram-box {
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 16px;
+      color: #e2e8f0;
+      position: relative;
     }
-    .grid-card {
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 1.25rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .grid-card h3 { margin-top: 0; color: #0f172a; font-size: 16px; border-bottom: 1px solid #f1f5f9; padding-bottom: 0.5rem; }
-    .grid-card p { margin: 0.5rem 0 0; font-size: 14px; color: #475569; }
-    
-    .note {
-      border-left: 4px solid #f59e0b;
-      background: #fffbeb;
-      padding: 1rem;
-      border-radius: 0 8px 8px 0;
+    .diagram-box h4 {
+      margin-top: 0;
       font-size: 14px;
-      color: #92400e;
-      margin-bottom: 2rem;
+      margin-bottom: 8px;
     }
-    
-    table { width: 100%; border-collapse: collapse; font-size: 14px; background: white; }
-    th, td { border: 1px solid #e2e8f0; padding: 12px; text-align: left; }
-    th { background: #f1f5f9; color: #334155; font-weight: 600; }
-    td { color: #475569; }
-    
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
-    .badge-gray { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
-    .badge-blue { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
-    .badge-red { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
-    
-    .ok { color: #059669; font-weight: 600; }
-    .warn { color: #d97706; font-weight: 600; }
-    .bad { color: #dc2626; font-weight: 600; }
+    .diagram-box ul {
+      margin: 0;
+      padding-left: 16px;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+    .diagram-arrow {
+      color: #64748b;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
   </style>
 </head>
-<body>
-  <div class="header">
-    <h1>Diagram Pengkabelan (Wiring Diagram)</h1>
-    <p class="subtitle">Sistem Timer Excavator BLE - MVP Hardware Layout</p>
-  </div>
+<body class="p-6 md:p-12">
 
-  <section class="panel">
-    <h2 style="margin-top:0; font-size: 18px; color: #334155;">Skema Arsitektur</h2>
-    <p style="font-size:14px; color:#64748b; margin-bottom: 1rem;">Diagram ini mengilustrasikan jalur kelistrikan dari baterai menuju modul kontrol (ESP32) dan mesin excavator.</p>
-    <svg viewBox="0 0 1100 650" role="img" aria-label="Wiring diagram">
-      <defs>
-        <marker id="arrow-red" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-          <path d="M0,0 L10,4 L0,8 Z" fill="#dc2626"/>
-        </marker>
-        <marker id="arrow-gray" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-          <path d="M0,0 L10,4 L0,8 Z" fill="#334155"/>
-        </marker>
-        <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-          <path d="M0,0 L10,4 L0,8 Z" fill="#2563eb"/>
-        </marker>
-      </defs>
+  <main class="max-w-4xl mx-auto bg-[#111827] border border-gray-800 p-8 md:p-12 rounded-xl shadow-xl">
+    
+    <article class="prose prose-invert prose-slate max-w-none">
+      
+      <h1>Diagram Pengkabelan Lengkap (MVP)</h1>
+      <p class="lead">Integrasi Modul ESP32 BLE + Relay 3.3V + Layar TM1637 ke Mainan Excavator RC menggunakan 1 Baterai 18650.</p>
 
-      <!-- Battery -->
-      <rect x="30" y="70" width="170" height="120" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
-      <text x="115" y="105" text-anchor="middle" font-size="18" font-weight="700" fill="#047857">Baterai 18650</text>
-      <text x="115" y="132" text-anchor="middle" font-size="13" fill="#047857">3.7V - 4.2V</text>
-      <text x="72" y="170" font-size="16" font-weight="700" fill="#dc2626">+</text>
-      <text x="158" y="170" font-size="16" font-weight="700" fill="#334155">-</text>
+      <hr>
 
-      <!-- Regulator -->
-      <rect x="280" y="40" width="190" height="95" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
-      <text x="375" y="75" text-anchor="middle" font-size="16" font-weight="700" fill="#1d4ed8">Regulator 3.3V</text>
-      <text x="375" y="100" text-anchor="middle" font-size="13" fill="#1d4ed8">Modul Buck Boost</text>
+      <h2>1. Skema Arsitektur Kelistrikan Utama</h2>
+      <p>Diagram di bawah ini mengilustrasikan jalur kelistrikan dari sumber daya tunggal (Baterai) yang dipecah menuju modul kontrol (ESP32) dan modul daya (Mesin RC).</p>
 
-      <!-- ESP32 -->
-      <rect x="555" y="40" width="210" height="160" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="2"/>
-      <text x="660" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#162033">Modul ESP32</text>
-      <text x="660" y="102" text-anchor="middle" font-size="13" fill="#334155">Otak Kontrol & BLE</text>
-      <circle cx="585" cy="142" r="6" fill="#2563eb"/>
-      <text x="600" y="147" font-size="12" fill="#334155">Sinyal Relay</text>
-      <circle cx="585" cy="170" r="6" fill="#dc2626"/>
-      <text x="600" y="175" font-size="12" fill="#334155">Sensor Baterai</text>
+      <div class="not-prose my-8 space-y-6">
+        
+        <!-- Baris Daya Utama -->
+        <div class="flex flex-col md:flex-row gap-4 items-stretch">
+          <div class="diagram-box flex-1 border-l-4 border-l-emerald-500">
+            <h4 class="text-emerald-400 font-bold">Baterai (1x 18650)</h4>
+            <ul>
+              <li>Kapasitas: 1500mAh - 2200mAh</li>
+              <li>Tegangan: 3.7V - 4.2V</li>
+              <li>Sistem Holder Hotswap</li>
+              <li>(-) Tersambung ke Common Ground</li>
+            </ul>
+          </div>
+          
+          <div class="diagram-arrow rotate-90 md:rotate-0">→</div>
+          
+          <div class="diagram-box flex-1 border-l-4 border-l-amber-500">
+            <h4 class="text-amber-400 font-bold">Sekering (Fuse/PTC)</h4>
+            <ul>
+              <li>Rating: 2A - 5A</li>
+              <li>Melindungi baterai dari Short Circuit jika motor macet.</li>
+            </ul>
+          </div>
 
-      <!-- Display -->
-      <rect x="835" y="40" width="220" height="125" rx="8" fill="#fdf2f8" stroke="#db2777" stroke-width="2"/>
-      <text x="945" y="72" text-anchor="middle" font-size="16" font-weight="700" fill="#be185d">Layar TM1637</text>
-      <text x="945" y="98" text-anchor="middle" font-size="13" fill="#be185d">Penunjuk Waktu</text>
-      <text x="945" y="130" text-anchor="middle" font-size="32" font-weight="800" fill="#be185d">05:00</text>
+          <div class="diagram-arrow rotate-90 md:rotate-0">→</div>
+          
+          <div class="diagram-box flex-[1.5] border-l-4 border-l-rose-500">
+            <h4 class="text-rose-400 font-bold">Modul Relay Contact</h4>
+            <ul>
+              <li>Tipe: COM (Common) & NO (Normally Open)</li>
+              <li><strong>Jika Relay ON:</strong> Tegangan (+) diteruskan ke PCB Receiver Mainan RC.</li>
+            </ul>
+          </div>
+        </div>
 
-      <!-- Fuse -->
-      <rect x="290" y="250" width="165" height="70" rx="8" fill="#fff7ed" stroke="#d97706" stroke-width="2"/>
-      <text x="372" y="282" text-anchor="middle" font-size="16" font-weight="700" fill="#b45309">Sekering Pengaman</text>
-      <text x="372" y="305" text-anchor="middle" font-size="13" fill="#b45309">Kapasitas 3A</text>
+        <!-- Jalur Kontrol Logika -->
+        <div class="bg-slate-800/50 p-4 border border-slate-700 rounded-lg">
+          <h3 class="text-slate-300 font-bold text-sm mb-4">Unit Logika & Sensor Pembaca</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            <div class="diagram-box border-l-4 border-l-cyan-500">
+              <h4 class="text-cyan-400 font-bold">Modul Kontrol Utama (ESP32-C3)</h4>
+              <ul>
+                <li><strong>Daya:</strong> Melalui Regulator Buck-Boost 3.3V (Dari baterai yang sama).</li>
+                <li><strong>Output:</strong> Mengirim sinyal waktu ke Layar TM1637 (I2C/Serial).</li>
+                <li><strong>Konektivitas:</strong> Broadcast BLE GATT Server.</li>
+              </ul>
+            </div>
 
-      <!-- Relay -->
-      <rect x="565" y="260" width="205" height="105" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
-      <text x="667" y="292" text-anchor="middle" font-size="16" font-weight="700" fill="#b91c1c">Modul Relay</text>
-      <text x="605" y="330" font-size="13" fill="#b91c1c">COM</text>
-      <text x="715" y="330" font-size="13" fill="#b91c1c">NO</text>
-      <line x1="630" y1="325" x2="705" y2="325" stroke="#b91c1c" stroke-width="4" stroke-dasharray="8 6"/>
+            <div class="space-y-4">
+              <div class="diagram-box border-l-4 border-l-purple-500">
+                <h4 class="text-purple-400 font-bold">Sirkuit Driver Relay</h4>
+                <ul>
+                  <li>GPIO ESP32 → Resistor 1k → Transistor</li>
+                  <li>Wajib memakai <strong>Flyback Diode</strong> pada Coil Relay untuk menyerap <em>back-EMF</em>.</li>
+                </ul>
+              </div>
 
-      <!-- Toy PCB -->
-      <rect x="850" y="250" width="210" height="125" rx="8" fill="#f1f5f9" stroke="#475569" stroke-width="2"/>
-      <text x="955" y="290" text-anchor="middle" font-size="16" font-weight="700" fill="#334155">Mesin Excavator</text>
-      <text x="955" y="317" text-anchor="middle" font-size="13" fill="#475569">Mainboard & Motor RC</text>
-      <text x="880" y="355" font-size="13" font-weight="700" fill="#dc2626">+</text>
-      <text x="1028" y="355" font-size="13" font-weight="700" fill="#334155">-</text>
+              <div class="diagram-box border-l-4 border-l-indigo-500">
+                <h4 class="text-indigo-400 font-bold">Sirkuit ADC (Pembaca Baterai)</h4>
+                <ul>
+                  <li>Resistor pembagi tegangan (R1: 220kΩ, R2: 100kΩ)</li>
+                  <li>Kapasitor 100nF ke GND untuk menstabilkan pembacaan.</li>
+                </ul>
+              </div>
+            </div>
 
-      <!-- Driver/Divider logic -->
-      <rect x="565" y="455" width="205" height="90" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="2"/>
-      <text x="667" y="482" text-anchor="middle" font-size="14" font-weight="700" fill="#334155">Sirkuit Driver Relay</text>
-      <text x="667" y="508" text-anchor="middle" font-size="13" fill="#475569">Transistor + Dioda</text>
+          </div>
+        </div>
 
-      <rect x="280" y="455" width="190" height="90" rx="8" fill="#faf5ff" stroke="#7c3aed" stroke-width="2"/>
-      <text x="375" y="482" text-anchor="middle" font-size="14" font-weight="700" fill="#6d28d9">Pembaca Baterai (ADC)</text>
-      <text x="375" y="508" text-anchor="middle" font-size="13" fill="#6d28d9">Resistor 220k & 100k</text>
+      </div>
 
-      <!-- Wiring Lines -->
-      <path d="M200 150 C235 150 235 88 280 88" stroke="#dc2626" stroke-width="4" fill="none" marker-end="url(#arrow-red)"/>
-      <path d="M470 88 L555 88" stroke="#dc2626" stroke-width="4" fill="none" marker-end="url(#arrow-red)"/>
-      <path d="M200 155 C245 155 245 285 290 285" stroke="#dc2626" stroke-width="4" fill="none" marker-end="url(#arrow-red)"/>
-      <path d="M455 285 L565 315" stroke="#dc2626" stroke-width="4" fill="none" marker-end="url(#arrow-red)"/>
-      <path d="M770 315 L850 350" stroke="#dc2626" stroke-width="4" fill="none" marker-end="url(#arrow-red)"/>
+      <blockquote class="bg-amber-900/20 border-amber-500/50 text-amber-200">
+        <strong>Peringatan Grounding Penting:</strong> Common Ground (Jalur Negatif) WAJIB tersambung antara Baterai, ESP32, Sirkuit Relay Driver, dan PCB Mainan RC agar sinyal logika digital dapat terbaca dengan benar oleh semua komponen.
+      </blockquote>
 
-      <path d="M160 172 C260 610 760 610 1035 355" stroke="#334155" stroke-width="4" fill="none" marker-end="url(#arrow-gray)"/>
-      <path d="M160 172 C265 170 430 170 555 170" stroke="#334155" stroke-width="3" fill="none" marker-end="url(#arrow-gray)"/>
+      <hr>
 
-      <path d="M585 142 C545 250 585 430 610 455" stroke="#2563eb" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-      <path d="M585 170 C505 250 430 395 400 455" stroke="#7c3aed" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-      <path d="M765 92 L835 92" stroke="#db2777" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-      <path d="M765 120 L835 120" stroke="#db2777" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-    </svg>
-  </section>
+      <h2>2. Spesifikasi Komponen & Panduan Keamanan</h2>
+      
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 not-prose my-6">
+        <div class="diagram-box">
+          <h4 class="text-slate-200">Spesifikasi Modul Relay</h4>
+          <ul>
+            <li class="text-emerald-400 font-bold">Gunakan Koil 3V/3.3V (Contact NO)</li>
+            <li>Rating arus kontak relai <strong>minimal 3A</strong> (disarankan 5A) untuk menahan lonjakan arus awal dinamo.</li>
+            <li>Relay 5V murah sering tidak stabil bila hanya memakai daya dari 1x baterai 18650.</li>
+          </ul>
+        </div>
+        <div class="diagram-box">
+          <h4 class="text-slate-200">Driver Pin GPIO</h4>
+          <ul>
+            <li class="text-rose-400 font-bold">Dilarang Keras:</li>
+            <li>Menyambungkan koil relay secara langsung ke pin GPIO ESP32 (arus balik dapat membakar mikrokontroler).</li>
+            <li>Harus dipicu lewat transistor pembantu.</li>
+          </ul>
+        </div>
+        <div class="diagram-box">
+          <h4 class="text-slate-200">Logika Keamanan (Safety)</h4>
+          <ul>
+            <li><strong>Mencegah Loncat:</strong> Saat ESP32 baru dihidupkan (Booting/Reset), GPIO relay harus dipaksa dalam keadaan OFF (LOW).</li>
+            <li>Sistem dilarang memiliki <em>Auto-Resume</em> otomatis sesaat setelah ganti baterai demi keamanan.</li>
+          </ul>
+        </div>
+      </div>
 
-  <div class="note">
-    <strong>Perhatian Keselamatan:</strong> Modul relay harus menggunakan tegangan koil 3V/3.3V dan dipicu melalui sirkuit transistor. Jangan sambungkan koil relay secara langsung ke pin ESP32 karena dapat merusak mikrokontroler.
-  </div>
+      <hr>
 
-  <section class="grid">
-    <div class="grid-card">
-      <h3>Modul Relay</h3>
-      <p><span class="ok">Gunakan relay 3V/3.3V</span> dengan sambungan <em>Normally Open (NO)</em>.</p>
-      <p>Kapasitas kontak minimal 3A, disarankan 5A untuk menahan lonjakan arus dinamo.</p>
-    </div>
-    <div class="grid-card">
-      <h3>Komponen Aktif (Sirkuit)</h3>
-      <p>Gunakan dioda <em>flyback</em> paralel dengan koil relay untuk mengamankan lonjakan tegangan (back-EMF).</p>
-      <p>Regulator step-down (buck) direkomendasikan untuk stabilitas daya ESP32.</p>
-    </div>
-    <div class="grid-card">
-      <h3>Logika Keamanan</h3>
-      <p><span class="bad">Saat perangkat dihidupkan (booting), relay dipaksa dalam keadaan OFF.</span></p>
-      <p>Mainan tidak akan langsung hidup bila baterai baru dimasukkan.</p>
-    </div>
-  </section>
+      <h2>3. Tabel Konfigurasi Pin (Pinout) ESP32</h2>
+      <p>Konfigurasi standar pinout untuk board ESP32 (seperti ESP32-C3 atau DevKit V1) dalam merangkai sistem timer MVP ini:</p>
 
-  <h2>Tabel Konfigurasi Pin (Pinout)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Fungsi</th>
-        <th>Pin ESP32</th>
-        <th>Komponen / Modul</th>
-        <th>Keterangan</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><strong>Kontrol Relay</strong></td>
-        <td><span class="badge badge-blue">GPIO 26</span></td>
-        <td>Transistor Driver Relay</td>
-        <td>Memberi sinyal aktif ke relay (Default: OFF)</td>
-      </tr>
-      <tr>
-        <td><strong>Pembaca Baterai (ADC)</strong></td>
-        <td><span class="badge badge-gray">GPIO 34</span></td>
-        <td>Sirkuit Pembagi Tegangan</td>
-        <td>Resistor divider 220kΩ / 100kΩ untuk membaca voltase baterai</td>
-      </tr>
-      <tr>
-        <td><strong>Layar TM1637 (CLK)</strong></td>
-        <td><span class="badge badge-gray">GPIO 18</span></td>
-        <td>TM1637 Clock Pin</td>
-        <td>Jalur sinkronisasi data layar 4-digit</td>
-      </tr>
-      <tr>
-        <td><strong>Layar TM1637 (DIO)</strong></td>
-        <td><span class="badge badge-gray">GPIO 19</span></td>
-        <td>TM1637 Data Pin</td>
-        <td>Jalur komunikasi data layar 4-digit</td>
-      </tr>
-      <tr>
-        <td><strong>Lampu Status (LED)</strong></td>
-        <td><span class="badge badge-blue">GPIO 2</span></td>
-        <td>LED Indikator</td>
-        <td>Lampu indikator saat alat aktif/terkoneksi</td>
-      </tr>
-      <tr>
-        <td><strong>Tombol Servis</strong></td>
-        <td><span class="badge badge-gray">GPIO 14</span></td>
-        <td>Tombol Fisik (Push Button)</td>
-        <td>Tombol darurat/reset di dalam kotak modul</td>
-      </tr>
-    </tbody>
-  </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr class="border-b border-slate-700 bg-slate-800">
+              <th class="py-2 px-4 font-semibold text-slate-300">Fungsi</th>
+              <th class="py-2 px-4 font-semibold text-slate-300">Pin ESP32</th>
+              <th class="py-2 px-4 font-semibold text-slate-300">Komponen Hardware</th>
+              <th class="py-2 px-4 font-semibold text-slate-300">Deskripsi Teknis</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/50">
+            <tr>
+              <td class="py-2 px-4 font-medium text-slate-200">Kontrol Relay Utama</td>
+              <td class="py-2 px-4 font-mono text-cyan-400">GPIO 26</td>
+              <td class="py-2 px-4 text-slate-400">Transistor Driver Relay</td>
+              <td class="py-2 px-4 text-slate-400">Output digital (HIGH = ON). Kondisi default (boot) = LOW.</td>
+            </tr>
+            <tr>
+              <td class="py-2 px-4 font-medium text-slate-200">Monitor Sisa Baterai</td>
+              <td class="py-2 px-4 font-mono text-cyan-400">GPIO 34</td>
+              <td class="py-2 px-4 text-slate-400">Sirkuit Pembagi Tegangan (ADC)</td>
+              <td class="py-2 px-4 text-slate-400">Masukan Analog (ADC). Menerima max 3.3V dari divider 220k/100k.</td>
+            </tr>
+            <tr>
+              <td class="py-2 px-4 font-medium text-slate-200">Clock Layar TM1637</td>
+              <td class="py-2 px-4 font-mono text-cyan-400">GPIO 18</td>
+              <td class="py-2 px-4 text-slate-400">Pin CLK Modul Layar</td>
+              <td class="py-2 px-4 text-slate-400">Jalur sinkronisasi data *clock* untuk display 4-digit LED.</td>
+            </tr>
+            <tr>
+              <td class="py-2 px-4 font-medium text-slate-200">Data Layar TM1637</td>
+              <td class="py-2 px-4 font-mono text-cyan-400">GPIO 19</td>
+              <td class="py-2 px-4 text-slate-400">Pin DIO Modul Layar</td>
+              <td class="py-2 px-4 text-slate-400">Jalur komunikasi data *segment* dua arah (I/O).</td>
+            </tr>
+            <tr>
+              <td class="py-2 px-4 font-medium text-slate-200">Lampu Status Perangkat</td>
+              <td class="py-2 px-4 font-mono text-cyan-400">GPIO 2</td>
+              <td class="py-2 px-4 text-slate-400">LED Onboard / Eksternal</td>
+              <td class="py-2 px-4 text-slate-400">Indikator visual (Berkedip saat mencari BLE, Menyala saat aktif).</td>
+            </tr>
+            <tr>
+              <td class="py-2 px-4 font-medium text-slate-200">Tombol Servis (Reset)</td>
+              <td class="py-2 px-4 font-mono text-cyan-400">GPIO 14</td>
+              <td class="py-2 px-4 text-slate-400">Tombol Fisik internal box</td>
+              <td class="py-2 px-4 text-slate-400">Input dengan Internal Pull-Up. Untuk memaksa reset koneksi.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </article>
+
+  </main>
+
+  <footer class="text-center mt-12 text-slate-500 text-sm">
+    &copy; 2026 Excavator Rental System
+  </footer>
 
 </body>
 </html>
