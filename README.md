@@ -14,7 +14,7 @@ Sistem timer rental untuk mainan excavator RC di mall. Menggunakan arsitektur **
 ## Arsitektur
 
 ```
-┌──────────────────┐    Wi-Fi (API)    ┌──────────────────┐    Wi-Fi    ┌───────────────┐
+┌──────────────────┐    Wi-Fi (API)   ┌──────────────────┐    Wi-Fi    ┌───────────────┐
 │ Android App /    │◄────────────────►│ ESP32 Master     │◄───────────►│ ESP32 Slave 1 │
 │ Web Browser      │   (Single IP)    │ (Access Point +  │             └───────────────┘
 │ (Dashboard)      │                  │  API Gateway)    │◄───────────►│ ESP32 Slave 2 │

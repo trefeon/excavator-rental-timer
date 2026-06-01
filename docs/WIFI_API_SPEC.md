@@ -10,14 +10,14 @@ Dokumen ini menjelaskan bagaimana Aplikasi Android berkomunikasi dengan sistem E
 Aplikasi Android          Master ESP32              Slave ESP32
      │                   (192.168.4.1)            (192.168.4.x)
      │                        │                        │
-     │── GET /api/slaves ──► │  (data dari RAM)        │
-     │◄── JSON array ────── │                        │
+     │── GET /api/slaves ──►  │  (data dari RAM)       │
+     │◄── JSON array ─────────│                        │
      │                        │                        │
-     │── POST /api/command ─►│── POST /api/command ──►│
-     │◄── response ──────── │◄── response ────────── │
+     │── POST /api/command ─► │── POST /api/command ──►│
+     │◄── response ───────────│◄── response ───────────│
      │                        │                        │
-     │                        │── GET /api/state ────►│ (polling tiap 1-2 detik)
-     │                        │◄── status ─────────── │
+     │                        │── GET /api/state ────► │ (polling tiap 1-2 detik)
+     │                        │◄── status ─────────────│
 ```
 
 **Prinsip:** Android **HANYA** berkomunikasi dengan Master (`192.168.4.1`). Tidak perlu tahu IP masing-masing Slave.

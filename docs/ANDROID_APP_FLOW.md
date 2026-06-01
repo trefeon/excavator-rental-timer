@@ -28,12 +28,12 @@ Tujuan: tampilan cepat untuk operator.
 Baris daftar mainan:
 
 ```
-┌──────────────────────────────────────────┐
-│ EXC-01  RUNNING   04:30  OK   [+5] [Pause]│
+┌────────────────────────────────────────────┐
+│ EXC-01  RUNNING   04:30  OK   [+5] [Pause] │
 │ EXC-02  LOCKED    --     OK   [+5]         │
 │ EXC-03  PAUSED    02:40  OK   [Resume]     │
 │ EXC-04  OFFLINE   --     --   [Edit] [Del] │
-└──────────────────────────────────────────┘
+└────────────────────────────────────────────┘
 ```
 
 Aksi per baris:
