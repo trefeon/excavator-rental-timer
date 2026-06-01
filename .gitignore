@@ -28,3 +28,14 @@ desktop.ini
 *.bin
 *.hex
 *.map
+
+# Commercial Proposals & Internal Specs
+*.docx
+PROPOSAL*.md
+PRD.md
+MVP_SPEC.md
+
+# Scratch and Generator scripts
+scratch.py
+generate_docx.py
+

@@ -1,61 +1,39 @@
-# Wiring Diagram - Relay Murah MVP
+# Wiring Diagram — Relay Murah MVP
 
-Mermaid diagram utama ada di [MERMAID_DIAGRAMS.md](MERMAID_DIAGRAMS.md).
+Diagram utama ada di [MERMAID_DIAGRAMS.md](MERMAID_DIAGRAMS.md).
 
-## 1. Power Layout
+## 1. Skema Power
 
-```mermaid
-flowchart LR
-  battery["1x 18650 holder"]
-  regulator["3.3V buck / buck-boost"]
-  esp["ESP32 BLE timer"]
-  display["TM1637 4-digit display"]
-  fuse["Fuse / PTC 2A-5A"]
-  relay["Relay NO contact"]
-  toy["PCB mainan excavator"]
-
-  battery -- "always-on power" --> regulator --> esp
-  esp --> display
-  battery -- "battery +" --> fuse --> relay --> toy
-  battery -- "battery -" --> toy
-  esp -- "GPIO relay control" --> relay
+```
+18650 holder
+  +-> 3.3V buck/buck-boost regulator -> ESP32 Slave (always-on)
+  +-> fuse/PTC 2A-5A -> relay NO contact -> PCB mainan +
+  
+18650 holder (-) -> PCB mainan -
+                 -> ESP32 GND
+                 -> regulator GND
 ```
 
-## 2. Relay Contact Wiring
+ESP32 selalu mendapat power selama 18650 terpasang. Mainan hanya dapat power saat relay ON.
 
-Use normally-open contact so toy is OFF by default.
+## 2. Wiring Kontak Relay
 
-```text
+Gunakan kontak Normally-Open (NO) supaya mainan OFF secara default.
+
+```
 Battery + -> fuse/PTC -> relay COM
 relay NO -> PCB mainan +
 Battery - -> PCB mainan -
 ```
 
-Do not switch ground.
+**Jangan switch ground.** Hanya putus jalur positive.
 
-## 3. Relay Coil Driver
+## 3. Driver Koil Relay
 
-GPIO must not drive relay coil directly.
+GPIO **tidak boleh** langsung menggerakkan koil relay. Gunakan transistor driver + diode flyback.
 
-```mermaid
-flowchart LR
-  gpio["ESP32 GPIO"]
-  resistor["1k resistor"]
-  transistor["NPN transistor / N-MOS"]
-  coil["Relay coil"]
-  diode["Flyback diode across coil"]
-  vcc["3.3V"]
-  gnd["GND"]
-
-  gpio --> resistor --> transistor --> gnd
-  vcc --> coil --> transistor
-  diode -. "flyback protection" .-> coil
 ```
-
-Text wiring:
-
-```text
-ESP32 GPIO ---- 1k resistor ---- transistor base/gate
+ESP32 GPIO26 ---- 1k resistor ---- transistor base/gate
 
 3.3V ---- relay coil ---- transistor collector/drain
 transistor emitter/source ---- GND
@@ -65,122 +43,107 @@ diode cathode -> 3.3V side
 diode anode   -> transistor side
 ```
 
-## 4. Pin Proposal
+Kebanyakan **modul relay siap pakai** sudah memiliki transistor driver dan diode flyback built-in. Cek spesifikasi modul.
 
-| Function | ESP32 DevKit | ESP32-C3 Option | Notes |
-| --- | --- | --- | --- |
-| Relay control | GPIO26 | GPIO4 | Output, default OFF |
-| Battery ADC | GPIO34 | GPIO0/ADC capable | Through divider |
-| TM1637 CLK | GPIO18 | GPIO6 | 4-digit display clock |
-| TM1637 DIO | GPIO19 | GPIO7 | 4-digit display data |
-| Status LED | GPIO2 | GPIO8 | Optional |
-| Service button | GPIO14 | GPIO9 | Pull-up input |
+## 4. Pinout Resmi
 
-Adjust pins to board used. Avoid boot strap pins if relay could turn ON during boot.
+| Fungsi | GPIO ESP32 | Catatan |
+|--------|-----------|---------|
+| Relay control | GPIO 26 | Output, default OFF |
+| TM1637 CLK | GPIO 22 | 4-digit display clock |
+| TM1637 DIO | GPIO 23 | 4-digit display data |
+| Buzzer (+) | GPIO 27 | Buzzer aktif |
+| Button Resume | GPIO 32 | INPUT_PULLUP |
+| Status LED | GPIO 2 | Built-in LED (opsional) |
+
+Pin ini sesuai dengan kode di `firmware/wifi_slave/wifi_slave.ino`.
 
 ## 5. TM1637 4-Digit Display
 
-Display ditempel di mainan supaya customer/staff melihat sisa waktu tanpa membuka app.
+Display ditempel di mainan supaya customer/staff melihat sisa waktu.
 
-```text
-TM1637 VCC -> ESP32 3.3V
+```
+TM1637 VCC -> ESP32 3.3V atau 5V (5V lebih terang)
 TM1637 GND -> GND
-TM1637 CLK -> GPIO18
-TM1637 DIO -> GPIO19
+TM1637 CLK -> GPIO 22
+TM1637 DIO -> GPIO 23
 ```
 
-Display format:
+Format display:
 
-```text
-RUNNING:  MM:SS
-PAUSED:   MMSS / colon blink
+```
+RUNNING:  MM:SS (titik dua berkedip)
+PAUSED:   MM:SS (titik dua berkedip)
 LOCKED:   ----
-LOW_BATT: Lo
-ENDED:    0000 blink
-FAULT:    Err
+ENDED:    ----
+FAULT:    ----
 ```
 
-## 6. Battery ADC Divider
+## 6. Buzzer
 
-For 1x18650:
+Buzzer aktif (bukan passive/piezo speaker). Langsung dikontrol GPIO.
 
-```text
-Battery + ---- R1 220k ----+---- ADC
-                            |
-                           R2 100k
-                            |
-GND ------------------------+
+```
+Buzzer (+) -> GPIO 27
+Buzzer (-) -> GND
 ```
 
-Add:
+Feedback audio:
+- 1x beep pendek (50ms): setiap command diterima
+- 2x beep (200ms): peringatan 1 menit tersisa
+- 1x beep (50ms): 10 detik terakhir countdown
+- 3x beep (150ms): registrasi sukses
+- 1x beep panjang (1000ms): waktu habis
+- 3x beep (100ms) + display kedip: IDENTIFY command (cari fisik mainan)
 
-```text
-100nF capacitor from ADC to GND
+## 7. Button Fisik (Resume)
+
+```
+Button -> GPIO 32 (INPUT_PULLUP)
+Button -> GND
 ```
 
-Voltage formula:
+Saat ditekan (LOW): resume timer dari state PAUSED atau FAULT.
 
-```text
-Vbat = Vadc * (R1 + R2) / R2
-Vbat = Vadc * 3.2
+Debounce: software 300ms di kode.
+
+## 8. Pemilihan Relay Murah
+
+Gunakan:
+- **Relay koil 3V atau 3.3V** (bukan 5V).
+- Contact rating **minimal 3A**, ideal **5A**.
+- Kontak NO/COM (Normally Open).
+
+Hindari:
+- Relay koil 5V langsung dari 1x18650 (tidak reliable).
+- Koil relay langsung dari GPIO ESP32 (arus kurang).
+- Arus motor mainan lewat breadboard rails.
+
+Jika pakai modul relay murah:
+- Cek bisa di-trigger dari logika 3.3V ESP32.
+- Cek tegangan suplai modul relay.
+- Cek modul sudah punya transistor driver + diode.
+
+## 9. Perilaku Safety Wajib
+
+Firmware harus melakukan ini:
+
 ```
-
-Threshold:
-
-```text
-OK       > 3.55V
-LOW      3.30V - 3.55V
-CRITICAL < 3.30V
-CUTOFF   < 3.15V for 5-10 seconds
-```
-
-## 7. Cheap Relay Selection
-
-Use:
-
-```text
-3V or 3.3V relay coil
-contact rating >= 3A, better 5A
-NO/COM contact
-```
-
-Avoid:
-
-```text
-5V relay coil direct from 1x18650
-relay coil directly from ESP32 GPIO
-toy motor current through breadboard rails
-```
-
-If using cheap relay module:
-
-- Check it can trigger from ESP32 3.3V logic.
-- Check relay supply voltage.
-- Check module has transistor driver and diode.
-- If module needs 5V relay supply, it needs boost 5V and costs more power.
-
-## 8. Required Safety Behavior
-
-Firmware must do this:
-
-```text
 setup:
-  configure relay pin OFF before any BLE/timer init
+  konfigurasi pin relay sebagai OUTPUT
+  set relay OFF sebelum inisialisasi apapun
 
 boot:
   relay OFF
-  load saved timer
-  if remaining_seconds > 0:
-      state = PAUSED
-  else:
+  load timer tersimpan dari NVS
+  jika remaining_seconds > 0:
+      state = RUNNING (auto-resume setelah peringatan 3 detik)
+  lainnya:
       state = LOCKED
 ```
 
-Relay ON only when:
-
-```text
+Relay ON hanya jika:
+```
 state == RUNNING
 remaining_seconds > 0
-battery_status == OK or LOW
-fault_code == NONE
 ```

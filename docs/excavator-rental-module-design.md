@@ -1,623 +1,255 @@
-# Dokumen Konsep Module Timer IoT Mainan Excavator Rental
+# Dokumen Konsep Modul Timer IoT Mainan Excavator Rental
 
 ## 1. Ringkasan
 
-Project ini membuat module murah untuk dipasang ke mainan excavator remote control murah. Mainan tetap memakai remote RC bawaan. Module hanya mengatur akses power mainan berdasarkan timer sewa yang dikontrol dari aplikasi Android lewat BLE.
+Project ini membuat modul murah untuk dipasang ke mainan excavator remote control. Mainan tetap memakai remote RC bawaan. Modul hanya mengatur akses power mainan berdasarkan timer sewa yang dikontrol dari dashboard Web atau Android lewat Wi-Fi.
 
 Target utama:
-
-- Banyak unit mainan bisa dipantau dari 1 dashboard Android.
+- Banyak unit mainan bisa dipantau dari 1 dashboard (Web/Android).
 - Mainan bisa ditambah waktu per 5 menit.
 - Sisa waktu terlihat langsung di mainan lewat TM1637 4-digit display.
-- Timer tidak reset saat battery 18650 diganti.
-- Module murah, gampang dirakit, dan cukup reliable untuk operasional mall.
-- Tidak memakai Wi-Fi agar HP/tablet owner tetap bebas pakai internet seluler.
+- Timer tidak reset saat battery 18650 diganti (NVS storage).
+- Modul murah, gampang dirakit, dan reliable untuk operasional mall.
+- Arsitektur Wi-Fi Master-Slave mandiri (tanpa internet, tanpa cloud).
 
 ## 2. Asumsi Hardware Mainan
 
-Mainan excavator murah biasanya punya pola power seperti ini:
-
-```text
+Mainan excavator murah biasanya punya pola power:
+```
 Battery -> PCB receiver/controller bawaan -> motor track/arm/bucket/turret
 Remote RC bawaan -> PCB receiver bawaan
 ```
 
-Module tidak mengganti PCB atau remote bawaan. Module hanya memutus dan menyambung power ke PCB mainan.
+Modul tidak mengganti PCB atau remote bawaan. Modul hanya memutus dan menyambung power ke PCB mainan via relay.
 
 ## 3. Arsitektur Power
 
-Desain power:
-
-```text
+```
 18650 holder
   |
-  +-> regulator 3.3V always-on -> ESP32 + TM1637 display
+  +-> regulator 3.3V always-on -> ESP32 + TM1637 display + buzzer
   |
-  +-> fuse/PTC -> relay murah -> PCB mainan excavator
+  +-> fuse/PTC -> relay kontak NO -> PCB mainan excavator
 ```
 
 Prinsip:
-
-- ESP32 selalu mendapat power selama 18650 terpasang.
-- Mainan hanya mendapat power saat timer aktif.
-- Saat ESP32 reset atau mati, switch harus default OFF.
+- ESP32 selalu dapat power selama 18650 terpasang (timer tetap jalan).
+- Mainan hanya dapat power saat relay ON (timer aktif).
+- Saat ESP32 reset atau mati, relay default OFF.
 - Putus jalur battery positive ke mainan, bukan ground.
 
 ## 4. Relay Murah Sebagai Keputusan MVP
 
-Untuk target jual ke pedagang, MVP memakai relay murah karena lebih mudah dijelaskan, mudah dirakit, dan mudah diservis.
+Target jual ke pedagang: relay murah karena lebih mudah dijelaskan, dirakit, dan diservis.
 
 Kelebihan:
-
-- Mudah dimengerti.
+- Mudah dimengerti pedagang.
 - Mudah dirakit.
-- Cocok untuk prototype.
-- Cocok untuk dijual ke pedagang karena komponen familiar.
+- Cocok untuk prototype dan produksi skala kecil.
+- Komponen familiar dan tersedia di toko elektronik.
 
 Kekurangan:
-
-- Coil makan arus kalau bukan latching relay.
-- Umur mekanik terbatas.
+- Koil makan arus (~70mA untuk relay 3.3V).
+- Umur mekanik terbatas (~100.000 siklus).
 - Bisa bunyi klik.
 - Perlu diode flyback.
-- Relay 5V umum tidak reliable jika langsung disupply dari 1x18650.
 
-Rekomendasi relay:
-
-```text
-Pakai relay 3V/3.3V coil, bukan relay 5V biasa.
-Contact rating minimal 3A, lebih aman 5A.
-Relay harus OFF saat ESP32 boot/reset.
-Relay coil wajib pakai transistor driver + diode flyback.
-```
-
-Catatan:
-
-- Kalau hanya ada relay module 5V murah, perlu boost 5V khusus relay.
-- Boost 5V menambah biaya dan boros, jadi relay 3V lebih cocok.
-- MOSFET/load switch tetap opsi upgrade, bukan target MVP pedagang.
+Rekomendasi:
+- Pakai relay koil 3V/3.3V, bukan relay 5V.
+- Contact rating minimal 3A, lebih aman 5A.
+- Relay harus OFF saat ESP32 boot/reset.
+- Pakai modul relay siap pakai (sudah ada transistor driver + diode).
 
 ## 5. Battery 18650 Hotswap
 
-Battery 18650 memakai holder dan bisa diganti oleh staff.
+Battery 18650 memakai holder dan bisa diganti staff.
 
-Masalah utama:
-
-```text
-Kalau 18650 dicabut, ESP32 ikut mati karena power source jadi satu.
-```
+Masalah: kalau 18650 dicabut, ESP32 ikut mati karena power source jadi satu.
 
 Solusi:
-
-- ESP32 menyimpan timer berkala ke flash internal atau FRAM.
+- ESP32 menyimpan timer berkala ke NVS Flash (setiap 30 detik + setiap state change).
 - Setelah battery baru dipasang, ESP32 boot ulang.
-- ESP32 membaca timer terakhir.
-- Mainan masuk state PAUSED, tidak langsung hidup otomatis.
-- Staff tekan Resume dari dashboard.
+- ESP32 membaca timer terakhir dari NVS.
+- Bunyi peringatan 3x dengan jeda 3 detik (staff menjauhkan tangan).
+- Auto-resume ke RUNNING.
 
 Flow:
-
-```text
+```
 RUNNING
   -> battery dicabut
-  -> ESP32 mati
-  -> mainan mati
+  -> ESP32 mati, mainan mati
   -> battery baru dipasang
-  -> ESP32 boot
-  -> load remaining_seconds
-  -> state = PAUSED
-  -> staff tekan Resume
-  -> mainan hidup lagi
+  -> ESP32 boot, connect ke Master
+  -> load remaining_seconds dari NVS
+  -> bunyi peringatan 3x (3 detik)
+  -> auto-resume ke RUNNING
+  -> relay ON, mainan hidup lagi
 ```
 
-Catatan safety:
+Catatan: ada jeda peringatan 3 detik sebelum auto-resume untuk safety. Jika ingin mode PAUSED (tidak auto-resume), ubah state menjadi `STATE_PAUSED` di kode.
 
-- Jangan auto-resume setelah battery baru dipasang.
-- Boot selalu relay OFF.
-- Resume manual mencegah mainan tiba-tiba hidup saat staff mengganti battery.
+## 6. Penyimpanan Timer (NVS)
 
-## 6. Penyimpanan Timer
-
-Data minimal yang disimpan di ESP32:
-
-```text
-toy_id
-session_id
-state
+Data yang disimpan di ESP32 Slave:
+```
 remaining_seconds
 total_paid_seconds
-last_command_id
-crc
 ```
 
-Storage pilihan:
+Menggunakan NVS ESP32 (Preferences API):
+- Gratis, sudah built-in.
+- Data persistent saat power mati.
+- Write dilakukan tiap 30 detik dan setiap perubahan state.
+- Maksimal selisih waktu: ~30 detik (interval save).
 
-### NVS ESP32
-
-Kelebihan:
-
-- Gratis, sudah ada di ESP32.
-- Cukup untuk MVP.
-- Data tetap ada saat power mati.
-
-Kekurangan:
-
-- Jangan write terlalu sering.
-- Save tiap 5-15 detik cukup.
-
-### FRAM I2C
-
-Kelebihan:
-
-- Aman write sering.
-- Bisa save tiap detik.
-- Lebih tahan untuk produk rental jangka panjang.
-
-Kekurangan:
-
-- Tambah biaya komponen.
-
-Rekomendasi:
-
-```text
-MVP murah: NVS, save tiap 10 detik.
-Versi produksi: FRAM, save tiap 1 detik.
-```
-
-Save dilakukan saat:
-
-```text
-START
-ADD_TIME
-PAUSE
-RESUME
-STOP
-LOW_BATTERY
-setiap 5-10 detik saat RUNNING
-```
-
-Contoh kehilangan waktu terburuk:
-
-```text
-Save interval 10 detik
-remaining 04:40 tersimpan
-battery dicabut saat 04:36
-battery baru -> remaining balik ke 04:40
-```
-
-Timer tidak reset. Selisih maksimal sekitar interval save.
+Untuk produksi jangka panjang: bisa upgrade ke FRAM I2C (write unlimited, save tiap detik).
 
 ## 7. State Machine
 
-State module:
-
-```text
-BOOT
-LOCKED
-RUNNING
-PAUSED
-PAUSED_LOW_BATT
-ENDED
-FAULT
+```
+LOCKED → RUNNING → PAUSED → RUNNING
+  ↑         ↓         ↓
+  └─── ENDED ◄────────┘
 ```
 
-Aturan:
-
-- `BOOT`: relay OFF.
-- `LOCKED`: tidak ada session aktif.
-- `RUNNING`: relay ON, timer berkurang.
-- `PAUSED`: relay OFF, remaining_seconds tetap.
-- `PAUSED_LOW_BATT`: battery rendah, butuh ganti battery.
-- `ENDED`: timer habis.
-- `FAULT`: error butuh staff clear.
+| State | Relay | Display | Trigger |
+|-------|-------|---------|---------|
+| LOCKED | OFF | `----` | Default, STOP |
+| RUNNING | ON | `MM:SS` kedip | ADD_TIME, RESUME, powerloss recovery |
+| PAUSED | OFF | `MM:SS` kedip | PAUSE |
+| ENDED | OFF | `----` | Timer habis (rem=0) |
+| FAULT | OFF | `----` | Error (butuh restart) |
 
 Boot logic:
-
-```text
+```
 boot:
-  switch_mainan_off()
-  session = load_storage()
-
-  if session.valid && session.remaining_seconds > 0:
-      state = PAUSED
+  relay OFF
+  load NVS
+  if remaining_seconds > 0:
+      bunyi peringatan 3x
+      state = RUNNING (auto-resume)
   else:
       state = LOCKED
 ```
 
 Timer logic:
-
-```text
+```
 if state == RUNNING:
     remaining_seconds--
-    if remaining_seconds <= 0:
-        switch_mainan_off()
+    if remaining_seconds == 60: beep 2x (warning 1 menit)
+    if remaining_seconds <= 10: beep 1x/detik (countdown)
+    if remaining_seconds == 0:
+        relay OFF
         state = ENDED
-        save_storage()
+        beep panjang 1x
+        save NVS
 ```
 
-## 8. Battery Detection
+## 8. Arsitektur Wi-Fi Master-Slave
 
-Target murah: tidak perlu persen battery. Cukup status:
-
-```text
-OK
-LOW
-CRITICAL
+```
+Android / Browser ──HTTP──► Master ESP32 (AP + API Gateway)
+                               │
+                    ┌──────────┼──────────┐
+                    ▼          ▼          ▼
+               Slave 1    Slave 2    Slave N
+              (ESP32)    (ESP32)    (ESP32)
 ```
 
-Rangkaian termurah:
+**Master:**
+- Access Point `ExcavatorMaster` (192.168.4.1).
+- DHCP server (IP dinamis untuk slave).
+- Web server + Dashboard WebUI.
+- API Gateway (proxy command ke slave).
+- Registry MAC→ID di NVS.
+- Core 0: Background task polling state semua slave.
+- Core 1: Web server + API handler.
+- Mutex: thread safety antara Core 0 dan Core 1.
+- Hardware watchdog 10 detik.
 
-```text
-Battery + ---- R1 ----+---- ADC ESP32
-                      |
-                     R2
-                      |
-GND ------------------+
-```
+**Slave:**
+- WiFi Station, connect ke Master.
+- Zero-Touch Provisioning (auto register).
+- Web server lokal (menerima command dari Master).
+- Timer countdown independen.
+- Relay control (power gate).
+- TM1637 display.
+- Buzzer feedback.
+- Button fisik resume.
+- NVS storage.
+- WiFi event handler (auto-reconnect).
+- Hardware watchdog 10 detik.
 
-Nilai awal untuk 1x18650:
+## 9. Keamanan
 
-```text
-R1 = 220k
-R2 = 100k
-C  = 100nF dari ADC ke GND
-```
+- Command hanya via jaringan Wi-Fi AP Master (terisolasi dari internet).
+- MAC address sebagai identitas unik hardware.
+- Tidak ada enkripsi data (MVP) — network terisolasi.
+- Untuk produksi selanjutnya: tambahkan PIN/password di API Master.
 
-Threshold awal:
-
-```text
-OK:       > 3.55V
-LOW:      3.30V - 3.55V
-CRITICAL: < 3.30V
-CUTOFF:   < 3.15V selama 5-10 detik
-```
-
-Saat low battery:
-
-```text
-matikan mainan
-save remaining_seconds
-state = PAUSED_LOW_BATT
-dashboard tampil "ganti battery"
-```
-
-Catatan:
-
-- Jangan tampil persen karena voltage 18650 tidak linear.
-- Baca ADC beberapa kali dan ambil average/median.
-- Abaikan drop singkat saat motor start.
-
-## 9. BLE Model Untuk 10 Mainan
-
-Setiap mainan menjadi BLE peripheral.
-
-Android menjadi BLE central.
-
-Model koneksi:
-
-```text
-Android scan banyak mainan
-Android connect hanya saat kirim command
-Setelah ACK, Android disconnect
-```
-
-Jangan maintain 10 koneksi aktif karena:
-
-- Batas koneksi Android beda tiap device.
-- BLE stack bisa drop.
-- Timer sudah jalan lokal di ESP32.
-- Dashboard cukup dapat status dari advertising.
-
-## 10. BLE Advertising State
-
-Setiap mainan broadcast status tanpa koneksi:
-
-```text
-toy_id
-state
-remaining_minutes
-battery_status
-fault_code
-seq
-```
-
-Contoh dashboard:
-
-```text
-EXC-01 RUNNING 03m OK
-EXC-02 LOCKED  -- OK
-EXC-03 PAUSED  02m LOW
-EXC-04 FAULT   -- CRITICAL
-```
-
-Update rate:
-
-```text
-LOCKED:  1-2 detik
-RUNNING: 0.5-1 detik
-LOW/FAULT: 0.3-0.5 detik
-```
-
-Offline detection di Android:
-
-```text
-last_seen < 5 detik   -> ONLINE
-last_seen 5-15 detik  -> WEAK
-last_seen > 15 detik  -> OFFLINE
-```
-
-## 11. BLE Command Flow
-
-Command hanya dikirim saat Android connect.
-
-Command utama:
-
-```text
-START
-ADD_TIME
-PAUSE
-RESUME
-STOP
-LOCK
-CLEAR_FAULT
-GET_STATE
-```
-
-Tambah waktu:
-
-```text
-ADD_TIME 300
-```
-
-Aturan:
-
-- Increment waktu = 300 detik atau 5 menit.
-- Jika state LOCKED, `ADD_TIME 300` bisa langsung membuat session dan start.
-- Jika state RUNNING, remaining_seconds bertambah.
-- Jika state LOW_BATT, waktu boleh ditambah, tapi mainan tidak start sampai battery diganti.
-
-Flow `+5 menit`:
-
-```text
-staff tekan +5 menit
-Android connect EXC-01
-Android write ADD_TIME 300
-ESP32 validasi command
-ESP32 tambah remaining_seconds
-ESP32 save storage
-ESP32 kirim ACK
-Android simpan log
-Android disconnect
-```
-
-## 12. Security Pairing
-
-Customer tidak pairing. Hanya owner/staff app.
-
-Provisioning awal:
-
-```text
-QR di mainan:
-toy_id=EXC-01
-ble_name=EXC-01
-secret=random_16_or_32_bytes
-```
-
-Owner app scan QR dan menyimpan secret.
-
-Command tidak boleh hanya `unlock=true`. Command harus signed:
-
-```text
-payload = toy_id + command + value + session_id + counter + nonce
-signature = HMAC_SHA256(secret, payload)
-```
-
-ESP32 validasi:
-
-```text
-signature valid
-counter > last_counter
-command allowed by state
-```
-
-Anti double tap:
-
-```text
-last_command_id disimpan
-command_id sama -> balas ACK lama, jangan execute ulang
-command_id baru -> execute
-```
-
-Pairing/reset mode:
-
-```text
-tekan tombol kecil 5 detik
-LED blink
-provisioning aktif 60 detik
-app tulis secret baru
-ESP32 save secret
-keluar provisioning
-```
-
-## 13. Android Dashboard
-
-Tampilan list:
-
-```text
-EXC-01 RUNNING 03m OK
-EXC-02 LOCKED  -- OK
-EXC-03 PAUSED  02m LOW
-EXC-04 OFFLINE -- --
-```
-
-Detail mainan:
-
-```text
-Toy: EXC-01
-Status: RUNNING
-Remaining: 03:20
-Battery: OK
-
-[+5 menit] [+10 menit]
-[Pause] [Resume] [Stop]
-[Clear Fault]
-```
-
-Data Android:
-
-```text
-toy_id
-session_id
-paid_seconds
-last_seen_remaining
-last_seen_state
-last_command_id
-updated_at
-transaction_log
-```
-
-Peran Android:
-
-- Dashboard.
-- Command sender.
-- Backup log.
-- Restore manual jika storage ESP rusak.
-
-Peran ESP32:
-
-- Source of truth timer.
-- Source of truth relay.
-- Tetap mematikan mainan saat timer habis walau Android disconnect.
-
-## 14. Error Handling
+## 10. Error Handling
 
 Default aman:
+- Relay OFF saat boot/reset.
+- Relay OFF saat timer habis.
+- Relay OFF saat fault.
 
-```text
-relay OFF saat boot/reset
+Error handling:
+- Brownout/reset: boot ke RUNNING dengan peringatan 3 detik (jika ada sisa waktu).
+- Command invalid: ignore, return error code.
+- Storage corrupt: masuk FAULT, butuh restart.
+- Timer habis: relay OFF, state ENDED.
+- WiFi disconnect: server tetap berjalan, timer tetap berjalan lokal.
+- Master mati: slave tetap operasikan timer dan relay secara mandiri.
+
+## 11. MVP BOM (per mainan)
+
 ```
-
-Error handling wajib:
-
-- Brownout/reset: boot ke PAUSED atau LOCKED, bukan auto-run.
-- Low battery: matikan mainan dan simpan timer.
-- Command invalid: ignore dan increment invalid counter.
-- Terlalu banyak command invalid: lock command 30 detik.
-- Storage CRC invalid: masuk FAULT, butuh restore dari Android.
-- Timer habis: matikan mainan dan state ENDED.
-- BLE disconnect: timer tetap jalan lokal.
-
-## 15. MVP BOM
-
-Komponen minimal per mainan:
-
-```text
-ESP32-C3 module atau ESP32 module
+ESP32 DevKit V1
 18650 holder
-3.3V buck/buck-boost regulator
-relay murah 3V/3.3V dengan contact rating 3A-5A
-transistor driver relay
-diode flyback relay
-fuse/PTC 2A-5A
-voltage divider: 220k + 100k
-capacitor ADC: 100nF
-capacitor power mainan: 470uF - 1000uF
-capacitor regulator ESP: 100uF - 470uF
-tombol provisioning/reset
-LED status
-casing kecil
-QR sticker
+3.3V buck converter
+Relay module 3.3V 1-channel
+Transistor driver relay (built-in di modul)
+Diode flyback (built-in di modul)
+TM1637 4-digit display
+Buzzer aktif
+Button taktil
+Fuse/PTC 2A-5A
+Kapasitor 470uF-1000uF (dekat beban)
+Kabel jumper
+Casing/kotak
 ```
 
-Optional produksi:
+## 12. Ruang Lingkup Firmware MVP
 
-```text
-FRAM I2C
-supercap 1F-5F untuk save saat power drop
-MOSFET high-side/load switch sebagai upgrade
-latching relay sebagai upgrade hemat daya
-reverse polarity protection
-TVS diode
-```
-
-## 16. MVP Firmware Scope
-
-Firmware minimum:
-
-- BLE advertising status.
-- BLE GATT command write.
-- HMAC command validation.
-- Timer local.
-- NVS storage.
+- WiFi Station + AP mode.
+- Zero-Touch Provisioning (auto register ke Master).
+- Web server lokal (menerima API command).
+- Timer countdown lokal.
+- NVS storage (powerloss recovery).
 - Relay control.
-- ADC battery detection.
+- TM1637 display driver.
+- Buzzer feedback.
+- Button fisik.
 - State machine.
-- Command ACK.
-- Provisioning mode.
+- WiFi auto-reconnect.
+- Hardware watchdog.
+- Thread-safe registry (Master, dual-core mutex).
 
-## 17. MVP Android Scope
+## 13. Keputusan Desain Final
 
-App minimum:
-
-- Scan BLE advertising semua mainan.
-- List dashboard 10 mainan.
-- Detail mainan.
-- Tombol `+5 menit`.
-- Tombol `Pause`, `Resume`, `Stop`.
-- QR provisioning.
-- Local transaction log.
-- Warning offline/low battery/fault.
-
-## 18. Roadmap
-
-### Prototype 1
-
-- 1 mainan.
-- Relay switch.
-- NVS save tiap 10 detik.
-- Android command manual.
-- Test hotswap battery.
-
-### Prototype 2
-
-- 3 mainan.
-- Dashboard scan banyak unit.
-- Advertising state.
-- `+5 menit`, pause, resume.
-- Battery status OK/LOW/CRITICAL.
-
-### Pilot Mall
-
-- 10 mainan.
-- QR provisioning.
-- Staff operation flow.
-- Casing rapi.
-- Battery swap SOP.
-- Log transaksi.
-
-### Produksi Murah Untuk Pedagang
-
-- PCB custom.
-- Relay 3V/3.3V tetap dipakai jika target biaya paling rendah.
-- FRAM.
-- Better enclosure.
-- Gateway optional jika unit > 20.
-
-## 19. Keputusan Desain Saat Ini
-
-Keputusan utama:
-
-```text
+```
 Mainan tetap pakai remote RC bawaan.
-Module hanya gate power mainan dengan relay murah.
+Modul hanya gate power mainan dengan relay murah.
 Battery 18650 shared untuk mainan dan ESP32.
-Saat battery diganti, ESP32 boleh mati.
-Timer disimpan di ESP32.
-Setelah battery baru, state PAUSED dan staff tekan Resume.
-BLE advertising dipakai untuk report state 10 mainan.
-Android connect hanya saat command.
+Saat battery diganti, ESP32 boleh mati — timer survive via NVS.
+Setelah battery baru, auto-resume dengan peringatan 3 detik.
+Wi-Fi Master-Slave untuk report state dan command proxy.
+Android/Browser hanya connect ke 1 IP Master (192.168.4.1).
 Waktu ditambah per 5 menit dari dashboard.
-TM1637 4-digit display ditempel di mainan untuk menampilkan sisa waktu.
+TM1637 4-digit display ditempel di mainan.
+Buzzer + button fisik untuk feedback dan kontrol manual.
+Mutex dual-core + hardware watchdog untuk reliability.
 ```
 
 Desain ini paling murah, mudah dirakit, dan cukup aman untuk MVP rental mainan excavator.

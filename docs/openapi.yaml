@@ -1,0 +1,252 @@
+openapi: 3.0.3
+info:
+  title: Excavator Rental Timer API
+  description: API specifications for the Master and Slave ESP32 controllers in the Excavator Rental System.
+  version: 1.0.0
+servers:
+  - url: http://192.168.4.1/api
+    description: Master ESP32 AP Server
+  - url: http://{slave_ip}/api
+    description: Slave ESP32 Server
+    variables:
+      slave_ip:
+        default: 192.168.4.2
+        description: Dynamically assigned IP by Master DHCP
+
+paths:
+  # ==========================================
+  # REGISTRATION & STATUS (MASTER)
+  # ==========================================
+  /register:
+    get:
+      summary: Register / Heartbeat a Slave
+      description: Auto-registers a slave to the Master's registry via MAC address and returns its assigned ID. Also acts as a periodic heartbeat.
+      parameters:
+        - in: query
+          name: mac
+          required: true
+          schema:
+            type: string
+          description: The MAC address of the slave ESP32 (e.g. 80:F3:DA:63:25:DC)
+      responses:
+        '200':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: Assigned Toy ID
+
+  /slaves:
+    get:
+      summary: Get all registered slaves
+      description: Returns a list of all registered toys, their state, and connectivity status.
+      responses:
+        '200':
+          description: A JSON array of slave records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    ip:
+                      type: string
+                    mac:
+                      type: string
+                    online:
+                      type: boolean
+                    state:
+                      type: string
+                    rem:
+                      type: integer
+                    disp:
+                      type: string
+                    paid:
+                      type: integer
+                    bat:
+                      type: string
+
+  /edit_slave:
+    post:
+      summary: Edit Slave ID
+      description: Modifies the ID associated with a specific MAC address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mac
+                - id
+              properties:
+                mac:
+                  type: string
+                id:
+                  type: integer
+      responses:
+        '200':
+          description: ID changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: integer
+                    example: 1
+
+  /delete_slave:
+    post:
+      summary: Delete Slave
+      description: Removes a slave from the Master registry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mac
+              properties:
+                mac:
+                  type: string
+      responses:
+        '200':
+          description: Slave deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: integer
+                    example: 1
+
+  /transfer_time:
+    post:
+      summary: Transfer Time
+      description: Transfers remaining timer seconds from one toy to another toy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - from_id
+                - to_id
+              properties:
+                from_id:
+                  type: integer
+                to_id:
+                  type: integer
+      responses:
+        '200':
+          description: Time transferred successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: integer
+                    example: 1
+
+  # ==========================================
+  # COMMAND PROXY (MASTER & SLAVE)
+  # ==========================================
+  /command:
+    post:
+      summary: Send Command
+      description: |
+        Executes a state control command.
+        * **When sent to Master:** Acts as a proxy. Requires `id` in body to identify target slave.
+        * **When sent to Slave directly:** Executes command locally. Field `id` is ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - cmd
+                - val
+              properties:
+                id:
+                  type: integer
+                  description: Toy ID (Only required when POSTing to Master proxy)
+                cmd:
+                  type: string
+                  enum: [ADD_TIME, PAUSE, RESUME, STOP, IDENTIFY, REBOOT]
+                  description: Command action to perform
+                val:
+                  type: integer
+                  description: Value associated with command (e.g. seconds to add)
+      responses:
+        '200':
+          description: Command executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: integer
+                    example: 1
+                  code:
+                    type: string
+                    example: "OK"
+                  rem:
+                    type: integer
+                    description: Remaining seconds
+                  state:
+                    type: string
+                    description: Current slave state (e.g. RUNNING, PAUSED)
+
+  # ==========================================
+  # STATE CHECK (SLAVE)
+  # ==========================================
+  /state:
+    get:
+      summary: Get Slave State
+      description: Fetches the real-time timer state directly from the Slave. Used by Master for polling.
+      responses:
+        '200':
+          description: Slave status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  toy:
+                    type: string
+                    example: "EXC-01"
+                  state:
+                    type: string
+                    example: "RUNNING"
+                  rem:
+                    type: integer
+                    example: 300
+                  disp:
+                    type: string
+                    example: "05:00"
+                  paid:
+                    type: integer
+                    example: 600
+                  bat:
+                    type: string
+                    example: "OK"
+                  fault:
+                    type: integer
+                    example: 0
+                  seq:
+                    type: integer
+                    example: 1
