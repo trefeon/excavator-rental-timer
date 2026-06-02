@@ -40,7 +40,7 @@ Masalah:
 
 ## 4. Tujuan
 
-- Staff bisa melihat 10+ mainan dari satu Dashboard (Web / Android) via Master.
+- Staff bisa melihat hingga 9 mainan online bersamaan dari satu Dashboard (Web / Android) via Master.
 - Staff bisa menambah waktu per 5 menit.
 - Mainan hidup hanya saat sesi aktif.
 - Mainan mati otomatis saat timer habis.

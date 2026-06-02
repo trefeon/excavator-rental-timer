@@ -14,6 +14,7 @@
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <esp_task_wdt.h>
+#include <esp_idf_version.h>
 #include <freertos/semphr.h>
 
 static const char* AP_SSID = "ExcavatorMaster";
@@ -26,6 +27,19 @@ SemaphoreHandle_t slavesMutex = NULL;
 static const uint32_t HTTP_TIMEOUT_MS = 2000;
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
 static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
+
+void initTaskWatchdog() {
+#if ESP_IDF_VERSION_MAJOR >= 5
+  esp_task_wdt_config_t wdtConfig = {
+    .timeout_ms = 10000,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  esp_task_wdt_init(&wdtConfig);
+#else
+  esp_task_wdt_init(10, true);
+#endif
+}
 
 #define LED_PIN 2
 
@@ -1195,52 +1209,57 @@ void onApEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 }
 
 void pollSlavesTask(void *pvParameters) {
+  esp_task_wdt_add(NULL);
+
   for (;;) {
+    esp_task_wdt_reset();
     digitalWrite(LED_PIN, HIGH);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     digitalWrite(LED_PIN, LOW);
     
     uint32_t now = millis();
-    
-    for (int i = 0; i < slaveCount; i++) {
-      String ip;
-      bool shouldPoll = false;
-      if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
-        if (now - slaves[i].lastSeen < ONLINE_THRESHOLD_MS) {
-          ip = slaves[i].ip;
-          shouldPoll = true;
-        }
-        xSemaphoreGive(slavesMutex);
-      }
+    String targetIps[50];
+    int targetCount = 0;
 
-      if (shouldPoll && ip != "") {
-         HTTPClient http;
-         http.begin("http://" + ip + "/api/state");
-         http.setTimeout(HTTP_TIMEOUT_MS);
-         int code = http.GET();
-         if (code == 200) {
-           String payload = http.getString();
-           if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
-             for (int j = 0; j < slaveCount; j++) {
-               if (slaves[j].ip == ip) {
-                 slaves[j].state = extractJsonString(payload, "state");
-                 int rem = extractJsonInt(payload, "rem");
-                 if (rem >= 0) slaves[j].rem = rem;
-                 slaves[j].disp = extractJsonString(payload, "disp");
-                 int paid = extractJsonInt(payload, "paid");
-                 if (paid >= 0) slaves[j].paid = paid;
-                 slaves[j].bat = extractJsonString(payload, "bat");
-                 slaves[j].lastSeen = millis();
-                 break;
-               }
-             }
-             xSemaphoreGive(slavesMutex);
-           }
-         }
-         http.end();
+    if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+      for (int i = 0; i < slaveCount && targetCount < 50; i++) {
+        if (now - slaves[i].lastSeen < ONLINE_THRESHOLD_MS && slaves[i].ip != "") {
+          targetIps[targetCount++] = slaves[i].ip;
+        }
       }
+      xSemaphoreGive(slavesMutex);
+    }
+
+    for (int i = 0; i < targetCount; i++) {
+      esp_task_wdt_reset();
+      HTTPClient http;
+      http.begin("http://" + targetIps[i] + "/api/state");
+      http.setTimeout(HTTP_TIMEOUT_MS);
+      int code = http.GET();
+      if (code == 200) {
+        String payload = http.getString();
+        if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+          for (int j = 0; j < slaveCount; j++) {
+            if (slaves[j].ip == targetIps[i]) {
+              slaves[j].state = extractJsonString(payload, "state");
+              int rem = extractJsonInt(payload, "rem");
+              if (rem >= 0) slaves[j].rem = rem;
+              slaves[j].disp = extractJsonString(payload, "disp");
+              int paid = extractJsonInt(payload, "paid");
+              if (paid >= 0) slaves[j].paid = paid;
+              slaves[j].bat = extractJsonString(payload, "bat");
+              slaves[j].lastSeen = millis();
+              break;
+            }
+          }
+          xSemaphoreGive(slavesMutex);
+        }
+      }
+      http.end();
       vTaskDelay(100 / portTICK_PERIOD_MS);
     }
+
+    esp_task_wdt_reset();
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
@@ -1249,7 +1268,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  
+  initTaskWatchdog();
   esp_task_wdt_add(NULL);
   
   slavesMutex = xSemaphoreCreateMutex();
@@ -1288,7 +1307,7 @@ void setup() {
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");
 
-  xTaskCreatePinnedToCore(pollSlavesTask, "PollTask", 8192, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(pollSlavesTask, "PollTask", 8192, NULL, 1, NULL, 0);
 }
 
 void loop() {

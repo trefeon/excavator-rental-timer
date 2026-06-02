@@ -34,6 +34,7 @@
 #include <TM1637Display.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
+#include <esp_idf_version.h>
 
 // ===== PINS =====
 static const uint8_t RELAY_PIN = 26;
@@ -50,6 +51,19 @@ static const uint32_t WIFI_RETRY_INTERVAL_MS = 5000;
 static const uint32_t FLASH_SAVE_INTERVAL_S = 30;
 static const uint32_t BUTTON_DEBOUNCE_MS = 300;
 static const uint32_t HTTP_TIMEOUT_MS = 2000;
+
+void initTaskWatchdog() {
+#if ESP_IDF_VERSION_MAJOR >= 5
+  esp_task_wdt_config_t wdtConfig = {
+    .timeout_ms = 10000,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  esp_task_wdt_init(&wdtConfig);
+#else
+  esp_task_wdt_init(10, true);
+#endif
+}
 
 // ===== GLOBALS =====
 TM1637Display display(CLK_PIN, DIO_PIN);
@@ -357,6 +371,8 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   digitalWrite(BUZZER_PIN, LOW);
+  initTaskWatchdog();
+  esp_task_wdt_add(NULL);
 
   preferences.begin("state", true);
   uint32_t savedRem = preferences.getUInt("rem", 0);
@@ -387,11 +403,13 @@ void setup() {
 
   WiFi.onEvent(onWiFiEvent);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   
   Serial.print("[WIFI] Connecting to Wi-Fi");
   uint32_t connectStart = millis();
   while (WiFi.status() != WL_CONNECTED) {
+    esp_task_wdt_reset();
     delay(500);
     Serial.print(".");
     if (millis() - connectStart > 30000) {
@@ -429,7 +447,6 @@ void setup() {
   server.begin();
   
   Serial.println("[SYSTEM] Ready! Listening for commands...");
-  esp_task_wdt_add(NULL);
   beep(150, 3);
 }
 

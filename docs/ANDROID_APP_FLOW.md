@@ -7,7 +7,7 @@ Aplikasi Android adalah dashboard dan pengirim command. ESP32 Slave tetap source
 Tanggung jawab app:
 
 - Panggil `GET /api/slaves` ke Master untuk daftar mainan.
-- Tampilkan status 10+ mainan dalam satu layar.
+- Tampilkan status hingga 9 mainan online bersamaan dalam satu layar.
 - Kirim command via `POST /api/command` ke Master.
 - Simpan log transaksi lokal.
 - Pantau status real-time dengan polling berkala.

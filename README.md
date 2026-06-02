@@ -19,7 +19,7 @@ Sistem timer rental untuk mainan excavator RC di mall. Menggunakan arsitektur **
 │ Web Browser      │   (Single IP)    │ (Access Point +  │             └───────────────┘
 │ (Dashboard)      │                  │  API Gateway)    │◄───────────►│ ESP32 Slave 2 │
 └──────────────────┘                  └──────────────────┘             └───────────────┘
-                                                                       ... (hingga 10+ Slave)
+                                                                       ... (hingga 9 Slave + 1 perangkat operator)
 ```
 
 **Fitur Utama:**
