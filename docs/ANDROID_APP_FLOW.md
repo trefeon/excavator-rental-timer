@@ -1,159 +1,278 @@
-# Alur Aplikasi Android / Mockup Spec
+# Alur Aplikasi Android
 
 ## 1. Peran Aplikasi
 
 Aplikasi Android adalah dashboard dan pengirim command. ESP32 Slave tetap source of truth untuk timer dan relay.
 
 Tanggung jawab app:
+- Login dan autentikasi (token-based)
+- Panggil `GET /api/slaves` ke Master untuk daftar mainan
+- Tampilkan status excavator
+- Kirim command via `POST /api/command` ke Master
+- Tampilkan riwayat dan pendapatan
+- Pantau status real-time dengan polling berkala
 
-- Panggil `GET /api/slaves` ke Master untuk daftar mainan.
-- Tampilkan status hingga 9 mainan online bersamaan dalam satu layar.
-- Kirim command via `POST /api/command` ke Master.
-- Simpan log transaksi lokal.
-- Pantau status real-time dengan polling berkala.
+---
 
-## 2. Layar Utama
-
-```
-Dashboard
-  → Detail Mainan
-  → Tambah Waktu
-  → Log Transaksi
-```
-
-## 3. Layar Dashboard
-
-Tujuan: tampilan cepat untuk operator.
-
-Baris daftar mainan:
+## 2. Login Flow
 
 ```
-┌────────────────────────────────────────────┐
-│ EXC-01  RUNNING   04:30  OK   [+5] [Pause] │
-│ EXC-02  LOCKED    --     OK   [+5]         │
-│ EXC-03  PAUSED    02:40  OK   [Resume]     │
-│ EXC-04  OFFLINE   --     --   [Edit] [Del] │
-└────────────────────────────────────────────┘
+┌─────────────┐
+│ Login Screen│
+│  username   │
+│  password   │
+│  [Masuk]    │
+└──────┬──────┘
+       │
+       ▼
+POST /api/login
+{username, password}
+       │
+       ├── 200 → Simpan token di localStorage
+       │         → Buka Dashboard
+       │
+       └── 401 → Tampilkan error
 ```
 
-Aksi per baris:
-- Tap baris → detail mainan.
-- Long press → quick `+5 menit`.
-- Tombol inline: `+5 menit`, `Pause/Resume`, `Stop`.
+**Token:**
+- Disimpan di `localStorage`
+- dikirim di header `Authorization: Bearer <token>`
+- Berlaku 24 jam
+- Jika 401 → otomatis logout, kembali ke login
 
-Warna status:
+---
 
-| State | Warna |
-|-------|-------|
-| `RUNNING` | Hijau |
-| `PAUSED` | Oranye |
-| `LOCKED` | Abu-abu |
-| `ENDED` | Merah |
-| `FAULT` | Merah tua |
-| `OFFLINE` | Abu-abu pudar |
+## 3. Role & Permission
 
-## 4. Layar Detail Mainan
+| Role | Fitur |
+|------|-------|
+| **SuperAdmin** | Semua + kelola user + reboot device |
+| **Admin** | Semua + reset data + edit package |
+| **Staff** | Add time, pause, resume, stop |
 
-Field yang ditampilkan:
+---
 
+## 4. Layar Dashboard
+
+### Device Card
 ```
-Toy ID:       EXC-01
-State:        RUNNING
-Remaining:    04:30
-Battery:      OK
-IP:           192.168.4.2
-MAC:          AA:BB:CC:DD:EE:FF
-Last Seen:    2 detik lalu
+┌─────────────────────────┐
+│ EXC-01          RUNNING │
+│         04:59           │
+│ Sisa: 4j 59m • Bayar: 5j 0m │
+│ ┌─────────────────────┐ │
+│ │ Riwayat      1 sesi │ │
+│ │ Total: 5 menit      │ │
+│ │ Terakhir: 5m 0d     │ │
+│ │          Rp15.000   │ │
+│ └─────────────────────┘ │
+│ [1] [2] [3] [5] ...    │
+│ [Jeda]     [Stop]      │
+│ [Identify] [Transfer]  │
+│ [Edit ID]  [Hapus]     │
+│ [Reboot]               │
+└─────────────────────────┘
 ```
 
-Tombol aksi:
+### Package Buttons
+| Set | Durasi | Harga |
+|-----|--------|-------|
+| 1 | 1 menit | Rp 5.000 |
+| 2 | 2 menit | Rp 8.000 |
+| 3 | 3 menit | Rp 10.000 |
+| 5 | 5 menit | Rp 15.000 |
+| 10 | 10 menit | Rp 25.000 |
+| 30 | 30 menit | Rp 60.000 |
+| 60 | 60 menit | Rp 100.000 |
 
-```
-[+5 menit]   [+10 menit]
-[Pause]      [Resume]
-[STOP / Kunci]           ← dengan konfirmasi
-[Transfer Waktu]          ← pindah ke mainan lain
-[Identify / Ping]         ← cari fisik mainan
-```
+---
 
 ## 5. Alur Kirim Command
 
 ```
-1. Staff tap tombol (misal: +5 menit di EXC-01)
-2. App build JSON: {"id": 1, "cmd": "ADD_TIME", "val": 300}
+1. Staff tap tombol (misal: Set 5 di EXC-01)
+2. App build JSON: {"id": 1, "cmd": "ADD_TIME", "val": 5}
 3. App POST ke http://192.168.4.1/api/command
-4. Master forward ke Slave EXC-01
-5. Master kembalikan response ke App
-6. App update UI dari response / polling berikutnya
-7. App simpan log transaksi lokal
+   Header: Authorization: Bearer <token>
+4. Master convert: val=5 → 300 detik (lookup package)
+5. Master forward ke Slave EXC-01
+6. Master kembalikan response ke App
+7. App update UI dari response / polling berikutnya
 ```
 
-**Retry logic:**
+**ADD_TIME val mapping:**
+| val | Detik |
+|-----|-------|
+| 1 | 60 |
+| 2 | 120 |
+| 3 | 180 |
+| 5 | 300 |
+| 10 | 600 |
+| 30 | 1800 |
+| 60 | 3600 |
+
+---
+
+## 6. Alur Transfer
+
 ```
-Jika response 502 (Slave offline/timeout):
-  → Tampilkan pesan "Mainan tidak terjangkau"
-  → Jangan buat transaksi sampai sukses
-  → Coba lagi setelah 3 detik (maks 3x)
+1. Staff klik [Transfer] di EXC-01
+2. App tampilkan daftar slave lain yang online
+3. Staff pilih target (misal: EXC-02)
+4. App POST /api/transfer_time
+   {from_id: 1, to_id: 2}
+5. Master:
+   a. Validasi: from != to
+   b. Verifikasi kedua slave online
+   c. Ambil rem dari source
+   d. STOP source
+   e. STOP target (replace)
+   f. ADD_TIME ke target
+6. App update UI
 ```
 
-## 6. Alur Polling Dashboard
+---
+
+## 7. Alur Reset Data
+
+### Reset Total Waktu
+```
+POST /api/history/reset
+{password: "admin123"}
+→ Reset: totalSec, sessions
+```
+
+### Reset Pendapatan
+```
+POST /api/revenue/reset
+{password: "admin123"}
+→ Reset: revenueIDR
+```
+
+### Reset Semua
+```
+POST /api/reset-all
+{password: "admin123"}
+→ Reset: history + revenue
+```
+
+---
+
+## 8. Polling Dashboard
 
 ```
 1. App buka Dashboard
-2. App GET /api/slaves setiap 2 detik
-3. Response JSON array → update RecyclerView/List
-4. Setiap item di-bind dengan: id, state, disp, bat, online
-5. Warna baris berubah sesuai state
-6. Jika mainan offline > 30 detik → tampilkan abu-abu
+2. App GET /api/slaves setiap 3 detik
+3. App GET /api/history setiap 3 detik (untuk riwayat per slave)
+4. App GET /api/revenue setiap 3 detik (untuk pendapatan, admin only)
+5. Response JSON → update UI
+6. Warna status berubah sesuai state
 ```
 
-## 7. Data Lokal
+---
 
-Profil mainan (cache):
+## 9. Data Lokal
 
+### Token (localStorage)
 ```
-toy_id
-mac
-ip
-last_seen_state
-last_seen_remaining
-last_seen_at
+token: "a1b2c3d4..."
+role: 0
+username: "superadmin"
 ```
 
-Log transaksi:
-
+### Cache
 ```
-timestamp
-toy_id
-command
-value
-response_code
-remaining_after
-operator_id (opsional)
+devices: [...]
+packages: [...]
+history: [...]
+revenue: [...]
 ```
 
-## 8. Penanganan Offline
+---
 
-```
-lastSeen < 30 detik  → ONLINE
-lastSeen >= 30 detik → OFFLINE
-```
+## 10. State Color Mapping
 
-Jika command ke mainan offline:
-- Tampilkan: "EXC-01 sedang offline. Periksa battery atau jangkauan Wi-Fi."
-- Jangan buat transaksi sampai ACK sukses.
+| State | Warna | Icon |
+|-------|-------|------|
+| `RUNNING` | Hijau | ▶ |
+| `PAUSED` | Oranye | ⏸ |
+| `LOCKED` | Abu-abu | 🔒 |
+| `ENDED` | Merah | ⏹ |
+| `OFFLINE` | Abu-abu pudar | ⚫ |
 
-## 9. Keamanan
+---
 
-- App hanya berkomunikasi dengan Master di `192.168.4.1`.
-- Gunakan `android:usesCleartextTraffic="true"` karena jaringan lokal HTTP.
-- Tidak ada autentikasi user untuk MVP (Wi-Fi AP terisolasi).
-- Untuk versi produksi: tambahkan PIN / password di Master.
+## 11. Error Handling
 
-## 10. Mockup Referensi
+| HTTP Status | Arti | Aksi |
+|-------------|------|------|
+| 200 | Sukses | Update UI |
+| 400 | Bad request | Tampilkan pesan error |
+| 401 | Token expired | Logout, minta login ulang |
+| 403 | Role tidak cukup | Sembunyikan fitur |
+| 404 | Slave tidak ditemukan | Sembunyikan dari list |
+| 502 | Slave offline | Tampilkan "Offline" |
 
-Mockup interaktif tersedia di:
+---
 
-```
-docs/android-dashboard-mockup.html
+## 12. Retrofit Example (Kotlin)
+
+```kotlin
+interface ExcavatorApi {
+    @POST("api/login")
+    suspend fun login(@Body body: LoginDto): LoginResponse
+
+    @GET("api/slaves")
+    suspend fun getSlaves(): List<SlaveDto>
+
+    @POST("api/command")
+    suspend fun sendCommand(@Body cmd: CommandDto): CommandResponse
+
+    @POST("api/transfer_time")
+    suspend fun transferTime(@Body transfer: TransferDto): StatusDto
+
+    @GET("api/history")
+    suspend fun getHistory(): List<HistoryDto>
+
+    @GET("api/revenue")
+    suspend fun getRevenue(): List<RevenueDto>
+
+    @GET("api/packages")
+    suspend fun getPackages(): List<PackageDto>
+
+    @POST("api/packages/update")
+    suspend fun updatePackage(@Body pkg: PackageDto): StatusDto
+
+    @GET("api/users")
+    suspend fun getUsers(): List<UserDto>
+
+    @POST("api/users")
+    suspend fun createUser(@Body user: UserDto): StatusDto
+
+    @POST("api/users/delete")
+    suspend fun deleteUser(@Body body: Map<String, String>): StatusDto
+
+    @POST("api/users/change-password")
+    suspend fun changePassword(@Body body: ChangePassDto): StatusDto
+
+    @POST("api/history/reset")
+    suspend fun resetHistory(@Body body: ResetDto): StatusDto
+
+    @POST("api/revenue/reset")
+    suspend fun resetRevenue(@Body body: ResetDto): StatusDto
+
+    @POST("api/reset-all")
+    suspend fun resetAll(@Body body: ResetDto): StatusDto
+}
+
+// Auth interceptor
+class AuthInterceptor(private val tokenProvider: () -> String?) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request().newBuilder()
+        tokenProvider()?.let {
+            addHeader("Authorization", "Bearer $it")
+        }
+        return chain.proceed(request.build())
+    }
+}
 ```

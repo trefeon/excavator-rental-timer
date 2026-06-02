@@ -131,8 +131,9 @@ void recordSessionEnd(int id, uint32_t paidSec) {
   h.lastTime = millis() / 1000;
   saveHistory(id, &h);
 
-  // Find price for this duration
+  // Find price for this duration (closest match)
   uint32_t price = 0;
+  uint32_t bestDiff = 999999;
   preferences.begin("packages", true);
   int pkgCount = preferences.getInt("count", 0);
   for (int i = 0; i < pkgCount; i++) {
@@ -141,9 +142,11 @@ void recordSessionEnd(int id, uint32_t paidSec) {
     char k[8];
     snprintf(k, sizeof(k), "p%d", i);
     preferences.getBytes(k, &pkg, sizeof(TimePackage));
-    if (pkg.durationMin * 60 == paidSec) {
+    uint32_t pkgSec = pkg.durationMin * 60;
+    uint32_t diff = (paidSec > pkgSec) ? (paidSec - pkgSec) : (pkgSec - paidSec);
+    if (diff < bestDiff) {
+      bestDiff = diff;
       price = pkg.priceIDR;
-      break;
     }
   }
   preferences.end();
@@ -927,7 +930,15 @@ function api(ep,opts){
   if(S.token)h['Authorization']='Bearer '+S.token;
   if(opts.headers)Object.assign(h,opts.headers);
   return fetch(ep,{method:opts.m||'GET',headers:h,body:opts.b?JSON.stringify(opts.b):undefined})
-    .then(function(r){return r.json().then(function(d){return{status:r.status,data:d}})});
+    .then(function(r){return r.json().then(function(d){
+      if(r.status===401&&d.error&&ep!=='/api/login'){
+        S.token='';localStorage.removeItem('token');
+        document.getElementById('mainApp').classList.add('hidden');
+        document.getElementById('loginScreen').style.display='flex';
+        document.getElementById('loginErr').textContent='Sesi habis, login lagi';
+      }
+      return{status:r.status,data:d};
+    })});
 }
 
 function toast(msg){
@@ -969,7 +980,7 @@ function showApp(){
   document.getElementById('tabRevenue').style.display=isAdmin?'':'none';
   document.getElementById('tabAdmin').style.display=S.role===0?'':'none';
   document.getElementById('resetButtons').style.display=isAdmin?'':'none';
-  loadDevices();loadPackages();loadHistory();
+  loadDevices();loadPackages();loadHistory();if(S.role<=1)loadRevenue();
   if(isAdmin)loadRevenue();
   if(S.role===0)loadUsers();
 }
@@ -996,6 +1007,7 @@ function loadDevices(){
     if(r.status===200){
       S.devices=r.data;
       loadHistory();
+      if(S.role<=1)loadRevenue();else renderDevices();
     }
   });
 }
@@ -1046,22 +1058,28 @@ function renderDevices(){
         '<span class="device-status '+online+'">'+(online==='online'?state:'OFFLINE')+'</span>'+
       '</div>'+
       '<div class="device-time">'+(d.disp||'--:--')+'</div>'+
-      '<div class="device-meta">Sisa: '+(d.rem||0)+' detik &bull; Bayar: '+(d.paid||0)+' detik</div>'+
+      '<div class="device-meta">Sisa: '+Math.floor((d.rem||0)/60)+'j '+((d.rem||0)%60)+'m &bull; Bayar: '+Math.floor((d.paid||0)/60)+'j '+((d.paid||0)%60)+'m</div>'+
       (function(){
         var h=S.history.find(function(x){return x.id===d.id});
-        if(!h||h.sessions===0) return '';
-        var hrs=Math.floor(h.totalSec/3600);
-        var mins=Math.floor((h.totalSec%3600)/60);
+        var rev=S.revenue.find(function(x){return x.id===d.id});
+        var totalSec=h?h.totalSec:0;
+        var sessions=h?h.sessions:0;
+        var lastSec=h?h.lastSec:0;
+        var revenueIDR=rev?rev.revenueIDR:0;
+        if(sessions===0&&revenueIDR===0) return '';
+        var hrs=Math.floor(totalSec/3600);
+        var mins=Math.floor((totalSec%3600)/60);
         var timeStr=hrs>0?hrs+'j '+mins+'m':mins+' menit';
         return '<div style="background:rgba(37,99,235,.05);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:12px">'+
           '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
             '<span style="font-weight:600;color:var(--primary)">Riwayat</span>'+
-            '<span style="color:var(--muted)">'+h.sessions+' sesi</span>'+
+            '<span style="color:var(--muted)">'+sessions+' sesi</span>'+
           '</div>'+
           '<div style="display:flex;justify-content:space-between;color:var(--muted)">'+
             '<span>Total: '+timeStr+'</span>'+
-            '<span>Terakhir: '+h.lastSec+' detik</span>'+
+            '<span>Terakhir: '+Math.floor(lastSec/60)+'m '+lastSec%60+'d</span>'+
           '</div>'+
+          (revenueIDR>0?'<div style="text-align:right;margin-top:4px;font-weight:600;color:var(--success)">Rp'+revenueIDR.toLocaleString('id-ID')+'</div>':'')+
         '</div>';
       })()+
       pkgsHtml+actions+
@@ -1203,7 +1221,7 @@ function savePkgPrice(){
 // ── Revenue ─────────────────────────────────────────────────
 function loadRevenue(){
   api('/api/revenue').then(function(r){
-    if(r.status===200){S.revenue=r.data;renderRevenue();}
+    if(r.status===200){S.revenue=r.data;renderRevenue();renderDevices();}
   });
 }
 
@@ -1301,7 +1319,15 @@ function closeModalDirect(id){document.getElementById('modal-'+id).classList.rem
   var u=localStorage.getItem('username');
   if(t&&r!==null){
     S.token=t;S.role=parseInt(r);S.username=u;
-    showApp();
+    api('/api/slaves').then(function(resp){
+      if(resp.status===200){showApp();}
+      else{
+        S.token='';localStorage.removeItem('token');localStorage.removeItem('role');localStorage.removeItem('username');
+        document.getElementById('loginScreen').style.display='flex';
+      }
+    }).catch(function(){
+      document.getElementById('loginScreen').style.display='flex';
+    });
   }
   setInterval(loadDevices,3000);
 })();
@@ -1797,6 +1823,12 @@ void handleTransferTime() {
     return;
   }
 
+  if (fromId == toId) {
+    Serial.println("[TRANSFER] Failed: Cannot transfer to self");
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Cannot transfer to self\"}");
+    return;
+  }
+
   Serial.printf("[TRANSFER] Initiating transfer from EXC-%02d to EXC-%02d\n", fromId, toId);
   netLedFlash(100);
 
@@ -1869,7 +1901,15 @@ void handleTransferTime() {
     return;
   }
 
-  Serial.printf("[TRANSFER] 4. Transferring %d seconds to target EXC-%02d...\n", rem, toId);
+  Serial.printf("[TRANSFER] 4. Stopping target EXC-%02d to replace time...\n", toId);
+  http.begin("http://" + toIp + "/api/command");
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.POST("{\"cmd\":\"STOP\",\"val\":0}");
+  http.end();
+  delay(200);
+
+  Serial.printf("[TRANSFER] 5. Transferring %d seconds to target EXC-%02d...\n", rem, toId);
   http.begin("http://" + toIp + "/api/command");
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(HTTP_TIMEOUT_MS);

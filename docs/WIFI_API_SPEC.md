@@ -126,25 +126,37 @@ Master meneruskan (proxy) perintah ke Slave yang dituju.
 
 | Command | `val` | Deskripsi |
 |---------|-------|-----------|
-| `ADD_TIME` | detik (300 = 5 menit) | Tambah waktu. Jika LOCKED/ENDED → auto RUNNING |
+| `ADD_TIME` | 1,2,3,5,10,30,60 (menit) | Tambah waktu. Jika LOCKED/ENDED → auto RUNNING |
 | `PAUSE` | 0 | Jeda timer, relay OFF |
 | `RESUME` | 0 | Lanjutkan timer, relay ON |
 | `STOP` | 0 | Reset waktu ke 0, state LOCKED |
 | `IDENTIFY` | 0 | Bunyikan buzzer 3x + kedip layar |
 | `REBOOT` | 0 | Restart ESP32 slave |
 
+**ADD_TIME menggunakan set number:**
+- `val=1` → 1 menit (60 detik)
+- `val=2` → 2 menit (120 detik)
+- `val=3` → 3 menit (180 detik)
+- `val=5` → 5 menit (300 detik)
+- `val=10` → 10 menit (600 detik)
+- `val=30` → 30 menit (1800 detik)
+- `val=60` → 60 menit (3600 detik)
+
 ---
 
 ### C. Transfer Sisa Waktu
 
 Memindahkan sisa waktu dari mainan rusak ke mainan cadangan. Master akan:
-1. Verifikasi target online.
-2. Ambil sisa waktu dari source.
-3. STOP source.
-4. ADD_TIME ke target.
-5. Jika target gagal → revert (kembalikan waktu ke source).
+1. Validasi: tidak boleh transfer ke diri sendiri.
+2. Verifikasi target online.
+3. Ambil sisa waktu dari source (harus > 0).
+4. STOP source.
+5. STOP target (replace waktu yang ada).
+6. ADD_TIME ke target dengan waktu dari source.
+7. Jika target gagal → revert (kembalikan waktu ke source).
 
 - **URL:** `POST /api/transfer_time`
+- **Header:** `Authorization: Bearer <token>` (Admin+)
 - **Body:**
 ```json
 {
@@ -153,6 +165,11 @@ Memindahkan sisa waktu dari mainan rusak ke mainan cadangan. Master akan:
 }
 ```
 - **Response:** `200 OK` — `{"ok":1}` atau `{"ok":0,"error":"..."}`
+- **Error:**
+  - `"Cannot transfer to self"` — from_id == to_id
+  - `"No time to transfer"` — source rem = 0
+  - `"Slaves not found"` — salah satu slave offline
+  - `"Target is unreachable"` — target tidak merespon
 
 ---
 
@@ -339,7 +356,10 @@ Paket waktu sudah ditentukan (fixed). Admin bisa mengatur harganya.
 ```
 
 ### Reset Riwayat & Pendapatan (Admin + Password)
-- **URL:** `POST /api/history/reset` atau `POST /api/revenue/reset`
+- **URL:** `POST /api/history/reset` — reset hanya riwayat (totalSec, sessions)
+- **URL:** `POST /api/revenue/reset` — reset hanya pendapatan (uang)
+- **URL:** `POST /api/reset-all` — reset kedua-duanya
+- **Header:** `Authorization: Bearer <token>` (Admin+)
 - **Body:**
 ```json
 {
@@ -348,6 +368,7 @@ Paket waktu sudah ditentukan (fixed). Admin bisa mengatur harganya.
 }
 ```
 - `id` (optional): Jika diisi, reset hanya Slave tertentu. Jika kosong, reset semua.
+- **Response:** `200 OK` — `{"ok":1}` atau `403` — `{"ok":0,"error":"Wrong password"}`
 
 ---
 
@@ -388,10 +409,13 @@ Menerima perintah dari Master. Format body sama seperti Master proxy, **tanpa fi
 | HTTP Status | Arti |
 |-------------|------|
 | 200 | Sukses |
-| 400 | Bad request (parameter kurang/salah) |
+| 400 | Bad request (parameter kurang/salah, transfer self->self, waktu 0) |
+| 401 | Tidak ada token / token tidak valid |
+| 403 | Token valid tapi role tidak cukup / password salah |
 | 404 | Slave tidak ditemukan di registry |
+| 409 | Username sudah ada (saat create user) |
 | 502 | Slave offline / timeout |
-| 503 | Server busy (mutex timeout) |
+| 503 | Server busy (mutex timeout / max sessions) |
 
 ---
 
