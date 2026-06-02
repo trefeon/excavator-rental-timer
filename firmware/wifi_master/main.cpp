@@ -21,6 +21,7 @@
 
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
+static const char* ADMIN_PASS = "admin123";
 
 WebServer server(80);
 Preferences preferences;
@@ -33,6 +34,9 @@ static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
 
 
 #define LED_PIN 2
+
+void addCorsHeaders();
+void handleOptions();
 
 void netLedFlash(int ms = 80) {
   digitalWrite(LED_PIN, LOW);  // ON
@@ -54,736 +58,1255 @@ struct SlaveRecord {
 SlaveRecord slaves[50];
 int slaveCount = 0;
 
-const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Excavator Master</title>
-  <style>
-    :root {
-      --bg: #f8fafc;
-      --surface: #ffffff;
-      --surface-hover: #f1f5f9;
-      --primary: #3b82f6;
-      --primary-active: #2563eb;
-      --success: #10b981;
-      --warning: #f59e0b;
-      --danger: #ef4444;
-      --text: #0f172a;
-      --text-muted: #64748b;
-      --border: #e2e8f0;
-      --radius: 16px;
-      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
+void recordSessionEnd(int id, uint32_t paidSec);
 
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-      line-height: 1.5;
-    }
+// ══════════════════════════════════════════════════════════════
+//  USER / AUTH / PACKAGE / REVENUE SYSTEM
+// ══════════════════════════════════════════════════════════════
 
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-
-    .panel {
-      background: rgba(255, 255, 255, 0.8);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
-    }
-
-    h1 { font-size: 24px; font-weight: 700; text-align: center; margin-bottom: 20px; background: linear-gradient(135deg, #2563eb, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
-    p.text-muted { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; }
-
-    .select-wrapper { position: relative; margin-bottom: 24px; }
-    select {
-      width: 100%;
-      background: var(--surface);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-      font-size: 16px;
-      font-weight: 600;
-      appearance: none;
-      outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
-    .select-wrapper::after {
-      content: "▼";
-      position: absolute;
-      right: 16px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--text-muted);
-      font-size: 12px;
-      pointer-events: none;
-    }
-
-    .display {
-      text-align: center;
-      padding: 20px 0;
-      margin-bottom: 24px;
-      background: rgba(0, 0, 0, 0.03);
-      border-radius: 16px;
-      border: 1px solid rgba(0, 0, 0, 0.05);
-    }
-    .time {
-      font-family: var(--font-mono);
-      font-size: 64px;
-      font-weight: 700;
-      line-height: 1;
-      letter-spacing: -2px;
-      margin-bottom: 12px;
-      color: var(--text);
-      text-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
-    }
-    
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      background: var(--surface);
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      border: 1px solid var(--border);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.02);
-    }
-    .dot { width: 8px; height: 8px; border-radius: 50%; }
-    .dot.online { background: var(--success); box-shadow: 0 0 8px rgba(16, 185, 129, 0.6); }
-    .dot.offline { background: var(--danger); box-shadow: 0 0 8px rgba(239, 68, 68, 0.6); }
-    .dot.paused { background: var(--warning); box-shadow: 0 0 8px rgba(245, 158, 11, 0.6); }
-
-    button {
-      background: var(--surface);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 8px;
-      font-family: inherit;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
-    button:active { transform: scale(0.97); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
-    
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-    .grid-1 { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
-
-    .btn-primary { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3); }
-    .btn-primary:active { background: var(--primary-active); }
-    .btn-danger { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: var(--danger); }
-    .btn-danger:active { background: rgba(239, 68, 68, 0.2); }
-    .btn-warning { background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3); color: #d97706; }
-    .btn-warning:active { background: rgba(245, 158, 11, 0.2); }
-    .btn-outline { background: var(--surface); border-color: var(--border); }
-    .btn-outline:active { background: var(--surface-hover); }
-
-    .modal-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-      z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.3s;
-      display: flex; align-items: flex-end;
-    }
-    .modal-overlay.active { opacity: 1; pointer-events: auto; }
-    
-    .modal-content {
-      width: 100%; max-width: 600px; margin: 0 auto;
-      background: var(--bg); border: 1px solid var(--border); border-bottom: none;
-      border-radius: 24px 24px 0 0; padding: 24px 20px max(24px, env(safe-area-inset-bottom));
-      transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-      max-height: 85vh; overflow-y: auto; box-shadow: 0 -10px 40px rgba(0,0,0,0.2);
-    }
-    .modal-overlay.active .modal-content { transform: translateY(0); }
-    
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .close-btn { background: var(--surface); border: 1px solid var(--border); width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; padding: 0; color: var(--text-muted); box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-
-    .device-card {
-      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-      padding: 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 12px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-    }
-    .device-header { display: flex; justify-content: space-between; align-items: center; }
-    .device-title { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; }
-    .device-mac { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
-    
-    .action-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    .action-row button { padding: 10px; font-size: 14px; border-radius: 8px; font-weight: 600; }
-
-    .target-card {
-      background: var(--surface); border: 2px solid transparent; border-radius: 12px;
-      padding: 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;
-      transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-    }
-    .target-card.selected { border-color: var(--primary); background: rgba(59, 130, 246, 0.05); }
-    .target-info { display: flex; flex-direction: column; gap: 4px; }
-    .target-name { font-weight: 700; }
-    .target-time { font-family: var(--font-mono); font-size: 13px; color: var(--text-muted); }
-
-    .toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; width: 90%; max-width: 400px; pointer-events: none; }
-    .toast {
-      background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 14px 20px;
-      border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); font-weight: 600; font-size: 14px;
-      display: flex; align-items: center; gap: 12px; animation: slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-    .toast.success { border-left: 4px solid var(--success); }
-    .toast.error { border-left: 4px solid var(--danger); }
-    @keyframes slideDown { from { opacity: 0; transform: translateY(-20px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
-    .toast.leaving { animation: fadeOut 0.2s ease-in forwards; }
-    @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px) scale(0.95); } }
-
-    .loader-overlay {
-      position: absolute; inset: 0; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(2px);
-      display: flex; align-items: center; justify-content: center; border-radius: var(--radius);
-      z-index: 10; opacity: 0; pointer-events: none; transition: opacity 0.2s;
-    }
-    .loader-overlay.active { opacity: 1; pointer-events: auto; }
-    .spinner { width: 32px; height: 32px; border: 3px solid rgba(0, 0, 0, 0.1); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .confirm-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-      z-index: 150; display: none; align-items: center; justify-content: center; padding: 20px;
-    }
-    .confirm-overlay.active { display: flex; }
-    .confirm-box { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 24px; width: 100%; max-width: 340px; box-shadow: 0 20px 40px rgba(0,0,0,0.15); text-align: center; animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
-    .confirm-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
-    .confirm-msg { color: var(--text-muted); font-size: 14px; margin-bottom: 24px; white-space: pre-line; }
-    @keyframes popIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-    
-    .api-log-container {
-      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 16px; margin-top: 12px; max-height: 200px; overflow-y: auto; font-family: var(--font-mono);
-      font-size: 11px;
-    }
-    .api-log { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-    .api-log.error { color: var(--danger); }
-    .api-log.success { color: var(--success); }
-    .api-log-time { color: var(--text-muted); margin-right: 8px; font-weight: bold; }
-    
-    .api-endpoint { margin-bottom: 16px; }
-    .api-method { display: inline-block; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); color: white; text-transform: uppercase; margin-right: 6px; }
-    .api-method.get { background: var(--success); }
-    .api-method.post { background: var(--primary); }
-    .api-path { font-family: var(--font-mono); font-weight: 700; font-size: 13px; color: var(--text); }
-    .api-desc { font-size: 12px; color: var(--text-muted); margin: 4px 0 6px 0; }
-    .api-code { background: rgba(0,0,0,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--text); display: block; overflow-x: auto; white-space: pre; }
-  </style>
-</head>
-<body>
-
-<div class="container">
-  <div class="panel" style="position: relative;">
-    <div class="loader-overlay" id="mainLoader"><div class="spinner"></div></div>
-    
-    <h1>Excavator Master</h1>
-    
-    <div class="select-wrapper">
-      <select id="deviceSelect"></select>
-    </div>
-
-    <div class="display">
-      <div class="time" id="dispTime">--:--</div>
-      <div class="status-badge" id="dispStatus">
-        <div class="dot offline"></div>
-        <span>OFFLINE</span>
-      </div>
-    </div>
-
-    <div class="grid-2">
-      <button class="btn-outline" onclick="Commands.addTime(300)">+ 5 MIN</button>
-      <button class="btn-outline" onclick="Commands.addTime(600)">+ 10 MIN</button>
-    </div>
-    
-    <div class="grid-1">
-      <button class="btn-warning" id="btnPause" onclick="Commands.togglePause()">PAUSE</button>
-      <button class="btn-danger" onclick="Commands.confirmStop()">STOP / LOCK</button>
-    </div>
-  </div>
-
-  <div class="grid-2">
-    <button class="btn-outline" onclick="Modals.open('transferModal')">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 3 4 8 5-5 5 15H2L8 3z"/></svg>
-      Transfer
-    </button>
-    <button class="btn-outline" onclick="Modals.open('manageModal')">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-      Manage
-    </button>
-  </div>
-  
-  <div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-    <button class="btn-outline" style="font-size: 13px; color: var(--text-muted);" onclick="UI.toggleApiLog()">Toggle Logs</button>
-    <button class="btn-outline" style="font-size: 13px; color: var(--text-muted);" onclick="Modals.open('docsModal')">API Docs</button>
-  </div>
-  <div id="apiLogContainer" class="api-log-container" style="display: none;"></div>
-</div>
-
-<div class="toast-container" id="toastContainer"></div>
-
-<div class="modal-overlay" id="manageModal" onclick="Modals.backdropClick(event, 'manageModal')">
-  <div class="modal-content">
-    <div class="modal-header">
-      <h2>Manage Devices</h2>
-      <button class="close-btn" onclick="Modals.close('manageModal')">✕</button>
-    </div>
-    <div id="slavesList"></div>
-  </div>
-</div>
-
-<div class="modal-overlay" id="transferModal" onclick="Modals.backdropClick(event, 'transferModal')">
-  <div class="modal-content">
-    <div class="modal-header">
-      <h2>Transfer Time</h2>
-      <button class="close-btn" onclick="Modals.close('transferModal')">✕</button>
-    </div>
-    <p class="text-muted">Move remaining time from <strong style="color:var(--text)">EXC-0<span id="transferSrc"></span></strong> to:</p>
-    <div id="transferTargets" style="margin-bottom: 20px;"></div>
-    <button class="btn-primary" style="width: 100%" onclick="Commands.executeTransfer()">Complete Transfer</button>
-  </div>
-</div>
-
-<div class="modal-overlay" id="docsModal" onclick="Modals.backdropClick(event, 'docsModal')">
-  <div class="modal-content" style="max-height: 80vh;">
-    <div class="modal-header">
-      <h2>API Documentation</h2>
-      <button class="close-btn" onclick="Modals.close('docsModal')">✕</button>
-    </div>
-    <div style="display: flex; flex-direction: column; gap: 16px; padding-bottom: 20px;">
-      
-      <div class="api-endpoint">
-        <div><span class="api-method get">GET</span><span class="api-path">/api/slaves</span></div>
-        <div class="api-desc">Returns a JSON list of all registered slaves and their status.</div>
-      </div>
-
-      <div class="api-endpoint" style="border-top: 1px solid var(--border); padding-top: 12px;">
-        <div><span class="api-method get">GET</span><span class="api-path">/api/register</span></div>
-        <div class="api-desc">Registers a slave to Master and returns its assigned ID. Query param <code>mac</code> is required.</div>
-        <div class="api-code">Query: ?mac=80:F3:DA:63:25:DC</div>
-      </div>
-
-      <div class="api-endpoint" style="border-top: 1px solid var(--border); padding-top: 12px;">
-        <div><span class="api-method post">POST</span><span class="api-path">/api/command</span></div>
-        <div class="api-desc">Sends commands to a slave (via Master proxy if <code>id</code> is present; directly if POSTed to slave).</div>
-        <div class="api-code">Request Body (JSON):
-{
-  "id": 1, // Optional on Slave
-  "cmd": "ADD_TIME", // ADD_TIME, PAUSE, RESUME, STOP, IDENTIFY, REBOOT
-  "val": 300 // (seconds)
-}</div>
-      </div>
-
-      <div class="api-endpoint" style="border-top: 1px solid var(--border); padding-top: 12px;">
-        <div><span class="api-method post">POST</span><span class="api-path">/api/transfer_time</span></div>
-        <div class="api-desc">Transfers remaining timer seconds from one slave to another.</div>
-        <div class="api-code">Request Body (JSON):
-{
-  "from_id": 1,
-  "to_id": 2
-}</div>
-      </div>
-
-      <div class="api-endpoint" style="border-top: 1px solid var(--border); padding-top: 12px;">
-        <div><span class="api-method post">POST</span><span class="api-path">/api/edit_slave</span></div>
-        <div class="api-desc">Changes the assigned ID associated with a slave MAC address.</div>
-        <div class="api-code">Request Body (JSON):
-{
-  "mac": "80:F3:DA:63:25:DC",
-  "id": 2
-}</div>
-      </div>
-
-      <div class="api-endpoint" style="border-top: 1px solid var(--border); padding-top: 12px;">
-        <div><span class="api-method post">POST</span><span class="api-path">/api/delete_slave</span></div>
-        <div class="api-desc">Removes a slave registry record from the system.</div>
-        <div class="api-code">Request Body (JSON):
-{
-  "mac": "80:F3:DA:63:25:DC"
-}</div>
-      </div>
-
-      <div class="api-endpoint" style="border-top: 1px solid var(--border); padding-top: 12px;">
-        <div><span class="api-method get">GET</span><span class="api-path">/api/state</span> (Slave Only)</div>
-        <div class="api-desc">Gets real-time state directly from a slave device.</div>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<div class="confirm-overlay" id="confirmDialog">
-  <div class="confirm-box">
-    <div class="confirm-title" id="confirmTitle">Confirm</div>
-    <div class="confirm-msg" id="confirmMsg">Are you sure?</div>
-    <div class="grid-2" style="margin-bottom: 0;">
-      <button class="btn-outline" onclick="UI.resolveConfirm(false)">Cancel</button>
-      <button class="btn-danger" id="confirmOkBtn" onclick="UI.resolveConfirm(true)">Confirm</button>
-    </div>
-  </div>
-</div>
-
-<script>
-var Store = {
-  devices: [],
-  selectedId: null,
-  transferTargetId: null,
-  
-  updateData: function(data) {
-    this.devices = data.sort(function(a, b) { return a.id - b.id; });
-    var onlineCount = this.getOnlineCount();
-    if (!this.selectedId && onlineCount > 0) {
-      var firstOnline = this.devices.find(function(d) { return d.online; });
-      if (firstOnline) this.selectedId = firstOnline.id;
-    }
-  },
-  
-  getCurrent: function() { 
-    var self = this;
-    return this.devices.find(function(d) { return d.id == self.selectedId; }); 
-  },
-  getOnlineCount: function() { 
-    return this.devices.filter(function(d) { return d.online; }).length; 
-  }
+enum UserRole : uint8_t {
+  ROLE_SUPERADMIN = 0,
+  ROLE_ADMIN = 1,
+  ROLE_STAFF = 2,
 };
 
-var API = {
-  log: function(msg, isError) {
-    var container = document.getElementById('apiLogContainer');
-    if (!container) return;
-    var d = new Date();
-    var timeStr = d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes() + ':' + (d.getSeconds() < 10 ? '0' : '') + d.getSeconds();
-    var div = document.createElement('div');
-    div.className = 'api-log ' + (isError ? 'error' : 'success');
-    div.innerHTML = '<span class="api-log-time">[' + timeStr + ']</span> ' + msg;
-    container.insertBefore(div, container.firstChild);
-    if (container.childNodes.length > 20) {
-      container.removeChild(container.lastChild);
+struct UserAccount {
+  char username[32];
+  char password[32];
+  uint8_t role;
+};
+
+struct TimePackage {
+  uint8_t durationMin;
+  uint32_t priceIDR;
+};
+
+struct RevenueSession {
+  int slaveId;
+  uint32_t durationSec;
+  uint32_t priceIDR;
+  uint32_t timestamp;
+};
+
+struct AuthToken {
+  char token[33];
+  char username[32];
+  uint8_t role;
+  uint32_t expiresAtMs;
+};
+
+// ── Usage history (per slave, stored in NVS) ───────────────
+struct HistoryData {
+  uint32_t totalSec;
+  uint32_t sessions;
+  uint32_t lastSec;
+  uint32_t lastTime;
+};
+bool prevRunning[50] = {false};
+
+void loadHistory(int id, HistoryData* h) {
+  memset(h, 0, sizeof(HistoryData));
+  char key[16];
+  snprintf(key, sizeof(key), "h%d", id);
+  preferences.begin("history", true);
+  preferences.getBytes(key, h, sizeof(HistoryData));
+  preferences.end();
+}
+
+void saveHistory(int id, const HistoryData* h) {
+  char key[16];
+  snprintf(key, sizeof(key), "h%d", id);
+  preferences.begin("history", false);
+  preferences.putBytes(key, h, sizeof(HistoryData));
+  preferences.end();
+}
+
+void recordSessionEnd(int id, uint32_t paidSec) {
+  if (paidSec == 0) return;
+  HistoryData h;
+  loadHistory(id, &h);
+  h.totalSec += paidSec;
+  h.sessions++;
+  h.lastSec = paidSec;
+  h.lastTime = millis() / 1000;
+  saveHistory(id, &h);
+
+  // Find price for this duration
+  uint32_t price = 0;
+  preferences.begin("packages", true);
+  int pkgCount = preferences.getInt("count", 0);
+  for (int i = 0; i < pkgCount; i++) {
+    TimePackage pkg;
+    memset(&pkg, 0, sizeof(TimePackage));
+    char k[8];
+    snprintf(k, sizeof(k), "p%d", i);
+    preferences.getBytes(k, &pkg, sizeof(TimePackage));
+    if (pkg.durationMin * 60 == paidSec) {
+      price = pkg.priceIDR;
+      break;
     }
-  },
-  
-  fetch: async function(url, options) {
-    options = options || {};
-    try {
-      this.log('REQ ' + (options.method || 'GET') + ' ' + url);
-      var res = await fetch(url, options);
-      if (!res.ok) {
-        throw new Error('HTTP ' + res.status);
+  }
+  preferences.end();
+
+  // Save revenue session
+  preferences.begin("revenue", false);
+  int revCount = preferences.getInt("count", 0);
+  RevenueSession rs;
+  rs.slaveId = id;
+  rs.durationSec = paidSec;
+  rs.priceIDR = price;
+  rs.timestamp = millis() / 1000;
+  char rk[16];
+  snprintf(rk, sizeof(rk), "r%d", revCount);
+  preferences.putBytes(rk, &rs, sizeof(RevenueSession));
+  preferences.putInt("count", revCount + 1);
+  preferences.end();
+
+  Serial.printf("[HISTORY] EXC-%02d session ended: %lus Rp%lu (total=%lu, count=%lu)\n",
+                id, paidSec, price, h.totalSec, h.sessions);
+}
+
+static const int MAX_TOKENS = 10;
+AuthToken activeTokens[MAX_TOKENS];
+int tokenCount = 0;
+
+static const int PKG_COUNT = 7;
+int defaultDurations[PKG_COUNT] = {1, 2, 3, 5, 10, 30, 60};
+
+// ── Token helpers ────────────────────────────────────────────
+
+void generateToken(char* buf, int len) {
+  const char* hex = "0123456789abcdef";
+  for (int i = 0; i < len; i++) {
+    buf[i] = hex[random(0, 16)];
+  }
+  buf[len] = '\0';
+}
+
+AuthToken* findToken(const String& token) {
+  uint32_t now = millis();
+  for (int i = 0; i < tokenCount; i++) {
+    if (String(activeTokens[i].token) == token && now < activeTokens[i].expiresAtMs) {
+      return &activeTokens[i];
+    }
+  }
+  return NULL;
+}
+
+void cleanExpiredTokens() {
+  uint32_t now = millis();
+  int dst = 0;
+  for (int i = 0; i < tokenCount; i++) {
+    if (now < activeTokens[i].expiresAtMs) {
+      if (dst != i) activeTokens[dst] = activeTokens[i];
+      dst++;
+    }
+  }
+  tokenCount = dst;
+}
+
+String getTokenFromRequest() {
+  if (server.hasHeader("Authorization")) {
+    String auth = server.header("Authorization");
+    if (auth.startsWith("Bearer ")) {
+      return auth.substring(7);
+    }
+  }
+  if (server.hasArg("token")) {
+    return server.arg("token");
+  }
+  return "";
+}
+
+// ── User CRUD (NVS) ─────────────────────────────────────────
+
+int getUserCount() {
+  preferences.begin("users", true);
+  int c = preferences.getInt("count", 0);
+  preferences.end();
+  return c;
+}
+
+bool loadUser(int idx, UserAccount* u) {
+  memset(u, 0, sizeof(UserAccount));
+  char k[8];
+  snprintf(k, sizeof(k), "u%d", idx);
+  preferences.begin("users", true);
+  bool ok = preferences.getBytes(k, u, sizeof(UserAccount)) > 0;
+  preferences.end();
+  return ok;
+}
+
+void saveUser(int idx, const UserAccount* u) {
+  char k[8];
+  snprintf(k, sizeof(k), "u%d", idx);
+  preferences.begin("users", false);
+  preferences.putBytes(k, u, sizeof(UserAccount));
+  preferences.end();
+}
+
+void deleteUser(int idx) {
+  char k[8];
+  snprintf(k, sizeof(k), "u%d", idx);
+  preferences.begin("users", false);
+  preferences.remove(k);
+  int c = preferences.getInt("count", 0);
+  if (idx < c - 1) {
+    UserAccount last;
+    loadUser(c - 1, &last);
+    saveUser(idx, &last);
+  }
+  preferences.putInt("count", c - 1);
+  preferences.end();
+}
+
+void initDefaultUsers() {
+  if (getUserCount() > 0) return;
+  UserAccount u;
+  memset(&u, 0, sizeof(UserAccount));
+  strlcpy(u.username, "superadmin", sizeof(u.username));
+  strlcpy(u.password, "super123", sizeof(u.password));
+  u.role = ROLE_SUPERADMIN;
+  saveUser(0, &u);
+  preferences.begin("users", false);
+  preferences.putInt("count", 1);
+  preferences.end();
+  Serial.println("[AUTH] Default superadmin created (superadmin/super123)");
+}
+
+// ── Package CRUD (NVS) ──────────────────────────────────────
+
+void initDefaultPackages() {
+  preferences.begin("packages", true);
+  int c = preferences.getInt("count", 0);
+  preferences.end();
+  if (c > 0) return;
+
+  preferences.begin("packages", false);
+  for (int i = 0; i < PKG_COUNT; i++) {
+    TimePackage pkg;
+    pkg.durationMin = defaultDurations[i];
+    pkg.priceIDR = 0;
+    char k[8];
+    snprintf(k, sizeof(k), "p%d", i);
+    preferences.putBytes(k, &pkg, sizeof(TimePackage));
+  }
+  preferences.putInt("count", PKG_COUNT);
+  preferences.end();
+  Serial.println("[PKG] Default packages initialized (prices=0)");
+}
+
+// ── Auth check middleware ────────────────────────────────────
+
+bool checkAuth(uint8_t minRole) {
+  String tok = getTokenFromRequest();
+  if (tok.length() == 0) {
+    server.send(401, "application/json", "{\"ok\":0,\"error\":\"No token\"}");
+    return false;
+  }
+  AuthToken* t = findToken(tok);
+  if (!t) {
+    server.send(401, "application/json", "{\"ok\":0,\"error\":\"Invalid token\"}");
+    return false;
+  }
+  if (t->role > minRole) {
+    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Insufficient permissions\"}");
+    return false;
+  }
+  return true;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  NEW API HANDLERS
+// ══════════════════════════════════════════════════════════════
+
+void handleLogin() {
+  addCorsHeaders();
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String username = doc["username"] | "";
+  String password = doc["password"] | "";
+
+  int count = getUserCount();
+  for (int i = 0; i < count; i++) {
+    UserAccount u;
+    loadUser(i, &u);
+    if (username == u.username && password == u.password) {
+      cleanExpiredTokens();
+      if (tokenCount >= MAX_TOKENS) {
+        server.send(503, "application/json", "{\"ok\":0,\"error\":\"Too many sessions\"}");
+        return;
       }
-      var json = await res.json();
-      this.log('RES ' + url + ' -> OK');
-      return json;
-    } catch (e) {
-      this.log('ERR ' + url + ' -> ' + e.message, true);
-      throw e;
-    }
-  },
-  
-  loadDevices: async function() {
-    try {
-      var data = await this.fetch('/api/slaves');
-      Store.updateData(data);
-      UI.render();
-    } catch (e) {
-      console.error(e);
-    }
-  },
+      AuthToken& t = activeTokens[tokenCount++];
+      generateToken(t.token, 32);
+      strlcpy(t.username, u.username, sizeof(t.username));
+      t.role = u.role;
+      t.expiresAtMs = millis() + 86400000; // 24h
 
-  postCommand: async function(cmd, val) {
-    val = val || 0;
-    if (!Store.selectedId) return UI.toast("Select a device first", "error");
-    UI.setLoading(true);
-    try {
-      await this.fetch('/api/command', {
-        method: 'POST',
-        body: JSON.stringify({ id: Number(Store.selectedId), cmd: cmd, val: val })
-      });
-      UI.toast("Command sent successfully", "success");
-      await this.loadDevices();
-    } catch (e) {
-      UI.toast("Failed to send command", "error");
-    } finally {
-      UI.setLoading(false);
-    }
-  },
-  
-  manageDevice: async function(endpoint, payload) {
-    UI.setLoading(true);
-    try {
-      await this.fetch(endpoint, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
-      UI.toast("Success", "success");
-      await this.loadDevices();
-    } catch(e) {
-      UI.toast("Action failed", "error");
-    } finally {
-      UI.setLoading(false);
-    }
-  }
-};
-
-var Commands = {
-  addTime: function(sec) { API.postCommand('ADD_TIME', sec); },
-  togglePause: function() {
-    var dev = Store.getCurrent();
-    if (!dev) return;
-    API.postCommand(dev.state === 'PAUSED' ? 'RESUME' : 'PAUSE', 0);
-  },
-  confirmStop: function() {
-    if (!Store.selectedId) return UI.toast("Select a device first", "error");
-    UI.confirm("Stop & Lock EXC-0" + Store.selectedId, "This will clear all remaining time\\nand lock the device immediately.", function() {
-      API.postCommand('STOP', 0);
-    });
-  },
-  identify: function(id) {
-    API.manageDevice('/api/command', { id: id, cmd: 'IDENTIFY', val: 0 });
-  },
-  editId: function(mac, oldId) {
-    var newId = prompt("Change ID for EXC-0" + oldId + " (Enter new number):", oldId);
-    if (newId && newId != oldId && !isNaN(newId)) {
-      API.manageDevice('/api/edit_slave', { mac: mac, id: Number(newId) });
-    }
-  },
-  deleteSlave: function(mac) {
-    UI.confirm("Delete Device", "Are you sure you want to remove this device from the registry?", function() {
-      API.manageDevice('/api/delete_slave', { mac: mac });
-    });
-  },
-  executeTransfer: function() {
-    var from = Store.selectedId;
-    var to = Store.transferTargetId;
-    if (!from || !to) return UI.toast("Select a target device", "error");
-    UI.confirm("Confirm Transfer", "Move all remaining time from EXC-0" + from + " to EXC-0" + to + "?\\nThis cannot be undone.", function() {
-      Modals.close('transferModal');
-      API.manageDevice('/api/transfer_time', { from_id: Number(from), to_id: Number(to) });
-    });
-  }
-};
-
-var UI = {
-  init: function() {
-    document.getElementById('deviceSelect').addEventListener('change', function(e) {
-      Store.selectedId = e.target.value;
-      UI.render();
-    });
-    setInterval(function() { API.loadDevices(); }, 2000);
-    API.loadDevices();
-  },
-
-  render: function() {
-    this.renderSelector();
-    this.renderDashboard();
-    this.renderManageList();
-    this.renderTransferList();
-  },
-
-  renderSelector: function() {
-    var sel = document.getElementById('deviceSelect');
-    if (Store.devices.length === 0) {
-      sel.innerHTML = '<option value="">(No devices online)</option>';
+      JsonDocument resp;
+      resp["ok"] = 1;
+      resp["token"] = t.token;
+      resp["username"] = t.username;
+      resp["role"] = t.role;
+      String out;
+      serializeJson(resp, out);
+      server.send(200, "application/json", out);
+      Serial.printf("[AUTH] Login: %s (role=%d)\n", u.username, u.role);
       return;
     }
-    
-    var html = '';
-    var hasSelected = false;
-    Store.devices.forEach(function(d) {
-      if (d.online) {
-        var isSel = String(d.id) === String(Store.selectedId);
-        if (isSel) hasSelected = true;
-        html += '<option value="' + d.id + '" ' + (isSel ? 'selected' : '') + '>EXC-0' + d.id + '</option>';
+  }
+  server.send(401, "application/json", "{\"ok\":0,\"error\":\"Wrong username/password\"}");
+}
+
+void handleLogout() {
+  addCorsHeaders();
+  String tok = getTokenFromRequest();
+  for (int i = 0; i < tokenCount; i++) {
+    if (String(activeTokens[i].token) == tok) {
+      for (int j = i; j < tokenCount - 1; j++) {
+        activeTokens[j] = activeTokens[j + 1];
       }
-    });
-    
-    if (!html) {
-      sel.innerHTML = '<option value="">(All devices offline)</option>';
-    } else {
-      sel.innerHTML = html;
-      if (!hasSelected && Store.getOnlineCount() > 0) {
-        var firstOnline = Store.devices.find(function(d) { return d.online; });
-        if (firstOnline) {
-          Store.selectedId = firstOnline.id;
-          sel.value = Store.selectedId;
+      tokenCount--;
+      break;
+    }
+  }
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+void handleGetUsers() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
+
+  JsonDocument doc;
+  JsonArray array = doc.to<JsonArray>();
+  int count = getUserCount();
+  for (int i = 0; i < count; i++) {
+    UserAccount u;
+    loadUser(i, &u);
+    JsonObject obj = array.add<JsonObject>();
+    obj["username"] = u.username;
+    obj["role"] = u.role;
+  }
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+void handleCreateUser() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_SUPERADMIN)) return;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String username = doc["username"] | "";
+  String password = doc["password"] | "";
+  int role = doc["role"] | 2;
+
+  if (username.length() < 3 || password.length() < 4) {
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Username min 3, password min 4\"}");
+    return;
+  }
+
+  int count = getUserCount();
+  for (int i = 0; i < count; i++) {
+    UserAccount u;
+    loadUser(i, &u);
+    if (username == u.username) {
+      server.send(409, "application/json", "{\"ok\":0,\"error\":\"Username exists\"}");
+      return;
+    }
+  }
+
+  if (count >= 20) {
+    server.send(507, "application/json", "{\"ok\":0,\"error\":\"Max users reached\"}");
+    return;
+  }
+
+  UserAccount u;
+  memset(&u, 0, sizeof(UserAccount));
+  strlcpy(u.username, username.c_str(), sizeof(u.username));
+  strlcpy(u.password, password.c_str(), sizeof(u.password));
+  u.role = constrain(role, 0, 2);
+  saveUser(count, &u);
+  preferences.begin("users", false);
+  preferences.putInt("count", count + 1);
+  preferences.end();
+
+  server.send(200, "application/json", "{\"ok\":1}");
+  Serial.printf("[AUTH] Created user: %s (role=%d)\n", username.c_str(), role);
+}
+
+void handleDeleteUser() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_SUPERADMIN)) return;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String username = doc["username"] | "";
+
+  int count = getUserCount();
+  for (int i = 0; i < count; i++) {
+    UserAccount u;
+    loadUser(i, &u);
+    if (username == u.username) {
+      if (u.role == ROLE_SUPERADMIN) {
+        int saCount = 0;
+        for (int j = 0; j < count; j++) {
+          UserAccount tmp;
+          loadUser(j, &tmp);
+          if (tmp.role == ROLE_SUPERADMIN) saCount++;
+        }
+        if (saCount <= 1) {
+          server.send(400, "application/json", "{\"ok\":0,\"error\":\"Cannot delete last superadmin\"}");
+          return;
+        }
+      }
+      deleteUser(i);
+      server.send(200, "application/json", "{\"ok\":1}");
+      Serial.printf("[AUTH] Deleted user: %s\n", username.c_str());
+      return;
+    }
+  }
+  server.send(404, "application/json", "{\"ok\":0,\"error\":\"User not found\"}");
+}
+
+void handleChangePassword() {
+  addCorsHeaders();
+  String tok = getTokenFromRequest();
+  AuthToken* t = findToken(tok);
+  if (!t) {
+    server.send(401, "application/json", "{\"ok\":0,\"error\":\"No token\"}");
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String oldPass = doc["old_password"] | "";
+  String newPass = doc["new_password"] | "";
+
+  if (newPass.length() < 4) {
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Password min 4\"}");
+    return;
+  }
+
+  int count = getUserCount();
+  for (int i = 0; i < count; i++) {
+    UserAccount u;
+    loadUser(i, &u);
+    if (t->username == u.username) {
+      if (oldPass != u.password) {
+        server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong old password\"}");
+        return;
+      }
+      strlcpy(u.password, newPass.c_str(), sizeof(u.password));
+      saveUser(i, &u);
+      server.send(200, "application/json", "{\"ok\":1}");
+      return;
+    }
+  }
+  server.send(404, "application/json", "{\"ok\":0}");
+}
+
+void handleGetPackages() {
+  addCorsHeaders();
+  preferences.begin("packages", true);
+  int count = preferences.getInt("count", 0);
+  JsonDocument doc;
+  JsonArray array = doc.to<JsonArray>();
+  for (int i = 0; i < count; i++) {
+    TimePackage pkg;
+    char k[8];
+    snprintf(k, sizeof(k), "p%d", i);
+    memset(&pkg, 0, sizeof(TimePackage));
+    preferences.getBytes(k, &pkg, sizeof(TimePackage));
+    JsonObject obj = array.add<JsonObject>();
+    obj["id"] = i;
+    obj["durationMin"] = pkg.durationMin;
+    obj["priceIDR"] = pkg.priceIDR;
+  }
+  preferences.end();
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+void handleUpdatePackage() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  int pkgId = doc["id"] | -1;
+  int price = doc["priceIDR"] | -1;
+
+  if (pkgId < 0 || pkgId >= PKG_COUNT || price < 0) {
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Invalid id or price\"}");
+    return;
+  }
+
+  preferences.begin("packages", false);
+  TimePackage pkg;
+  char k[8];
+  snprintf(k, sizeof(k), "p%d", pkgId);
+  memset(&pkg, 0, sizeof(TimePackage));
+  preferences.getBytes(k, &pkg, sizeof(TimePackage));
+  pkg.priceIDR = price;
+  preferences.putBytes(k, &pkg, sizeof(TimePackage));
+  preferences.end();
+
+  server.send(200, "application/json", "{\"ok\":1}");
+  Serial.printf("[PKG] Updated package %d: %dmin = Rp%lu\n", pkgId, pkg.durationMin, price);
+}
+
+void handleGetRevenue() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
+
+  preferences.begin("revenue", true);
+  int count = preferences.getInt("count", 0);
+  preferences.end();
+
+  int totalRevenue = 0;
+  JsonDocument doc;
+  JsonArray array = doc.to<JsonArray>();
+
+  // Aggregate by slave
+  preferences.begin("revenue", true);
+  count = preferences.getInt("count", 0);
+  for (int i = 0; i < count; i++) {
+    RevenueSession rs;
+    char k[16];
+    snprintf(k, sizeof(k), "r%d", i);
+    memset(&rs, 0, sizeof(RevenueSession));
+    if (preferences.getBytes(k, &rs, sizeof(RevenueSession)) > 0) {
+      totalRevenue += rs.priceIDR;
+    }
+  }
+  preferences.end();
+
+  // Per-slave breakdown from history
+  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+    for (int i = 0; i < slaveCount; i++) {
+      HistoryData h;
+      loadHistory(slaves[i].id, &h);
+      uint32_t slaveRevenue = 0;
+      preferences.begin("revenue", true);
+      int rc = preferences.getInt("count", 0);
+      for (int j = 0; j < rc; j++) {
+        RevenueSession rs;
+        char k[16];
+        snprintf(k, sizeof(k), "r%d", j);
+        memset(&rs, 0, sizeof(RevenueSession));
+        if (preferences.getBytes(k, &rs, sizeof(RevenueSession)) > 0) {
+          if (rs.slaveId == slaves[i].id) slaveRevenue += rs.priceIDR;
+        }
+      }
+      preferences.end();
+
+      JsonObject obj = array.add<JsonObject>();
+      obj["id"] = slaves[i].id;
+      obj["totalSec"] = h.totalSec;
+      obj["sessions"] = h.sessions;
+      obj["revenueIDR"] = slaveRevenue;
+    }
+    xSemaphoreGive(slavesMutex);
+  }
+
+  JsonObject total = array.add<JsonObject>();
+  total["totalRevenueIDR"] = totalRevenue;
+
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+void handleResetRevenue() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
+
+  String tok = getTokenFromRequest();
+  AuthToken* t = findToken(tok);
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+
+  String password = doc["password"] | "";
+  if (password != ADMIN_PASS) {
+    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong password\"}");
+    return;
+  }
+
+  int targetId = doc["id"] | 0;
+
+  preferences.begin("revenue", false);
+  if (targetId > 0) {
+    int count = preferences.getInt("count", 0);
+    int dst = 0;
+    for (int i = 0; i < count; i++) {
+      RevenueSession rs;
+      char k[16];
+      snprintf(k, sizeof(k), "r%d", i);
+      memset(&rs, 0, sizeof(RevenueSession));
+      if (preferences.getBytes(k, &rs, sizeof(RevenueSession)) > 0) {
+        if (rs.slaveId != targetId) {
+          if (dst != i) {
+            char dk[16];
+            snprintf(dk, sizeof(dk), "r%d", dst);
+            preferences.putBytes(dk, &rs, sizeof(RevenueSession));
+          }
+          dst++;
         }
       }
     }
-  },
+    preferences.putInt("count", dst);
+    Serial.printf("[REVENUE] Reset revenue for EXC-%02d\n", targetId);
+  } else {
+    preferences.clear();
+    Serial.println("[REVENUE] Cleared all revenue");
+  }
+  preferences.end();
 
-  renderDashboard: function() {
-    var dev = Store.getCurrent();
-    var timeEl = document.getElementById('dispTime');
-    var statusEl = document.getElementById('dispStatus');
-    var pauseBtn = document.getElementById('btnPause');
-    
-    if (dev && dev.online) {
-      timeEl.textContent = dev.disp || "--:--";
-      
-      var dotClass = 'online';
-      var stateTxt = dev.state || 'UNKNOWN';
-      if (dev.state === 'PAUSED') dotClass = 'paused';
-      
-      statusEl.innerHTML = '<div class="dot ' + dotClass + '"></div><span>' + stateTxt + '</span>';
-      
-      if (dev.state === 'PAUSED') {
-        pauseBtn.textContent = "RESUME";
-        pauseBtn.className = "btn-primary";
-      } else {
-        pauseBtn.textContent = "PAUSE";
-        pauseBtn.className = "btn-warning";
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Excavator Rental</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#f0f2f5;--card:#fff;--primary:#2563eb;--success:#10b981;--danger:#ef4444;--warning:#f59e0b;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;--radius:12px}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.hidden{display:none!important}
+
+/* Login */
+#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.login-box{background:var(--card);border-radius:var(--radius);padding:32px;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+.login-box h1{font-size:20px;text-align:center;margin-bottom:24px;color:var(--primary)}
+.login-box input{width:100%;padding:12px;border:1px solid var(--border);border-radius:8px;font-size:15px;margin-bottom:12px;outline:none}
+.login-box input:focus{border-color:var(--primary)}
+.login-box button{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
+.login-box button:active{opacity:.9}
+.login-err{color:var(--danger);font-size:13px;text-align:center;margin-top:8px;min-height:20px}
+
+/* Header */
+.header{background:var(--primary);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
+.header h2{font-size:16px;font-weight:600}
+.header-btn{background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer}
+
+/* Tabs */
+.tabs{display:flex;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:48px;z-index:9}
+.tab{flex:1;padding:12px;text-align:center;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+/* Content */
+.content{padding:12px;max-width:600px;margin:0 auto}
+.section{margin-bottom:16px}
+.section-title{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+
+/* Device Card */
+.device{background:var(--card);border-radius:var(--radius);padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.device-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.device-name{font-weight:700;font-size:16px}
+.device-status{font-size:12px;padding:4px 8px;border-radius:12px;font-weight:600}
+.device-status.online{background:#d1fae5;color:#065f46}
+.device-status.offline{background:#fee2e2;color:#991b1b}
+.device-time{font-size:36px;font-weight:700;text-align:center;font-family:monospace;margin:8px 0}
+.device-meta{font-size:12px;color:var(--muted);text-align:center}
+
+/* Package Grid */
+.pkg-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.pkg-btn{background:var(--card);border:2px solid var(--border);border-radius:var(--radius);padding:12px 8px;text-align:center;cursor:pointer;transition:all .15s}
+.pkg-btn:active{transform:scale(.95);border-color:var(--primary);background:#eff6ff}
+.pkg-min{font-size:20px;font-weight:700;color:var(--primary)}
+.pkg-label{font-size:11px;color:var(--muted);margin-top:2px}
+.pkg-price{font-size:12px;font-weight:600;color:var(--success);margin-top:4px}
+
+/* Action Buttons */
+.action-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.action-row.three{grid-template-columns:1fr 1fr 1fr}
+.btn{padding:14px;border:none;border-radius:var(--radius);font-size:14px;font-weight:600;cursor:pointer;text-align:center}
+.btn:active{opacity:.85;transform:scale(.98)}
+.btn-danger{background:rgba(239,68,68,.1);color:var(--danger);border:1px solid rgba(239,68,68,.3)}
+.btn-warning{background:rgba(245,158,11,.1);color:#d97706;border:1px solid rgba(245,158,11,.3)}
+.btn-success{background:rgba(16,185,129,.1);color:#059669;border:1px solid rgba(16,185,129,.3)}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-outline{background:var(--card);color:var(--text);border:1px solid var(--border)}
+
+/* Revenue Card */
+.rev-card{background:var(--card);border-radius:var(--radius);padding:16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.rev-id{font-weight:700}
+.rev-sec{font-size:12px;color:var(--muted)}
+.rev-money{font-weight:700;color:var(--success);font-size:16px}
+.rev-total{background:var(--primary);color:#fff;border-radius:var(--radius);padding:16px;margin-bottom:12px;text-align:center}
+.rev-total-label{font-size:13px;opacity:.8}
+.rev-total-amount{font-size:28px;font-weight:700}
+
+/* User List */
+.user-item{background:var(--card);border-radius:var(--radius);padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.user-name{font-weight:600}
+.user-role{font-size:12px;padding:2px 8px;border-radius:8px;font-weight:600}
+.role-0{background:#dbeafe;color:#1e40af}
+.role-1{background:#fef3c7;color:#92400e}
+.role-2{background:#d1fae5;color:#065f46}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:flex-end;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:var(--bg);border-radius:16px 16px 0 0;width:100%;max-width:500px;padding:20px;max-height:80vh;overflow-y:auto}
+.modal h3{margin-bottom:16px}
+.modal input,.modal select{width:100%;padding:12px;border:1px solid var(--border);border-radius:8px;font-size:15px;margin-bottom:12px;outline:none}
+.modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+
+/* Toast */
+.toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 20px;font-size:14px;font-weight:600;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.1);animation:slideIn .3s ease}
+@keyframes slideIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <h1>🚜 Excavator Rental</h1>
+    <input id="loginUser" type="text" placeholder="Username" autocomplete="username">
+    <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password">
+    <button onclick="doLogin()">Masuk</button>
+    <div id="loginErr" class="login-err"></div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="mainApp" class="hidden">
+  <div class="header">
+    <h2 id="headerTitle">🚜 Excavator Rental</h2>
+    <div>
+      <span id="headerUser" style="font-size:12px;opacity:.8;margin-right:8px"></span>
+      <button class="header-btn" onclick="doLogout()">Keluar</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="showTab('dashboard')">Dashboard</div>
+    <div class="tab" onclick="showTab('revenue')" id="tabRevenue">Pendapatan</div>
+    <div class="tab" onclick="showTab('admin')" id="tabAdmin">Admin</div>
+  </div>
+
+  <!-- DASHBOARD TAB -->
+  <div id="tab-dashboard" class="content">
+    <div id="slaveList"></div>
+  </div>
+
+  <!-- REVENUE TAB -->
+  <div id="tab-revenue" class="content hidden">
+    <div id="revenueTotal"></div>
+    <div id="revenueList"></div>
+    <div id="resetButtons" style="margin-top:12px">
+      <div class="section-title">Reset Data</div>
+      <div class="action-row" style="margin-bottom:8px">
+        <button class="btn btn-warning" onclick="resetHistory()">Reset Total Waktu</button>
+        <button class="btn btn-warning" onclick="resetRevenue()">Reset Pendapatan</button>
+      </div>
+      <button class="btn btn-danger" style="width:100%" onclick="resetAll()">Reset Semua (Waktu + Uang)</button>
+    </div>
+  </div>
+
+  <!-- ADMIN TAB -->
+  <div id="tab-admin" class="content hidden">
+    <div class="section">
+      <div class="section-title">Paket Waktu & Harga</div>
+      <div id="packageList"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Pengguna</div>
+      <div id="userList"></div>
+      <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="openModal('addUser')">+ Tambah Pengguna</button>
+    </div>
+    <div class="section">
+      <div class="section-title">Akun</div>
+      <button class="btn btn-outline" style="width:100%" onclick="openModal('changePass')">Ubah Password</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modal-addUser" onclick="closeModal(event,'addUser')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Tambah Pengguna</h3>
+    <input id="newUsername" placeholder="Username (min 3 karakter)">
+    <input id="newPassword" type="password" placeholder="Password (min 4 karakter)">
+    <select id="newRole"><option value="2">Staff</option><option value="1">Admin</option></select>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModalDirect('addUser')">Batal</button>
+      <button class="btn btn-primary" onclick="createUser()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-editPkg" onclick="closeModal(event,'editPkg')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Ubah Harga Paket</h3>
+    <div id="editPkgInfo" style="margin-bottom:12px;font-weight:600"></div>
+    <input id="editPkgPrice" type="number" placeholder="Harga (Rp)">
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModalDirect('editPkg')">Batal</button>
+      <button class="btn btn-primary" onclick="savePkgPrice()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-editSlave" onclick="closeModal(event,'editSlave')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Ubah ID Slave</h3>
+    <div id="editSlaveInfo" style="margin-bottom:12px;font-weight:600;color:var(--muted)"></div>
+    <input id="editSlaveNewId" type="number" placeholder="ID baru (angka)">
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModalDirect('editSlave')">Batal</button>
+      <button class="btn btn-primary" onclick="saveEditSlave()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-transfer" onclick="closeModal(event,'transfer')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Transfer Waktu</h3>
+    <div id="transferInfo" style="margin-bottom:12px;font-weight:600"></div>
+    <select id="transferTarget"></select>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModalDirect('transfer')">Batal</button>
+      <button class="btn btn-primary" onclick="doTransfer()">Transfer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-changePass" onclick="closeModal(event,'changePass')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Ubah Password</h3>
+    <input id="oldPass" type="password" placeholder="Password lama">
+    <input id="newPass" type="password" placeholder="Password baru (min 4)">
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModalDirect('changePass')">Batal</button>
+      <button class="btn btn-primary" onclick="doChangePass()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+var S={token:'',role:-1,username:'',devices:[],packages:[],users:[],revenue:[],history:[],selectedId:null};
+
+function api(ep,opts){
+  opts=opts||{};
+  var h={'Content-Type':'application/json'};
+  if(S.token)h['Authorization']='Bearer '+S.token;
+  if(opts.headers)Object.assign(h,opts.headers);
+  return fetch(ep,{method:opts.m||'GET',headers:h,body:opts.b?JSON.stringify(opts.b):undefined})
+    .then(function(r){return r.json().then(function(d){return{status:r.status,data:d}})});
+}
+
+function toast(msg){
+  var t=document.getElementById('toast');t.textContent=msg;t.style.display='block';
+  setTimeout(function(){t.style.display='none'},2500);
+}
+
+// ── Login/Logout ────────────────────────────────────────────
+function doLogin(){
+  var u=document.getElementById('loginUser').value;
+  var p=document.getElementById('loginPass').value;
+  document.getElementById('loginErr').textContent='';
+  api('/api/login',{m:'POST',b:{username:u,password:p}}).then(function(r){
+    if(r.data.ok){
+      S.token=r.data.token;S.role=r.data.role;S.username=r.data.username;
+      localStorage.setItem('token',S.token);localStorage.setItem('role',S.role);localStorage.setItem('username',S.username);
+      showApp();
+    }else{
+      document.getElementById('loginErr').textContent=r.data.error||'Login gagal';
+    }
+  }).catch(function(){
+    document.getElementById('loginErr').textContent='Koneksi gagal';
+  });
+}
+
+function doLogout(){
+  api('/api/logout',{m:'POST'}).catch(function(){});
+  S.token='';S.role=-1;S.username='';
+  localStorage.removeItem('token');localStorage.removeItem('role');localStorage.removeItem('username');
+  document.getElementById('mainApp').classList.add('hidden');
+  document.getElementById('loginScreen').style.display='flex';
+}
+
+function showApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('mainApp').classList.remove('hidden');
+  document.getElementById('headerUser').textContent=S.username+' ('+['SuperAdmin','Admin','Staff'][S.role]+')';
+  var isAdmin=S.role<=1;
+  document.getElementById('tabRevenue').style.display=isAdmin?'':'none';
+  document.getElementById('tabAdmin').style.display=S.role===0?'':'none';
+  document.getElementById('resetButtons').style.display=isAdmin?'':'none';
+  loadDevices();loadPackages();loadHistory();
+  if(isAdmin)loadRevenue();
+  if(S.role===0)loadUsers();
+}
+
+// ── Tabs ────────────────────────────────────────────────────
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(function(t,i){
+    t.classList.toggle('active',['dashboard','revenue','admin'][i]===name);
+  });
+  ['dashboard','revenue','admin'].forEach(function(t){
+    document.getElementById('tab-'+t).classList.toggle('hidden',t!==name);
+  });
+}
+
+// ── Devices ─────────────────────────────────────────────────
+function loadHistory(){
+  api('/api/history').then(function(r){
+    if(r.status===200){S.history=r.data;renderDevices();}
+  });
+}
+
+function loadDevices(){
+  api('/api/slaves').then(function(r){
+    if(r.status===200){
+      S.devices=r.data;
+      loadHistory();
+    }
+  });
+}
+
+function renderDevices(){
+  var c=document.getElementById('slaveList');
+  if(!S.devices.length){c.innerHTML='<div class="device"><p style="text-align:center;color:var(--muted)">Belum ada device terdaftar</p></div>';return}
+  c.innerHTML=S.devices.map(function(d){
+    var online=d.online?'online':'offline';
+    var state=d.state||'UNKNOWN';
+    var isRunning=state==='RUNNING';
+    var isPaused=state==='PAUSED';
+    var pkgsHtml='';
+    if(S.token&&S.packages.length){
+      pkgsHtml='<div class="pkg-grid">'+S.packages.map(function(p){
+        return '<div class="pkg-btn" onclick="addTime('+d.id+','+p.durationMin+')">'+
+          '<div class="pkg-min">'+p.durationMin+'</div>'+
+          '<div class="pkg-label">menit</div>'+
+          '<div class="pkg-price">Rp'+p.priceIDR.toLocaleString('id-ID')+'</div>'+
+        '</div>';
+      }).join('')+'</div>';
+    }
+    var actions='';
+    if(S.token){
+      actions='<div class="action-row">'+
+        (isPaused?'<button class="btn btn-success" onclick="sendCmd('+d.id+',\'RESUME\')">Lanjut</button>':
+         isRunning?'<button class="btn btn-warning" onclick="sendCmd('+d.id+',\'PAUSE\')">Jeda</button>':
+         '<button class="btn btn-outline" disabled>Tidak Aktif</button>')+
+        '<button class="btn btn-danger" onclick="sendCmd('+d.id+',\'STOP\')">Stop</button>'+
+      '</div>';
+      if(S.role<=1){
+        actions+='<div class="action-row" style="margin-top:4px">'+
+          '<button class="btn btn-outline" style="font-size:12px" onclick="identifySlave('+d.id+')">Identify</button>'+
+          '<button class="btn btn-outline" style="font-size:12px" onclick="openTransfer('+d.id+')">Transfer</button>'+
+        '</div>';
+        actions+='<div class="action-row" style="margin-top:4px">'+
+          '<button class="btn btn-outline" style="font-size:12px" onclick="openEditSlave('+d.id+')">Edit ID</button>'+
+          '<button class="btn btn-outline" style="font-size:12px;color:var(--danger)" onclick="deleteSlave(\''+d.mac+'\')">Hapus</button>'+
+        '</div>';
       }
-    } else {
-      timeEl.textContent = "--:--";
-      statusEl.innerHTML = '<div class="dot offline"></div><span>OFFLINE</span>';
+      if(S.role===0){
+        actions+='<div style="margin-top:4px"><button class="btn btn-outline" style="font-size:12px;width:100%;color:var(--danger)" onclick="rebootSlave('+d.id+')">Reboot</button></div>';
+      }
     }
-  },
+    return '<div class="device">'+
+      '<div class="device-header">'+
+        '<span class="device-name">EXC-0'+d.id+'</span>'+
+        '<span class="device-status '+online+'">'+(online==='online'?state:'OFFLINE')+'</span>'+
+      '</div>'+
+      '<div class="device-time">'+(d.disp||'--:--')+'</div>'+
+      '<div class="device-meta">Sisa: '+(d.rem||0)+' detik &bull; Bayar: '+(d.paid||0)+' detik</div>'+
+      (function(){
+        var h=S.history.find(function(x){return x.id===d.id});
+        if(!h||h.sessions===0) return '';
+        var hrs=Math.floor(h.totalSec/3600);
+        var mins=Math.floor((h.totalSec%3600)/60);
+        var timeStr=hrs>0?hrs+'j '+mins+'m':mins+' menit';
+        return '<div style="background:rgba(37,99,235,.05);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:12px">'+
+          '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
+            '<span style="font-weight:600;color:var(--primary)">Riwayat</span>'+
+            '<span style="color:var(--muted)">'+h.sessions+' sesi</span>'+
+          '</div>'+
+          '<div style="display:flex;justify-content:space-between;color:var(--muted)">'+
+            '<span>Total: '+timeStr+'</span>'+
+            '<span>Terakhir: '+h.lastSec+' detik</span>'+
+          '</div>'+
+        '</div>';
+      })()+
+      pkgsHtml+actions+
+    '</div>';
+  }).join('');
+}
 
-  renderManageList: function() {
-    var list = document.getElementById('slavesList');
-    if (Store.devices.length === 0) {
-      list.innerHTML = '<p class="text-muted" style="text-align:center; padding: 20px;">No devices registered yet.<br>Power on a slave to auto-register.</p>';
-      return;
-    }
-    
-    list.innerHTML = Store.devices.map(function(d) {
-      return '<div class="device-card" style="opacity: ' + (d.online ? '1' : '0.6') + '">' +
-        '<div class="device-header">' +
-          '<div class="device-title">' +
-            '<div class="dot ' + (d.online ? 'online' : 'offline') + '"></div>' +
-            'EXC-0' + d.id +
-          '</div>' +
-          '<div class="device-mac">' + d.mac + '</div>' +
-        '</div>' +
-        '<div class="device-mac" style="margin-top:-8px; font-weight:600;">IP: ' + (d.ip || '-') + '</div>' +
-        '<div class="action-row">' +
-          '<button class="btn-outline" style="color:#d97706" onclick="Commands.identify(' + d.id + ')">Ping</button>' +
-          '<button class="btn-outline" style="color:var(--primary)" onclick="Commands.editId(\'' + d.mac + '\', ' + d.id + ')">Edit ID</button>' +
-          '<button class="btn-danger" onclick="Commands.deleteSlave(\'' + d.mac + '\')">Delete</button>' +
-        '</div>' +
-      '</div>';
-    }).join('');
-  },
+function addTime(id,minutes){
+  api('/api/command',{m:'POST',b:{id:id,cmd:'ADD_TIME',val:minutes}}).then(function(r){
+    toast(r.data.ok?'Waktu ditambahkan!':(r.data.error||'Gagal'));
+    setTimeout(loadDevices,500);
+  });
+}
 
-  renderTransferList: function() {
-    var list = document.getElementById('transferTargets');
-    document.getElementById('transferSrc').textContent = Store.selectedId || '?';
-    
-    var targets = Store.devices.filter(function(d) { return d.online && String(d.id) !== String(Store.selectedId); });
-    
-    if (targets.length === 0) {
-      list.innerHTML = '<p class="text-muted" style="text-align:center; padding: 10px;">No other online devices available.</p>';
-      return;
-    }
-    
-    list.innerHTML = targets.map(function(d) {
-      return '<div class="target-card ' + (Store.transferTargetId == d.id ? 'selected' : '') + '" onclick="UI.selectTransferTarget(' + d.id + ')">' +
-        '<div class="target-info">' +
-          '<div class="target-name">EXC-0' + d.id + '</div>' +
-          '<div class="target-time">' + (d.disp || '--:--') + ' remaining</div>' +
-        '</div>' +
-        (Store.transferTargetId == d.id ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>' : '') +
-      '</div>';
-    }).join('');
-  },
+function sendCmd(id,cmd){
+  api('/api/command',{m:'POST',b:{id:id,cmd:cmd,val:0}}).then(function(r){
+    toast(r.data.ok?'OK':(r.data.error||'Gagal'));
+    setTimeout(loadDevices,500);
+  });
+}
 
-  selectTransferTarget: function(id) {
-    Store.transferTargetId = id;
-    this.renderTransferList();
-  },
+function identifySlave(id){
+  api('/api/command',{m:'POST',b:{id:id,cmd:'IDENTIFY',val:0}}).then(function(r){
+    toast(r.data.ok?'Buzzer berbunyi!':'Gagal');
+  });
+}
 
-  setLoading: function(active) {
-    var overlay = document.getElementById('mainLoader');
-    if (active) overlay.classList.add('active');
-    else overlay.classList.remove('active');
-  },
+function rebootSlave(id){
+  if(!confirm('Reboot EXC-0'+id+'?'))return;
+  api('/api/command',{m:'POST',b:{id:id,cmd:'REBOOT',val:0}}).then(function(r){
+    toast(r.data.ok?'Rebooting...':'Gagal');
+    setTimeout(loadDevices,5000);
+  });
+}
 
-  toast: function(msg, type) {
-    type = type || "success";
-    var container = document.getElementById('toastContainer');
-    var el = document.createElement('div');
-    
-    var icon = type === 'success' ? 
-      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>' : 
-      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
-    
-    el.className = 'toast ' + type;
-    el.innerHTML = icon + ' <span>' + msg + '</span>';
-    container.appendChild(el);
-    
-    setTimeout(function() {
-      el.classList.add('leaving');
-      el.addEventListener('animationend', function() { el.remove(); });
-    }, 3000);
-  },
+function openTransfer(id){
+  var others=S.devices.filter(function(d){return d.id!==id&&d.online});
+  if(!others.length){toast('Tidak ada device lain online');return}
+  var d=S.devices.find(function(x){return x.id===id});
+  document.getElementById('transferInfo').textContent='Transfer dari EXC-0'+id+' ('+(d?d.rem:0)+' detik)';
+  var sel=document.getElementById('transferTarget');
+  sel.innerHTML=others.map(function(x){
+    return '<option value="'+x.id+'">EXC-0'+x.id+' ('+x.state+')</option>';
+  }).join('');
+  sel.dataset.fromId=id;
+  document.getElementById('modal-transfer').classList.add('active');
+}
 
-  confirmCb: null,
-  confirm: function(title, msg, onConfirm) {
-    document.getElementById('confirmTitle').textContent = title;
-    document.getElementById('confirmMsg').textContent = msg;
-    this.confirmCb = onConfirm;
-    document.getElementById('confirmDialog').classList.add('active');
-  },
-  resolveConfirm: function(ok) {
-    document.getElementById('confirmDialog').classList.remove('active');
-    if (ok && this.confirmCb) this.confirmCb();
-    this.confirmCb = null;
-  },
-  toggleApiLog: function() {
-    var c = document.getElementById('apiLogContainer');
-    c.style.display = (c.style.display === 'none') ? 'block' : 'none';
+function doTransfer(){
+  var fromId=parseInt(document.getElementById('transferTarget').dataset.fromId);
+  var toId=parseInt(document.getElementById('transferTarget').value);
+  closeModalDirect('transfer');
+  api('/api/transfer_time',{m:'POST',b:{from_id:fromId,to_id:toId}}).then(function(r){
+    toast(r.data.ok?'Transfer berhasil!':(r.data.error||'Gagal'));
+    setTimeout(loadDevices,1000);
+  });
+}
+
+function openEditSlave(id){
+  var d=S.devices.find(function(x){return x.id===id});
+  document.getElementById('editSlaveInfo').textContent='MAC: '+(d?d.mac:'?');
+  document.getElementById('editSlaveNewId').value=id;
+  document.getElementById('editSlaveNewId').dataset.mac=d?d.mac:'';
+  document.getElementById('modal-editSlave').classList.add('active');
+}
+
+function saveEditSlave(){
+  var mac=document.getElementById('editSlaveNewId').dataset.mac;
+  var newId=parseInt(document.getElementById('editSlaveNewId').value)||0;
+  if(newId<1){toast('ID tidak valid');return}
+  closeModalDirect('editSlave');
+  api('/api/edit_slave',{m:'POST',b:{mac:mac,id:newId}}).then(function(r){
+    toast(r.data.ok?'ID diubah!':(r.data.error||'Gagal'));
+    setTimeout(loadDevices,500);
+  });
+}
+
+function deleteSlave(mac){
+  if(!confirm('Hapus device '+mac+' dari registry?'))return;
+  api('/api/delete_slave',{m:'POST',b:{mac:mac}}).then(function(r){
+    toast(r.data.ok?'Device dihapus!':(r.data.error||'Gagal'));
+    setTimeout(loadDevices,500);
+  });
+}
+
+function deleteUser(username){
+  if(!confirm('Hapus pengguna '+username+'?'))return;
+  api('/api/users/delete',{m:'POST',b:{username:username}}).then(function(r){
+    toast(r.data.ok?'Pengguna dihapus!':(r.data.error||'Gagal'));
+    loadUsers();
+  });
+}
+
+function doChangePass(){
+  var op=document.getElementById('oldPass').value;
+  var np=document.getElementById('newPass').value;
+  if(np.length<4){toast('Password baru min 4 karakter');return}
+  closeModalDirect('changePass');
+  api('/api/users/change-password',{m:'POST',b:{old_password:op,new_password:np}}).then(function(r){
+    toast(r.data.ok?'Password diubah!':(r.data.error||'Gagal'));
+  });
+}
+
+// ── Packages ────────────────────────────────────────────────
+function loadPackages(){
+  api('/api/packages').then(function(r){
+    if(r.status===200){S.packages=r.data;renderDevices();renderPackages();}
+  });
+}
+
+function renderPackages(){
+  if(S.role>1)return;
+  var c=document.getElementById('packageList');
+  c.innerHTML=S.packages.map(function(p){
+    return '<div class="rev-card" onclick="editPkg('+p.id+',\''+p.durationMin+' min\',\''+p.priceIDR+'\')">'+
+      '<div><span class="rev-id">Set '+p.durationMin+'</span><span class="rev-sec" style="margin-left:8px">'+p.durationMin+' menit</span></div>'+
+      '<div class="rev-money">Rp'+p.priceIDR.toLocaleString('id-ID')+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function editPkg(id,name,price){
+  document.getElementById('editPkgInfo').textContent=name;
+  document.getElementById('editPkgPrice').value=price;
+  document.getElementById('editPkgPrice').dataset.id=id;
+  document.getElementById('modal-editPkg').classList.add('active');
+}
+
+function savePkgPrice(){
+  var id=parseInt(document.getElementById('editPkgPrice').dataset.id);
+  var price=parseInt(document.getElementById('editPkgPrice').value)||0;
+  api('/api/packages/update',{m:'POST',b:{id:id,priceIDR:price}}).then(function(r){
+    toast(r.data.ok?'Harga updated!':'Gagal');
+    closeModalDirect('editPkg');
+    loadPackages();
+  });
+}
+
+// ── Revenue ─────────────────────────────────────────────────
+function loadRevenue(){
+  api('/api/revenue').then(function(r){
+    if(r.status===200){S.revenue=r.data;renderRevenue();}
+  });
+}
+
+function renderRevenue(){
+  var total=0;
+  var slaveData=S.revenue.filter(function(x){return x.id!==undefined});
+  var totalObj=S.revenue.find(function(x){return x.totalRevenueIDR!==undefined});
+  if(totalObj)total=totalObj.totalRevenueIDR;
+
+  document.getElementById('revenueTotal').innerHTML=
+    '<div class="rev-total"><div class="rev-total-label">Total Pendapatan</div><div class="rev-total-amount">Rp'+total.toLocaleString('id-ID')+'</div></div>';
+
+  document.getElementById('revenueList').innerHTML=slaveData.map(function(x){
+    var s=S.devices.find(function(d){return d.id===x.id});
+    return '<div class="rev-card">'+
+      '<div><span class="rev-id">EXC-0'+x.id+'</span><span class="rev-sec">'+x.sessions+' sesi &bull; '+Math.floor(x.totalSec/60)+' menit</span></div>'+
+      '<div class="rev-money">Rp'+x.revenueIDR.toLocaleString('id-ID')+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+// ── Reset Functions ─────────────────────────────────────────
+function resetHistory(){
+  if(!confirm('Reset total waktu & sesi untuk semua slave?'))return;
+  var pw=prompt('Masukkan password admin:');
+  if(!pw)return;
+  api('/api/history/reset',{m:'POST',b:{password:pw}}).then(function(r){
+    toast(r.data.ok?'Total waktu direset!':'Gagal: '+(r.data.error||''));
+    if(r.data.ok){loadRevenue();loadDevices();}
+  });
+}
+
+function resetRevenue(){
+  if(!confirm('Reset pendapatan (uang) untuk semua slave?'))return;
+  var pw=prompt('Masukkan password admin:');
+  if(!pw)return;
+  api('/api/revenue/reset',{m:'POST',b:{password:pw}}).then(function(r){
+    toast(r.data.ok?'Pendapatan direset!':'Gagal: '+(r.data.error||''));
+    if(r.data.ok)loadRevenue();
+  });
+}
+
+function resetAll(){
+  if(!confirm('Reset SEMUA data (waktu + uang)?\nTindakan ini tidak bisa dibatalkan!'))return;
+  var pw=prompt('Masukkan password admin:');
+  if(!pw)return;
+  api('/api/reset-all',{m:'POST',b:{password:pw}}).then(function(r){
+    toast(r.data.ok?'Semua data direset!':'Gagal: '+(r.data.error||''));
+    if(r.data.ok){loadRevenue();loadDevices();}
+  });
+}
+
+// ── Users ───────────────────────────────────────────────────
+function loadUsers(){
+  api('/api/users').then(function(r){
+    if(r.status===200){S.users=r.data;renderUsers();}
+  });
+}
+
+function renderUsers(){
+  var roleNames=['SuperAdmin','Admin','Staff'];
+  var roleClasses=['role-0','role-1','role-2'];
+  document.getElementById('userList').innerHTML=S.users.map(function(u){
+    var delBtn=(u.username!==S.username)?'<button class="btn btn-outline" style="padding:4px 8px;font-size:11px;color:var(--danger)" onclick="deleteUser(\''+u.username+'\')">Hapus</button>':'';
+    return '<div class="user-item">'+
+      '<span class="user-name">'+u.username+'</span>'+
+      '<div style="display:flex;align-items:center;gap:8px">'+
+        '<span class="user-role '+roleClasses[u.role]+'">'+roleNames[u.role]+'</span>'+
+        delBtn+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function createUser(){
+  var u=document.getElementById('newUsername').value;
+  var p=document.getElementById('newPassword').value;
+  var r=parseInt(document.getElementById('newRole').value);
+  api('/api/users',{m:'POST',b:{username:u,password:p,role:r}}).then(function(res){
+    toast(res.data.ok?'Pengguna ditambahkan!':(res.data.error||'Gagal'));
+    closeModalDirect('addUser');
+    loadUsers();
+  });
+}
+
+// ── Modal ───────────────────────────────────────────────────
+function openModal(id){document.getElementById('modal-'+id).classList.add('active')}
+function closeModal(e,id){if(e.target===e.currentTarget)closeModalDirect(id)}
+function closeModalDirect(id){document.getElementById('modal-'+id).classList.remove('active')}
+
+// ── Init ────────────────────────────────────────────────────
+(function(){
+  var t=localStorage.getItem('token');
+  var r=localStorage.getItem('role');
+  var u=localStorage.getItem('username');
+  if(t&&r!==null){
+    S.token=t;S.role=parseInt(r);S.username=u;
+    showApp();
   }
-};
-
-var Modals = {
-  open: function(id) {
-    if(id === 'transferModal') {
-      Store.transferTargetId = null;
-      UI.renderTransferList();
-    }
-    document.getElementById(id).classList.add('active');
-    document.body.style.overflow = 'hidden';
-  },
-  close: function(id) {
-    document.getElementById(id).classList.remove('active');
-    document.body.style.overflow = '';
-  },
-  backdropClick: function(e, id) {
-    if (e.target.id === id) this.close(id);
-  }
-};
-
-document.addEventListener('DOMContentLoaded', function() { UI.init(); });
-
+  setInterval(loadDevices,3000);
+})();
 </script>
-</body>
-</html>
+</body></html>
 )rawliteral";
 
 void addCorsHeaders() {
@@ -936,6 +1459,7 @@ void handleSlaves() {
 
 void handleEditSlave() {
   addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -995,6 +1519,7 @@ void handleEditSlave() {
 
 void handleDeleteSlave() {
   addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -1040,8 +1565,135 @@ void handleDeleteSlave() {
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
+void handleHistory() {
+  addCorsHeaders();
+  int reqId = server.arg("id").toInt();
+
+  JsonDocument doc;
+  JsonArray array = doc.to<JsonArray>();
+
+  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+    for (int i = 0; i < slaveCount; i++) {
+      if (reqId > 0 && slaves[i].id != reqId) continue;
+      HistoryData h;
+      loadHistory(slaves[i].id, &h);
+      JsonObject obj = array.add<JsonObject>();
+      obj["id"] = slaves[i].id;
+      obj["mac"] = slaves[i].mac;
+      obj["totalSec"] = h.totalSec;
+      obj["sessions"] = h.sessions;
+      obj["lastSec"] = h.lastSec;
+      obj["lastTime"] = h.lastTime;
+      obj["online"] = (millis() - slaves[i].lastSeen) < ONLINE_THRESHOLD_MS;
+    }
+    xSemaphoreGive(slavesMutex);
+  }
+
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+void handleHistoryReset() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String body = server.arg("plain");
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+
+  String password = doc["password"] | "";
+  if (password != ADMIN_PASS) {
+    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong password\"}");
+    return;
+  }
+
+  int targetId = doc["id"] | 0;
+
+  preferences.begin("history", false);
+  if (targetId > 0) {
+    char key[16];
+    snprintf(key, sizeof(key), "h%d", targetId);
+    preferences.remove(key);
+    Serial.printf("[HISTORY] Reset EXC-%02d\n", targetId);
+  } else {
+    preferences.clear();
+    Serial.println("[HISTORY] Cleared all history");
+  }
+  preferences.end();
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+void handleResetAll() {
+  addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String password = doc["password"] | "";
+  if (password != ADMIN_PASS) {
+    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong password\"}");
+    return;
+  }
+  int targetId = doc["id"] | 0;
+
+  // Reset history
+  preferences.begin("history", false);
+  if (targetId > 0) {
+    char key[16];
+    snprintf(key, sizeof(key), "h%d", targetId);
+    preferences.remove(key);
+  } else {
+    preferences.clear();
+  }
+  preferences.end();
+
+  // Reset revenue
+  preferences.begin("revenue", false);
+  if (targetId > 0) {
+    int count = preferences.getInt("count", 0);
+    int dst = 0;
+    for (int i = 0; i < count; i++) {
+      RevenueSession rs;
+      char k[16];
+      snprintf(k, sizeof(k), "r%d", i);
+      memset(&rs, 0, sizeof(RevenueSession));
+      if (preferences.getBytes(k, &rs, sizeof(RevenueSession)) > 0) {
+        if (rs.slaveId != targetId) {
+          if (dst != i) {
+            char dk[16];
+            snprintf(dk, sizeof(dk), "r%d", dst);
+            preferences.putBytes(dk, &rs, sizeof(RevenueSession));
+          }
+          dst++;
+        }
+      }
+    }
+    preferences.putInt("count", dst);
+  } else {
+    preferences.clear();
+  }
+  preferences.end();
+
+  Serial.printf("[RESET-ALL] Reset history+revenue for %s\n", targetId > 0 ? String("EXC-" + String(targetId)).c_str() : "ALL");
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
 void handleCommandProxy() {
   addCorsHeaders();
+  if (!checkAuth(ROLE_STAFF)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -1057,6 +1709,25 @@ void handleCommandProxy() {
   String cmd = doc["cmd"] | "";
   int val = doc["val"] | 0;
   if (val < 0) val = 0;
+
+  // Simplified ADD_TIME: val matches duration in minutes (1,2,3,5,10,30,60)
+  if (cmd == "ADD_TIME" && val >= 1 && val <= 60) {
+    preferences.begin("packages", true);
+    int pkgCount = preferences.getInt("count", 0);
+    for (int i = 0; i < pkgCount; i++) {
+      TimePackage pkg;
+      memset(&pkg, 0, sizeof(TimePackage));
+      char k[8];
+      snprintf(k, sizeof(k), "p%d", i);
+      preferences.getBytes(k, &pkg, sizeof(TimePackage));
+      if (pkg.durationMin == val) {
+        val = pkg.durationMin * 60;
+        Serial.printf("[PROXY] Set %dmin resolved to %d seconds (Rp%lu)\n", pkg.durationMin, val, pkg.priceIDR);
+        break;
+      }
+    }
+    preferences.end();
+  }
 
   if (targetId <= 0 || cmd == "") {
     Serial.println("[PROXY] Command failed: Missing id or cmd");
@@ -1105,6 +1776,7 @@ void handleCommandProxy() {
 
 void handleTransferTime() {
   addCorsHeaders();
+  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -1280,6 +1952,9 @@ void pollSlavesTask(void* pvParameters) {
           if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
             for (int j = 0; j < slaveCount; j++) {
               if (slaves[j].ip == targetIps[i]) {
+                String oldState = slaves[j].state;
+                int oldPaid = slaves[j].paid;
+
                 slaves[j].state = stateDoc["state"] | "UNKNOWN";
                 int rem = stateDoc["rem"] | -1;
                 if (rem >= 0) slaves[j].rem = rem;
@@ -1288,6 +1963,13 @@ void pollSlavesTask(void* pvParameters) {
                 if (paid >= 0) slaves[j].paid = paid;
                 slaves[j].bat = stateDoc["bat"] | "";
                 slaves[j].lastSeen = millis();
+
+                // Detect session end: was RUNNING/PAUSED, now LOCKED/ENDED
+                bool wasActive = (oldState == "RUNNING" || oldState == "PAUSED");
+                bool nowInactive = (slaves[j].state == "LOCKED" || slaves[j].state == "ENDED");
+                if (wasActive && nowInactive && oldPaid > 0) {
+                  recordSessionEnd(slaves[j].id, oldPaid);
+                }
                 break;
               }
             }
@@ -1325,6 +2007,9 @@ void setup() {
   Serial.println("Starting Master Access Point (DHCP enabled)");
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 
+  initDefaultUsers();
+  initDefaultPackages();
+
   IPAddress apIP(192, 168, 4, 1);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 10);
@@ -1338,20 +2023,52 @@ void setup() {
     server.send(200, "text/html", DASHBOARD_HTML);
   });
 
+  // Public endpoints (no auth)
   server.on("/api/register", HTTP_GET, handleRegister);
   server.on("/api/register", HTTP_OPTIONS, handleOptions);
   server.on("/api/slaves", HTTP_GET, handleSlaves);
   server.on("/api/slaves", HTTP_OPTIONS, handleOptions);
+  server.on("/api/login", HTTP_POST, handleLogin);
+  server.on("/api/login", HTTP_OPTIONS, handleOptions);
+  server.on("/api/packages", HTTP_GET, handleGetPackages);
+  server.on("/api/packages", HTTP_OPTIONS, handleOptions);
 
+  // Protected endpoints (auth required)
+  server.on("/api/logout", HTTP_POST, handleLogout);
+  server.on("/api/logout", HTTP_OPTIONS, handleOptions);
+  server.on("/api/command", HTTP_POST, handleCommandProxy);
+  server.on("/api/command", HTTP_OPTIONS, handleOptions);
+  server.on("/api/transfer_time", HTTP_POST, handleTransferTime);
+  server.on("/api/transfer_time", HTTP_OPTIONS, handleOptions);
   server.on("/api/edit_slave", HTTP_POST, handleEditSlave);
   server.on("/api/edit_slave", HTTP_OPTIONS, handleOptions);
   server.on("/api/delete_slave", HTTP_POST, handleDeleteSlave);
   server.on("/api/delete_slave", HTTP_OPTIONS, handleOptions);
 
-  server.on("/api/command", HTTP_POST, handleCommandProxy);
-  server.on("/api/command", HTTP_OPTIONS, handleOptions);
-  server.on("/api/transfer_time", HTTP_POST, handleTransferTime);
-  server.on("/api/transfer_time", HTTP_OPTIONS, handleOptions);
+  // User management (superadmin)
+  server.on("/api/users", HTTP_GET, handleGetUsers);
+  server.on("/api/users", HTTP_OPTIONS, handleOptions);
+  server.on("/api/users", HTTP_POST, handleCreateUser);
+  server.on("/api/users/delete", HTTP_POST, handleDeleteUser);
+  server.on("/api/users/delete", HTTP_OPTIONS, handleOptions);
+  server.on("/api/users/change-password", HTTP_POST, handleChangePassword);
+  server.on("/api/users/change-password", HTTP_OPTIONS, handleOptions);
+
+  // Package management (admin)
+  server.on("/api/packages/update", HTTP_POST, handleUpdatePackage);
+  server.on("/api/packages/update", HTTP_OPTIONS, handleOptions);
+
+  // History & revenue
+  server.on("/api/history", HTTP_GET, handleHistory);
+  server.on("/api/history", HTTP_OPTIONS, handleOptions);
+  server.on("/api/history/reset", HTTP_POST, handleHistoryReset);
+  server.on("/api/history/reset", HTTP_OPTIONS, handleOptions);
+  server.on("/api/revenue", HTTP_GET, handleGetRevenue);
+  server.on("/api/revenue", HTTP_OPTIONS, handleOptions);
+  server.on("/api/revenue/reset", HTTP_POST, handleResetRevenue);
+  server.on("/api/revenue/reset", HTTP_OPTIONS, handleOptions);
+  server.on("/api/reset-all", HTTP_POST, handleResetAll);
+  server.on("/api/reset-all", HTTP_OPTIONS, handleOptions);
 
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");

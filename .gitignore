@@ -31,11 +31,19 @@ desktop.ini
 
 # Commercial Proposals & Internal Specs
 *.docx
+*.pdf
 PROPOSAL*.md
 PRD.md
 MVP_SPEC.md
 
+# Old backups and txt logs
+*.txt
+old_*
+
 # Scratch and Generator scripts
 scratch.py
 generate_docx.py
+docs/convert.ps1
 
+# Downloaded tools
+arduino-cli*

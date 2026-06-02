@@ -181,7 +181,51 @@ Memindahkan sisa waktu dari mainan rusak ke mainan cadangan. Master akan:
 
 ---
 
-### E. Registrasi / Heartbeat (Internal — Slave ke Master)
+### E. Riwayat Penggunaan (Usage History)
+
+Master menyimpan total waktu bermain (paid) untuk setiap Slave di NVS Flash. Setiap kali session berakhir (RUNNING/PAUSED → LOCKED/ENDED), master mencatat durasi session.
+
+#### Lihat Riwayat
+- **URL:** `GET /api/history`
+- **Query (optional):** `?id=1` untuk Slave tertentu
+- **Response:** `200 OK` — JSON Array
+
+```json
+[
+  {
+    "id": 1,
+    "mac": "80:F3:DA:63:25:DC",
+    "totalSec": 7200,
+    "sessions": 12,
+    "lastSec": 600,
+    "lastTime": 12345,
+    "online": true
+  }
+]
+```
+
+**Field:**
+- `totalSec`: Total detik yang sudah dibayar (lifetime)
+- `sessions`: Jumlah session bermain
+- `lastSec`: Durasi session terakhir (detik)
+- `lastTime`: Timestamp terakhir bermain (millis/1000 sejak boot master)
+- `online`: Status online slave
+
+#### Reset Riwayat (Password Required)
+- **URL:** `POST /api/history/reset`
+- **Body:**
+```json
+{
+  "password": "admin123",
+  "id": 1
+}
+```
+- `id` (optional): Jika diisi, reset hanya Slave tertentu. Jika kosong, reset semua.
+- **Response:** `200 OK` — `{"ok":1}` atau `403` — `{"ok":0,"error":"Wrong password"}`
+
+---
+
+### F. Registrasi / Heartbeat (Internal — Slave ke Master)
 
 - **URL:** `GET /api/register?mac=AA:BB:CC:DD:EE:FF`
 - **Response:**
@@ -195,7 +239,119 @@ Digunakan oleh Slave saat boot dan setiap 15 detik sebagai heartbeat.
 
 ---
 
-## 4. Endpoint Slave (Internal — Dipanggil Master)
+## 4. Autentikasi & User Management
+
+### Login
+- **URL:** `POST /api/login`
+- **Body:**
+```json
+{
+  "username": "superadmin",
+  "password": "super123"
+}
+```
+- **Response:** `200 OK`
+```json
+{
+  "ok": 1,
+  "token": "a1b2c3d4...",
+  "username": "superadmin",
+  "role": 0
+}
+```
+- Role: `0` = SuperAdmin, `1` = Admin, `2` = Staff
+- Token berlaku 24 jam. Kirim di header `Authorization: Bearer <token>`.
+
+### List Users (Admin+)
+- **URL:** `GET /api/users`
+- **Header:** `Authorization: Bearer <token>`
+- **Response:** JSON Array `[{ "username": "admin1", "role": 1 }, ...]`
+
+### Create User (SuperAdmin only)
+- **URL:** `POST /api/users`
+- **Body:**
+```json
+{
+  "username": "staff2",
+  "password": "staff123",
+  "role": 2
+}
+```
+
+### Delete User (SuperAdmin only)
+- **URL:** `POST /api/users/delete`
+- **Body:** `{ "username": "staff2" }`
+
+### Change Password (any logged-in user)
+- **URL:** `POST /api/users/change-password`
+- **Body:**
+```json
+{
+  "old_password": "old123",
+  "new_password": "new456"
+}
+```
+
+---
+
+## 5. Paket Waktu & Harga
+
+Paket waktu sudah ditentukan (fixed). Admin bisa mengatur harganya.
+
+### Lihat Paket (Public)
+- **URL:** `GET /api/packages`
+- **Response:**
+```json
+[
+  { "id": 0, "durationMin": 1, "priceIDR": 5000 },
+  { "id": 1, "durationMin": 2, "priceIDR": 8000 },
+  { "id": 2, "durationMin": 3, "priceIDR": 10000 },
+  { "id": 3, "durationMin": 5, "priceIDR": 15000 },
+  { "id": 4, "durationMin": 10, "priceIDR": 25000 },
+  { "id": 5, "durationMin": 30, "priceIDR": 60000 },
+  { "id": 6, "durationMin": 60, "priceIDR": 100000 }
+]
+```
+
+### Update Harga Paket (Admin+)
+- **URL:** `POST /api/packages/update`
+- **Header:** `Authorization: Bearer <token>`
+- **Body:** `{ "id": 0, "priceIDR": 5000 }`
+
+---
+
+## 6. Riwayat & Pendapatan
+
+### Riwayat Penggunaan
+- **URL:** `GET /api/history`
+- **Response:** `200 OK` — JSON Array
+
+### Pendapatan per Slave (Admin+)
+- **URL:** `GET /api/revenue`
+- **Header:** `Authorization: Bearer <token>`
+- **Response:**
+```json
+[
+  { "id": 1, "totalSec": 7200, "sessions": 12, "revenueIDR": 120000 },
+  { "id": 3, "totalSec": 3600, "sessions": 6, "revenueIDR": 60000 },
+  { "totalRevenueIDR": 180000 }
+]
+```
+
+### Reset Riwayat & Pendapatan (Admin + Password)
+- **URL:** `POST /api/history/reset` atau `POST /api/revenue/reset`
+- **Body:**
+```json
+{
+  "password": "admin123",
+  "id": 1
+}
+```
+- `id` (optional): Jika diisi, reset hanya Slave tertentu. Jika kosong, reset semua.
+
+---
+
+## 7. Endpoint Slave (Internal — Dipanggil Master)
 
 Endpoint ini dipanggil langsung oleh Master ke IP Slave. Android **tidak perlu** memanggilnya langsung.
 
@@ -227,7 +383,7 @@ Menerima perintah dari Master. Format body sama seperti Master proxy, **tanpa fi
 
 ---
 
-## 5. Kode Error
+## 8. Kode Error
 
 | HTTP Status | Arti |
 |-------------|------|
@@ -239,7 +395,7 @@ Menerima perintah dari Master. Format body sama seperti Master proxy, **tanpa fi
 
 ---
 
-## 6. Tips Developer Android (Retrofit / OkHttp / Ktor)
+## 9. Tips Developer Android (Retrofit / OkHttp / Ktor)
 
 ```kotlin
 // Contoh Retrofit interface
@@ -277,7 +433,7 @@ val retrofit = Retrofit.Builder()
 
 ---
 
-## 7. Catatan
+## 10. Catatan
 
 - Master menyimpan registry MAC→ID di NVS Flash (persistent).
 - Slave melakukan heartbeat setiap 15 detik untuk update `lastSeen`.
