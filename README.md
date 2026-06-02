@@ -175,6 +175,11 @@ Lihat spesifikasi lengkap di [docs/WIFI_API_SPEC.md](docs/WIFI_API_SPEC.md) dan 
 - Slave akan auto-resume setelah 3 detik peringatan bunyi.
 - Jika tetap LOCKED, cek NVS — sisa waktu mungkin sudah 0 sebelum battery dicabut.
 
+### Master mati sementara
+- Slave tetap menghitung timer lokal walau master/AP mati.
+- Saat Wi-Fi kembali, slave akan register ulang lalu master membaca state terbaru dari `/api/state`.
+- Dashboard master akan menandai slave offline setelah 30 detik tanpa heartbeat.
+
 ### Master hang / tidak responsif
 - Hardware watchdog akan auto-reboot Master setelah 10 detik hang.
 - Cek Serial Monitor untuk error `[PROXY]` atau `[REGISTRY]`.

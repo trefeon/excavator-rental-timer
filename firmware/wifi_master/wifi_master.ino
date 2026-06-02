@@ -1077,6 +1077,7 @@ void handleCommandProxy() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   String payload = "{\"cmd\":\"" + cmd + "\",\"val\":" + String(val) + "}";
   int httpCode = http.POST(payload);
+  esp_task_wdt_reset();
   
   if (httpCode > 0) {
     String response = http.getString();
@@ -1128,6 +1129,8 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int toHttpCode = http.GET();
   http.end();
+  esp_task_wdt_reset();
+  
   if (toHttpCode != 200) {
     Serial.println("[TRANSFER] Failed: Target slave is unreachable");
     server.send(502, "application/json", "{\"ok\":0,\"error\":\"Target is unreachable\"}");
@@ -1138,6 +1141,8 @@ void handleTransferTime() {
   http.begin("http://" + fromIp + "/api/state");
   http.setTimeout(HTTP_TIMEOUT_MS);
   int httpCode = http.GET();
+  esp_task_wdt_reset();
+  
   if (httpCode != 200) {
     http.end();
     Serial.println("[TRANSFER] Failed: Could not get state from source");
@@ -1160,6 +1165,7 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int stopCode = http.POST("{\"cmd\":\"STOP\",\"val\":0}");
   http.end();
+  esp_task_wdt_reset();
   
   if (stopCode != 200) {
     Serial.println("[TRANSFER] Failed: Could not stop source slave");
@@ -1173,6 +1179,7 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int addCode = http.POST("{\"cmd\":\"ADD_TIME\",\"val\":" + String(rem) + "}");
   http.end();
+  esp_task_wdt_reset();
 
   if (addCode != 200) {
     Serial.println("[TRANSFER] CRITICAL: Target failed to receive time! Attempting to revert to source...");
