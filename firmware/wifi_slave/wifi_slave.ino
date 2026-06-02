@@ -89,6 +89,9 @@ enum RentalState : uint8_t {
   STATE_FAULT = 5,
 };
 
+String stateName(RentalState value);
+void changeState(RentalState nextState);
+
 RentalState state = STATE_LOCKED;
 uint32_t remainingSeconds = 0;
 uint32_t totalPaidSeconds = 0;
