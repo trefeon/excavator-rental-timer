@@ -13,9 +13,11 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <HTTPClient.h>
-#include <esp_task_wdt.h>
+#include <ArduinoJson.h>
+
 #include <esp_idf_version.h>
 #include <freertos/semphr.h>
+#include <esp_task_wdt.h>
 
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
@@ -28,20 +30,15 @@ static const uint32_t HTTP_TIMEOUT_MS = 2000;
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
 static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
 
-void initTaskWatchdog() {
-#if ESP_IDF_VERSION_MAJOR >= 5
-  esp_task_wdt_config_t wdtConfig = {
-    .timeout_ms = 10000,
-    .idle_core_mask = 0,
-    .trigger_panic = true,
-  };
-  esp_task_wdt_init(&wdtConfig);
-#else
-  esp_task_wdt_init(10, true);
-#endif
-}
+
 
 #define LED_PIN 2
+
+void netLedFlash(int ms = 80) {
+  digitalWrite(LED_PIN, LOW);  // ON
+  delay(ms);
+  digitalWrite(LED_PIN, HIGH); // OFF
+}
 
 struct SlaveRecord {
   String mac;
@@ -806,43 +803,17 @@ String getMacKey(const String& m) {
   return k;
 }
 
-int extractJsonInt(const String& body, const String& key) {
-  String searchKey = "\"" + key + "\"";
-  int idx = body.indexOf(searchKey);
-  if (idx < 0) return -1;
-
-  int colonIdx = body.indexOf(":", idx + searchKey.length());
-  if (colonIdx < 0) return -1;
-
-  int start = colonIdx + 1;
-  while (start < body.length() && (body[start] == ' ' || body[start] == '\t' || body[start] == '\n' || body[start] == '\r')) start++;
-
-  if (start >= body.length()) return -1;
-
-  int end = start;
-  while (end < body.length() && body[end] != ',' && body[end] != '}' && body[end] != ']' && body[end] != ' ' && body[end] != '\t' && body[end] != '\n' && body[end] != '\r') end++;
-
-  if (end > start) {
-    return body.substring(start, end).toInt();
+bool isValidMac(const String& mac) {
+  if (mac.length() != 17) return false;
+  for (int i = 0; i < 17; i++) {
+    char c = mac.charAt(i);
+    if (i % 3 == 2) {
+      if (c != ':') return false;
+    } else {
+      if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) return false;
+    }
   }
-  return -1;
-}
-
-String extractJsonString(const String& body, const String& key) {
-  String searchKey = "\"" + key + "\"";
-  int idx = body.indexOf(searchKey);
-  if (idx < 0) return "";
-
-  int colonIdx = body.indexOf(":", idx + searchKey.length());
-  if (colonIdx < 0) return "";
-
-  int quoteIdx = body.indexOf("\"", colonIdx + 1);
-  if (quoteIdx < 0) return "";
-
-  int endQuote = body.indexOf("\"", quoteIdx + 1);
-  if (endQuote < 0) return "";
-
-  return body.substring(quoteIdx + 1, endQuote);
+  return true;
 }
 
 void handleRegister() {
@@ -850,6 +821,10 @@ void handleRegister() {
   String mac = server.arg("mac");
   if (mac == "") {
     server.send(400, "application/json", "{\"error\":\"MAC required\"}");
+    return;
+  }
+  if (!isValidMac(mac)) {
+    server.send(400, "application/json", "{\"error\":\"Invalid MAC format\"}");
     return;
   }
   String ip = server.client().remoteIP().toString();
@@ -928,34 +903,34 @@ void handleRegister() {
   char buf[64];
   snprintf(buf, sizeof(buf), "{\"id\":%d}", assignedId);
   server.send(200, "application/json", String(buf));
+  netLedFlash(80);
 }
 
 void handleSlaves() {
   addCorsHeaders();
-  String json;
-  json.reserve(slaveCount * 130 + 10);
-  json = "[";
+  
+  JsonDocument doc;
+  JsonArray array = doc.to<JsonArray>();
   uint32_t now = millis();
 
   if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
     for (int i = 0; i < slaveCount; i++) {
-      bool online = (now - slaves[i].lastSeen) < ONLINE_THRESHOLD_MS;
-      if (i > 0) json += ",";
-      json += "{";
-      json += "\"id\":" + String(slaves[i].id) + ",";
-      json += "\"ip\":\"" + slaves[i].ip + "\",";
-      json += "\"mac\":\"" + slaves[i].mac + "\",";
-      json += "\"online\":" + String(online ? "true" : "false") + ",";
-      json += "\"state\":\"" + slaves[i].state + "\",";
-      json += "\"rem\":" + String(slaves[i].rem) + ",";
-      json += "\"disp\":\"" + slaves[i].disp + "\",";
-      json += "\"paid\":" + String(slaves[i].paid) + ",";
-      json += "\"bat\":\"" + slaves[i].bat + "\"";
-      json += "}";
+      JsonObject obj = array.add<JsonObject>();
+      obj["id"] = slaves[i].id;
+      obj["ip"] = slaves[i].ip;
+      obj["mac"] = slaves[i].mac;
+      obj["online"] = (now - slaves[i].lastSeen) < ONLINE_THRESHOLD_MS;
+      obj["state"] = slaves[i].state;
+      obj["rem"] = slaves[i].rem;
+      obj["disp"] = slaves[i].disp;
+      obj["paid"] = slaves[i].paid;
+      obj["bat"] = slaves[i].bat;
     }
     xSemaphoreGive(slavesMutex);
   }
-  json += "]";
+  
+  String json;
+  serializeJson(doc, json);
   server.send(200, "application/json", json);
 }
 
@@ -967,49 +942,55 @@ void handleEditSlave() {
   }
   String body = server.arg("plain");
 
-  String mac = extractJsonString(body, "mac");
-  int newId = extractJsonInt(body, "id");
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String mac = doc["mac"] | "";
+  int newId = doc["id"] | 0;
 
-  if (mac != "" && newId > 0) {
-    Serial.printf("[MANAGE] Changing ID for MAC %s to EXC-%02d\n", mac.c_str(), newId);
-
-    preferences.begin("id_map", false);
-    String owner = preferences.getString(String(newId).c_str(), "");
-    if (owner != "" && owner != mac) {
-      preferences.end();
-      Serial.println("[MANAGE] Edit ID failed: ID already taken");
-      server.send(400, "application/json", "{\"ok\":0,\"error\":\"ID Taken\"}");
-      return;
-    }
-    preferences.end();
-
-    int oldId = 0;
-    preferences.begin("registry", false);
-    oldId = preferences.getInt(getMacKey(mac).c_str(), 0);
-    preferences.putInt(getMacKey(mac).c_str(), newId);
-    preferences.end();
-
-    preferences.begin("id_map", false);
-    if (oldId > 0 && oldId != newId) {
-      preferences.remove(String(oldId).c_str());
-    }
-    preferences.putString(String(newId).c_str(), mac);
-    preferences.end();
-
-    if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
-      for (int i = 0; i < slaveCount; i++) {
-        if (slaves[i].mac == mac) {
-          slaves[i].id = newId;
-          break;
-        }
-      }
-      xSemaphoreGive(slavesMutex);
-    }
-    server.send(200, "application/json", "{\"ok\":1}");
-  } else {
+  if (mac == "" || !isValidMac(mac) || newId <= 0) {
     Serial.println("[MANAGE] Edit ID failed: Invalid MAC or ID");
     server.send(400, "application/json", "{\"ok\":0}");
+    return;
   }
+
+  Serial.printf("[MANAGE] Changing ID for MAC %s to EXC-%02d\n", mac.c_str(), newId);
+
+  preferences.begin("id_map", false);
+  String owner = preferences.getString(String(newId).c_str(), "");
+  if (owner != "" && owner != mac) {
+    preferences.end();
+    Serial.println("[MANAGE] Edit ID failed: ID already taken");
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"ID Taken\"}");
+    return;
+  }
+  preferences.end();
+
+  int oldId = 0;
+  preferences.begin("registry", false);
+  oldId = preferences.getInt(getMacKey(mac).c_str(), 0);
+  preferences.putInt(getMacKey(mac).c_str(), newId);
+  preferences.end();
+
+  preferences.begin("id_map", false);
+  if (oldId > 0 && oldId != newId) {
+    preferences.remove(String(oldId).c_str());
+  }
+  preferences.putString(String(newId).c_str(), mac);
+  preferences.end();
+
+  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+    for (int i = 0; i < slaveCount; i++) {
+      if (slaves[i].mac == mac) {
+        slaves[i].id = newId;
+        break;
+      }
+    }
+    xSemaphoreGive(slavesMutex);
+  }
+  server.send(200, "application/json", "{\"ok\":1}");
 }
 
 void handleDeleteSlave() {
@@ -1019,38 +1000,44 @@ void handleDeleteSlave() {
     return;
   }
   String body = server.arg("plain");
-  String mac = extractJsonString(body, "mac");
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  String mac = doc["mac"] | "";
 
-  if (mac != "") {
-    Serial.printf("[MANAGE] Deleting Slave MAC %s from registry\n", mac.c_str());
-    preferences.begin("registry", false);
-    int deletedId = preferences.getInt(getMacKey(mac).c_str(), 0);
-    preferences.remove(getMacKey(mac).c_str());
-    preferences.end();
-
-    if (deletedId > 0) {
-      preferences.begin("id_map", false);
-      preferences.remove(String(deletedId).c_str());
-      preferences.end();
-    }
-
-    if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
-      for (int i = 0; i < slaveCount; i++) {
-        if (slaves[i].mac == mac) {
-          for (int j = i; j < slaveCount - 1; j++) {
-            slaves[j] = slaves[j + 1];
-          }
-          slaveCount--;
-          break;
-        }
-      }
-      xSemaphoreGive(slavesMutex);
-    }
-    server.send(200, "application/json", "{\"ok\":1}");
-  } else {
+  if (mac == "" || !isValidMac(mac)) {
     Serial.println("[MANAGE] Delete Slave failed: Invalid MAC");
     server.send(400, "application/json", "{\"ok\":0}");
+    return;
   }
+
+  Serial.printf("[MANAGE] Deleting Slave MAC %s from registry\n", mac.c_str());
+  preferences.begin("registry", false);
+  int deletedId = preferences.getInt(getMacKey(mac).c_str(), 0);
+  preferences.remove(getMacKey(mac).c_str());
+  preferences.end();
+
+  if (deletedId > 0) {
+    preferences.begin("id_map", false);
+    preferences.remove(String(deletedId).c_str());
+    preferences.end();
+  }
+
+  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+    for (int i = 0; i < slaveCount; i++) {
+      if (slaves[i].mac == mac) {
+        for (int j = i; j < slaveCount - 1; j++) {
+          slaves[j] = slaves[j + 1];
+        }
+        slaveCount--;
+        break;
+      }
+    }
+    xSemaphoreGive(slavesMutex);
+  }
+  server.send(200, "application/json", "{\"ok\":1}");
 }
 
 void handleCommandProxy() {
@@ -1061,9 +1048,14 @@ void handleCommandProxy() {
   }
   String body = server.arg("plain");
 
-  int targetId = extractJsonInt(body, "id");
-  String cmd = extractJsonString(body, "cmd");
-  int val = extractJsonInt(body, "val");
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  int targetId = doc["id"] | 0;
+  String cmd = doc["cmd"] | "";
+  int val = doc["val"] | 0;
   if (val < 0) val = 0;
 
   if (targetId <= 0 || cmd == "") {
@@ -1073,6 +1065,7 @@ void handleCommandProxy() {
   }
 
   Serial.printf("[PROXY] Intercepted command '%s' (val: %d) for EXC-%02d\n", cmd.c_str(), val, targetId);
+  netLedFlash(80);
 
   String targetIp = "";
   if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
@@ -1098,7 +1091,6 @@ void handleCommandProxy() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   String payload = "{\"cmd\":\"" + cmd + "\",\"val\":" + String(val) + "}";
   int httpCode = http.POST(payload);
-  esp_task_wdt_reset();
 
   if (httpCode > 0) {
     String response = http.getString();
@@ -1119,8 +1111,13 @@ void handleTransferTime() {
   }
   String body = server.arg("plain");
 
-  int fromId = extractJsonInt(body, "from_id");
-  int toId = extractJsonInt(body, "to_id");
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  int fromId = doc["from_id"] | 0;
+  int toId = doc["to_id"] | 0;
 
   if (fromId <= 0 || toId <= 0) {
     Serial.println("[TRANSFER] Failed: Missing from_id or to_id");
@@ -1129,6 +1126,7 @@ void handleTransferTime() {
   }
 
   Serial.printf("[TRANSFER] Initiating transfer from EXC-%02d to EXC-%02d\n", fromId, toId);
+  netLedFlash(100);
 
   String fromIp = "";
   String toIp = "";
@@ -1153,7 +1151,6 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int toHttpCode = http.GET();
   http.end();
-  esp_task_wdt_reset();
 
   if (toHttpCode != 200) {
     Serial.println("[TRANSFER] Failed: Target slave is unreachable");
@@ -1165,7 +1162,6 @@ void handleTransferTime() {
   http.begin("http://" + fromIp + "/api/state");
   http.setTimeout(HTTP_TIMEOUT_MS);
   int httpCode = http.GET();
-  esp_task_wdt_reset();
 
   if (httpCode != 200) {
     http.end();
@@ -1176,7 +1172,12 @@ void handleTransferTime() {
   String statePayload = http.getString();
   http.end();
 
-  int rem = extractJsonInt(statePayload, "rem");
+  JsonDocument stateDoc;
+  if (deserializeJson(stateDoc, statePayload)) {
+    server.send(502, "application/json", "{\"ok\":0,\"error\":\"Failed to parse state\"}");
+    return;
+  }
+  int rem = stateDoc["rem"] | 0;
   if (rem <= 0) {
     Serial.println("[TRANSFER] Failed: Source has 0 remaining time");
     server.send(400, "application/json", "{\"ok\":0,\"error\":\"No time to transfer\"}");
@@ -1189,7 +1190,6 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int stopCode = http.POST("{\"cmd\":\"STOP\",\"val\":0}");
   http.end();
-  esp_task_wdt_reset();
 
   if (stopCode != 200) {
     Serial.println("[TRANSFER] Failed: Could not stop source slave");
@@ -1203,7 +1203,6 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int addCode = http.POST("{\"cmd\":\"ADD_TIME\",\"val\":" + String(rem) + "}");
   http.end();
-  esp_task_wdt_reset();
 
   if (addCode != 200) {
     Serial.println("[TRANSFER] CRITICAL: Target failed to receive time! Attempting to revert to source...");
@@ -1248,9 +1247,9 @@ void onApEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 
 void pollSlavesTask(void* pvParameters) {
   esp_task_wdt_add(NULL);
-
   for (;;) {
     esp_task_wdt_reset();
+
     digitalWrite(LED_PIN, HIGH);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     digitalWrite(LED_PIN, LOW);
@@ -1269,35 +1268,37 @@ void pollSlavesTask(void* pvParameters) {
     }
 
     for (int i = 0; i < targetCount; i++) {
-      esp_task_wdt_reset();
+
       HTTPClient http;
       http.begin("http://" + targetIps[i] + "/api/state");
       http.setTimeout(HTTP_TIMEOUT_MS);
       int code = http.GET();
       if (code == 200) {
         String payload = http.getString();
-        if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
-          for (int j = 0; j < slaveCount; j++) {
-            if (slaves[j].ip == targetIps[i]) {
-              slaves[j].state = extractJsonString(payload, "state");
-              int rem = extractJsonInt(payload, "rem");
-              if (rem >= 0) slaves[j].rem = rem;
-              slaves[j].disp = extractJsonString(payload, "disp");
-              int paid = extractJsonInt(payload, "paid");
-              if (paid >= 0) slaves[j].paid = paid;
-              slaves[j].bat = extractJsonString(payload, "bat");
-              slaves[j].lastSeen = millis();
-              break;
+        JsonDocument stateDoc;
+        if (!deserializeJson(stateDoc, payload)) {
+          if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+            for (int j = 0; j < slaveCount; j++) {
+              if (slaves[j].ip == targetIps[i]) {
+                slaves[j].state = stateDoc["state"] | "UNKNOWN";
+                int rem = stateDoc["rem"] | -1;
+                if (rem >= 0) slaves[j].rem = rem;
+                slaves[j].disp = stateDoc["disp"] | "";
+                int paid = stateDoc["paid"] | -1;
+                if (paid >= 0) slaves[j].paid = paid;
+                slaves[j].bat = stateDoc["bat"] | "";
+                slaves[j].lastSeen = millis();
+                break;
+              }
             }
+            xSemaphoreGive(slavesMutex);
           }
-          xSemaphoreGive(slavesMutex);
         }
       }
       http.end();
       vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 
-    esp_task_wdt_reset();
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
@@ -1306,10 +1307,20 @@ void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  initTaskWatchdog();
-  esp_task_wdt_add(NULL);
 
   slavesMutex = xSemaphoreCreateMutex();
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+  esp_task_wdt_config_t wdtCfg = {
+    .timeout_ms = 10000,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  esp_task_wdt_init(&wdtCfg);
+#else
+  esp_task_wdt_init(10, true);
+#endif
+  esp_task_wdt_add(NULL);
 
   Serial.println("Starting Master Access Point (DHCP enabled)");
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
@@ -1345,10 +1356,20 @@ void setup() {
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");
 
-  xTaskCreatePinnedToCore(pollSlavesTask, "PollTask", 8192, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(pollSlavesTask, "PollTask", 16384, NULL, 1, NULL, 0);
 }
 
 void loop() {
+  static uint32_t lastHb = 0;
   esp_task_wdt_reset();
   server.handleClient();
+  uint32_t now = millis();
+  if (now - lastHb >= 1000) {
+    lastHb = now;
+    if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+      Serial.printf("[MASTER-HB] up=%lus slaves=%d\n", now / 1000, slaveCount);
+      xSemaphoreGive(slavesMutex);
+    }
+  }
 }
+

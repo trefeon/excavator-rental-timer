@@ -33,6 +33,7 @@
 #include <HTTPClient.h>
 #include <TM1637Display.h>
 #include <Preferences.h>
+#include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_idf_version.h>
 
@@ -42,6 +43,7 @@ static const uint8_t BUZZER_PIN = 27;
 static const uint8_t CLK_PIN = 22;
 static const uint8_t DIO_PIN = 23;
 static const uint8_t BUTTON_PIN = 32;
+static const uint8_t NET_LED_PIN = 2;   // built-in LED (network activity)
 static const bool RELAY_ACTIVE_HIGH = true;
 
 // ===== TIMING CONSTANTS =====
@@ -52,19 +54,6 @@ static const uint32_t FLASH_SAVE_INTERVAL_S = 30;
 static const uint32_t BUTTON_DEBOUNCE_MS = 300;
 static const uint32_t HTTP_TIMEOUT_MS = 2000;
 
-void initTaskWatchdog() {
-#if ESP_IDF_VERSION_MAJOR >= 5
-  esp_task_wdt_config_t wdtConfig = {
-    .timeout_ms = 10000,
-    .idle_core_mask = 0,
-    .trigger_panic = true,
-  };
-  esp_task_wdt_init(&wdtConfig);
-#else
-  esp_task_wdt_init(10, true);
-#endif
-}
-
 // ===== GLOBALS =====
 TM1637Display display(CLK_PIN, DIO_PIN);
 bool colonState = false;
@@ -73,6 +62,8 @@ Preferences preferences;
 
 SemaphoreHandle_t stateMutex;
 volatile int failedHeartbeats = 0;
+
+uint32_t netLedEndMs = 0;
 
 uint8_t TOY_NUMERIC_ID = 0;
 String TOY_ID = "EXC-00";
@@ -83,7 +74,6 @@ enum RentalState : uint8_t {
   STATE_LOCKED = 0,
   STATE_RUNNING = 1,
   STATE_PAUSED = 2,
-  STATE_LOW_BATT = 3,
   STATE_ENDED = 4,
   STATE_FAULT = 5,
 };
@@ -132,12 +122,22 @@ void applyRelay() {
   }
 }
 
+void netLedFlash(int ms = 50) {
+  netLedEndMs = millis() + ms;
+  digitalWrite(NET_LED_PIN, LOW);  // ON (active LOW)
+}
+
+void updateNetLed() {
+  if (netLedEndMs > 0 && millis() < netLedEndMs) return;
+  netLedEndMs = 0;
+  digitalWrite(NET_LED_PIN, HIGH);  // OFF
+}
+
 const char* stateName(RentalState value) {
   switch (value) {
     case STATE_LOCKED: return "LOCKED";
     case STATE_RUNNING: return "RUNNING";
     case STATE_PAUSED: return "PAUSED";
-    case STATE_LOW_BATT: return "LOW_BATT";
     case STATE_ENDED: return "ENDED";
     case STATE_FAULT: return "FAULT";
   }
@@ -158,17 +158,29 @@ void changeState(RentalState nextState) {
     seq++;
   }
   lastTickMs = millis();
-  applyRelay();
   colonState = true;
+  applyRelay();
   updateDisplay();
 }
 
 String buildJsonState() {
-  char buf[256];
-  snprintf(buf, sizeof(buf),
-           "{\"toy\":\"%s\",\"state\":\"%s\",\"rem\":%lu,\"disp\":\"%02lu:%02lu\",\"paid\":%lu,\"bat\":\"OK\",\"fault\":0,\"seq\":%u}",
-           TOY_ID.c_str(), stateName(state), remainingSeconds, remainingSeconds / 60, remainingSeconds % 60, totalPaidSeconds, seq);
-  return String(buf);
+  JsonDocument doc;
+  doc["toy"] = TOY_ID;
+  doc["state"] = stateName(state);
+  doc["rem"] = remainingSeconds;
+  
+  char timeStr[6];
+  snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu", remainingSeconds / 60, remainingSeconds % 60);
+  doc["disp"] = timeStr;
+  
+  doc["paid"] = totalPaidSeconds;
+  doc["bat"] = "OK";
+  doc["fault"] = 0;
+  doc["seq"] = seq;
+
+  String output;
+  serializeJson(doc, output);
+  return output;
 }
 
 void addCorsHeaders() {
@@ -200,23 +212,15 @@ void handleCommand() {
   }
 
   String body = server.arg("plain");
-  String cmd = "";
-  int val = 0;
-
-  int cmdIdx = body.indexOf("\"cmd\":");
-  if (cmdIdx >= 0) {
-    int start = body.indexOf("\"", cmdIdx + 6) + 1;
-    int end = body.indexOf("\"", start);
-    if (start > 0 && end > start) cmd = body.substring(start, end);
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, body);
+  if (error) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_JSON\"}");
+    return;
   }
 
-  int valIdx = body.indexOf("\"val\":");
-  if (valIdx >= 0) {
-    int start = valIdx + 6;
-    int end = body.indexOf("}", start);
-    if (end < 0) end = body.indexOf(",", start);
-    if (start > 0 && end > start) val = body.substring(start, end).toInt();
-  }
+  String cmd = doc["cmd"] | "";
+  int val = doc["val"] | 0;
 
   bool ok = false;
   const char* code = "OK";
@@ -225,19 +229,25 @@ void handleCommand() {
   cmd.toUpperCase();
   Serial.printf("[API] Received Command: '%s' with Val: %d\n", cmd.c_str(), val);
   beep(50, 1);
+  netLedFlash(50);
 
   if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
     if (cmd == "ADD_TIME") {
-      remainingSeconds += val;
-      totalPaidSeconds += val;
-      Serial.printf("[ACTION] Added %d seconds. Total remaining: %lu\n", val, remainingSeconds);
-      if (state == STATE_LOCKED || state == STATE_ENDED) {
-        changeState(STATE_RUNNING);
+      if (val <= 0) {
+        code = "BAD_VAL";
       } else {
-        changeState(state);
+        remainingSeconds += val;
+        if (remainingSeconds > 28800) remainingSeconds = 28800;
+        totalPaidSeconds += val;
+        Serial.printf("[ACTION] Added %d seconds. Total remaining: %lu\n", val, remainingSeconds);
+        if (state == STATE_LOCKED || state == STATE_ENDED) {
+          changeState(STATE_RUNNING);
+        } else {
+          changeState(state);
+        }
+        saveStateToFlash();
+        ok = true;
       }
-      saveStateToFlash();
-      ok = true;
     } else if (cmd == "PAUSE") {
       if (remainingSeconds > 0 && state == STATE_RUNNING) {
         Serial.println("[ACTION] Paused Timer");
@@ -259,6 +269,7 @@ void handleCommand() {
     } else if (cmd == "STOP") {
       Serial.println("[ACTION] Stopped / Locked Timer");
       remainingSeconds = 0;
+      totalPaidSeconds = 0;
       changeState(STATE_LOCKED);
       saveStateToFlash();
       ok = true;
@@ -266,7 +277,8 @@ void handleCommand() {
       Serial.println("[ACTION] Rebooting device by API command");
       xSemaphoreGive(stateMutex);
       server.send(200, "application/json", "{\"ok\":1,\"code\":\"REBOOTING\"}");
-      delay(500);
+      for (int i = 0; i < 5; i++) { netLedFlash(100); delay(100); }
+      delay(200);
       ESP.restart();
       return;
     } else if (cmd == "IDENTIFY") {
@@ -333,26 +345,25 @@ bool tryRegister() {
   if (httpCode == 200) {
     String payload = http.getString();
     Serial.println("[API] Registration Response: " + payload);
-    int idx = payload.indexOf("\"id\":");
-    if (idx >= 0) {
-      int start = idx + 5;
-      int end = payload.indexOf("}", start);
-      if (end < 0) end = payload.indexOf(",", start);
-      if (start > 0 && end > start) {
-        uint8_t parsedId = payload.substring(start, end).toInt();
-        if (parsedId > 0) {
-          if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
-            TOY_NUMERIC_ID = parsedId;
-            char buf[16];
-            snprintf(buf, sizeof(buf), "EXC-%02u", TOY_NUMERIC_ID);
-            TOY_ID = String(buf);
-            success = true;
-            xSemaphoreGive(stateMutex);
-          }
-        } else {
-          Serial.println("[API] Registration rejected: Master assigned ID 0 (no free IDs)");
+    netLedFlash(100);
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (!err) {
+      int parsedId = doc["id"] | 0;
+      if (parsedId > 0) {
+        if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+          TOY_NUMERIC_ID = parsedId;
+          char buf[16];
+          snprintf(buf, sizeof(buf), "EXC-%02u", TOY_NUMERIC_ID);
+          TOY_ID = String(buf);
+          success = true;
+          xSemaphoreGive(stateMutex);
         }
+      } else {
+        Serial.println("[API] Registration rejected: Master assigned ID 0 (no free IDs)");
       }
+    } else {
+      Serial.println("[API] Failed to parse registration response");
     }
   } else {
     Serial.printf("[API] Registration failed (HTTP %d)\n", httpCode);
@@ -371,25 +382,21 @@ int tryHeartbeat() {
 
   if (httpCode == 200) {
     result = 0;
+    netLedFlash(50);
     String payload = http.getString();
-    int idx = payload.indexOf("\"id\":");
-    if (idx >= 0) {
-      int start = idx + 5;
-      int end = payload.indexOf("}", start);
-      if (end < 0) end = payload.indexOf(",", start);
-      if (start > 0 && end > start) {
-        uint8_t newId = payload.substring(start, end).toInt();
-        if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
-          if (newId != TOY_NUMERIC_ID && newId > 0) {
-            TOY_NUMERIC_ID = newId;
-            char buf[16];
-            snprintf(buf, sizeof(buf), "EXC-%02u", TOY_NUMERIC_ID);
-            TOY_ID = String(buf);
-            Serial.println("[SYNC] ID updated by Master to: " + TOY_ID);
-            result = 1;
-          }
-          xSemaphoreGive(stateMutex);
+    JsonDocument doc;
+    if (!deserializeJson(doc, payload)) {
+      int newId = doc["id"] | 0;
+      if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        if (newId > 0 && (uint8_t)newId != TOY_NUMERIC_ID) {
+          TOY_NUMERIC_ID = newId;
+          char buf[16];
+          snprintf(buf, sizeof(buf), "EXC-%02u", TOY_NUMERIC_ID);
+          TOY_ID = String(buf);
+          Serial.println("[SYNC] ID updated by Master to: " + TOY_ID);
+          result = 1;
         }
+        xSemaphoreGive(stateMutex);
       }
     }
   } else {
@@ -470,8 +477,20 @@ void setup() {
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(NET_LED_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  initTaskWatchdog();
+  digitalWrite(NET_LED_PIN, HIGH);  // OFF initially
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+  esp_task_wdt_config_t wdtCfg = {
+    .timeout_ms = 10000,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  esp_task_wdt_init(&wdtCfg);
+#else
+  esp_task_wdt_init(10, true);
+#endif
   esp_task_wdt_add(NULL);
 
   stateMutex = xSemaphoreCreateMutex();
@@ -492,8 +511,7 @@ void setup() {
     }
     beep(500, 1);
 
-    state = STATE_RUNNING;
-    lastTickMs = millis();
+    changeState(STATE_RUNNING);
     Serial.printf("Powerloss Recovery: Restored %lu seconds. State RUNNING.\n", remainingSeconds);
   } else {
     state = STATE_LOCKED;
@@ -544,8 +562,8 @@ void setup() {
 }
 
 void loop() {
-  uint32_t now = millis();
   esp_task_wdt_reset();
+  uint32_t now = millis();
 
   if (WiFi.status() != WL_CONNECTED) {
     if (!wifiDisconnected) {
@@ -575,6 +593,7 @@ void loop() {
     server.handleClient();
   }
 
+  now = millis();
   if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
     if (digitalRead(BUTTON_PIN) == LOW) {
       if (now - lastButtonPressMs > BUTTON_DEBOUNCE_MS) {
@@ -588,8 +607,9 @@ void loop() {
       }
     }
 
-    if (state == STATE_RUNNING && remainingSeconds > 0 && now - lastTickMs >= 1000) {
+    while (state == STATE_RUNNING && remainingSeconds > 0 && now - lastTickMs >= 1000) {
       lastTickMs += 1000;
+      now = millis();
       colonState = !colonState;
       remainingSeconds--;
 
@@ -610,6 +630,7 @@ void loop() {
         changeState(STATE_ENDED);
         saveStateToFlash();
         pendingBeepMs = 1000;
+        break;
       }
     }
 
@@ -623,5 +644,15 @@ void loop() {
     int ms = pendingBeepMs;
     pendingBeepMs = 0;
     beep(ms, 1);
+  }
+
+  static uint32_t lastHb = 0;
+  if (millis() - lastHb >= 1000) {
+    lastHb = millis();
+    if (xSemaphoreTake(stateMutex, 0) == pdTRUE) {
+      Serial.printf("[SLAVE-HB] up=%lus id=%s state=%s rem=%lu\n",
+                    millis() / 1000, TOY_ID.c_str(), stateName(state), remainingSeconds);
+      xSemaphoreGive(stateMutex);
+    }
   }
 }
