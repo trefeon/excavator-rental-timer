@@ -800,67 +800,73 @@ void handleOptions() {
   server.send(204);
 }
 
-String getMacKey(String m) {
+String getMacKey(const String& m) {
   String k = m;
   k.replace(":", "");
   return k;
 }
 
-int extractJsonInt(String body, String key) {
+int extractJsonInt(const String& body, const String& key) {
   String searchKey = "\"" + key + "\"";
   int idx = body.indexOf(searchKey);
   if (idx < 0) return -1;
-  
+
   int colonIdx = body.indexOf(":", idx + searchKey.length());
   if (colonIdx < 0) return -1;
-  
+
   int start = colonIdx + 1;
   while (start < body.length() && (body[start] == ' ' || body[start] == '\t' || body[start] == '\n' || body[start] == '\r')) start++;
-  
+
   if (start >= body.length()) return -1;
-  
+
   int end = start;
   while (end < body.length() && body[end] != ',' && body[end] != '}' && body[end] != ']' && body[end] != ' ' && body[end] != '\t' && body[end] != '\n' && body[end] != '\r') end++;
-  
+
   if (end > start) {
     return body.substring(start, end).toInt();
   }
   return -1;
 }
 
-String extractJsonString(String body, String key) {
+String extractJsonString(const String& body, const String& key) {
   String searchKey = "\"" + key + "\"";
   int idx = body.indexOf(searchKey);
   if (idx < 0) return "";
-  
+
   int colonIdx = body.indexOf(":", idx + searchKey.length());
   if (colonIdx < 0) return "";
-  
+
   int quoteIdx = body.indexOf("\"", colonIdx + 1);
   if (quoteIdx < 0) return "";
-  
+
   int endQuote = body.indexOf("\"", quoteIdx + 1);
   if (endQuote < 0) return "";
-  
+
   return body.substring(quoteIdx + 1, endQuote);
 }
 
 void handleRegister() {
   addCorsHeaders();
   String mac = server.arg("mac");
-  if (mac == "") { server.send(400, "application/json", "{\"error\":\"MAC required\"}"); return; }
+  if (mac == "") {
+    server.send(400, "application/json", "{\"error\":\"MAC required\"}");
+    return;
+  }
   String ip = server.client().remoteIP().toString();
-  
+
   int assignedId = 0;
-  
+
   if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) {
     server.send(503, "application/json", "{\"error\":\"Server busy\"}");
     return;
   }
-  
+
   int foundIdx = -1;
   for (int i = 0; i < slaveCount; i++) {
-    if (slaves[i].mac == mac) { foundIdx = i; break; }
+    if (slaves[i].mac == mac) {
+      foundIdx = i;
+      break;
+    }
   }
 
   if (foundIdx >= 0) {
@@ -872,19 +878,19 @@ void handleRegister() {
     preferences.begin("registry", false);
     assignedId = preferences.getInt(getMacKey(mac).c_str(), 0);
     preferences.end();
-    
+
     if (assignedId == 0) {
       preferences.begin("id_map", false);
       for (int i = 1; i <= 50; i++) {
         String existingMac = preferences.getString(String(i).c_str(), "");
         if (existingMac == "") {
-           assignedId = i;
-           preferences.putString(String(i).c_str(), mac);
-           break;
+          assignedId = i;
+          preferences.putString(String(i).c_str(), mac);
+          break;
         }
       }
       preferences.end();
-      
+
       if (assignedId > 0) {
         preferences.begin("registry", false);
         preferences.putInt(getMacKey(mac).c_str(), assignedId);
@@ -896,11 +902,14 @@ void handleRegister() {
     } else {
       Serial.printf("[REGISTRY] Known Slave returning from Flash. MAC: %s loaded ID: EXC-%02d\n", mac.c_str(), assignedId);
     }
-    
+
     if (assignedId > 0 && slaveCount < 50) {
       bool duplicate = false;
       for (int i = 0; i < slaveCount; i++) {
-        if (slaves[i].mac == mac) { duplicate = true; break; }
+        if (slaves[i].mac == mac) {
+          duplicate = true;
+          break;
+        }
       }
       if (!duplicate) {
         slaves[slaveCount].mac = mac;
@@ -923,9 +932,11 @@ void handleRegister() {
 
 void handleSlaves() {
   addCorsHeaders();
-  String json = "[";
+  String json;
+  json.reserve(slaveCount * 130 + 10);
+  json = "[";
   uint32_t now = millis();
-  
+
   if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
     for (int i = 0; i < slaveCount; i++) {
       bool online = (now - slaves[i].lastSeen) < ONLINE_THRESHOLD_MS;
@@ -950,22 +961,25 @@ void handleSlaves() {
 
 void handleEditSlave() {
   addCorsHeaders();
-  if (!server.hasArg("plain")) { server.send(400); return; }
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
   String body = server.arg("plain");
-  
+
   String mac = extractJsonString(body, "mac");
   int newId = extractJsonInt(body, "id");
-  
+
   if (mac != "" && newId > 0) {
     Serial.printf("[MANAGE] Changing ID for MAC %s to EXC-%02d\n", mac.c_str(), newId);
-    
+
     preferences.begin("id_map", false);
     String owner = preferences.getString(String(newId).c_str(), "");
     if (owner != "" && owner != mac) {
-       preferences.end();
-       Serial.println("[MANAGE] Edit ID failed: ID already taken");
-       server.send(400, "application/json", "{\"ok\":0,\"error\":\"ID Taken\"}");
-       return;
+      preferences.end();
+      Serial.println("[MANAGE] Edit ID failed: ID already taken");
+      server.send(400, "application/json", "{\"ok\":0,\"error\":\"ID Taken\"}");
+      return;
     }
     preferences.end();
 
@@ -974,14 +988,14 @@ void handleEditSlave() {
     oldId = preferences.getInt(getMacKey(mac).c_str(), 0);
     preferences.putInt(getMacKey(mac).c_str(), newId);
     preferences.end();
-    
+
     preferences.begin("id_map", false);
     if (oldId > 0 && oldId != newId) {
       preferences.remove(String(oldId).c_str());
     }
     preferences.putString(String(newId).c_str(), mac);
     preferences.end();
-    
+
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       for (int i = 0; i < slaveCount; i++) {
         if (slaves[i].mac == mac) {
@@ -1000,23 +1014,26 @@ void handleEditSlave() {
 
 void handleDeleteSlave() {
   addCorsHeaders();
-  if (!server.hasArg("plain")) { server.send(400); return; }
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
   String body = server.arg("plain");
   String mac = extractJsonString(body, "mac");
-  
+
   if (mac != "") {
     Serial.printf("[MANAGE] Deleting Slave MAC %s from registry\n", mac.c_str());
     preferences.begin("registry", false);
     int deletedId = preferences.getInt(getMacKey(mac).c_str(), 0);
     preferences.remove(getMacKey(mac).c_str());
     preferences.end();
-    
+
     if (deletedId > 0) {
       preferences.begin("id_map", false);
       preferences.remove(String(deletedId).c_str());
       preferences.end();
     }
-    
+
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       for (int i = 0; i < slaveCount; i++) {
         if (slaves[i].mac == mac) {
@@ -1038,12 +1055,16 @@ void handleDeleteSlave() {
 
 void handleCommandProxy() {
   addCorsHeaders();
-  if (!server.hasArg("plain")) { server.send(400); return; }
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
   String body = server.arg("plain");
-  
+
   int targetId = extractJsonInt(body, "id");
   String cmd = extractJsonString(body, "cmd");
   int val = extractJsonInt(body, "val");
+  if (val < 0) val = 0;
 
   if (targetId <= 0 || cmd == "") {
     Serial.println("[PROXY] Command failed: Missing id or cmd");
@@ -1078,7 +1099,7 @@ void handleCommandProxy() {
   String payload = "{\"cmd\":\"" + cmd + "\",\"val\":" + String(val) + "}";
   int httpCode = http.POST(payload);
   esp_task_wdt_reset();
-  
+
   if (httpCode > 0) {
     String response = http.getString();
     Serial.printf("[PROXY] Slave replied (%d): %s\n", httpCode, response.c_str());
@@ -1092,9 +1113,12 @@ void handleCommandProxy() {
 
 void handleTransferTime() {
   addCorsHeaders();
-  if (!server.hasArg("plain")) { server.send(400); return; }
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
   String body = server.arg("plain");
-  
+
   int fromId = extractJsonInt(body, "from_id");
   int toId = extractJsonInt(body, "to_id");
 
@@ -1123,14 +1147,14 @@ void handleTransferTime() {
   }
 
   HTTPClient http;
-  
+
   Serial.printf("[TRANSFER] 1. Verifying target EXC-%02d (%s)...\n", toId, toIp.c_str());
   http.begin("http://" + toIp + "/api/state");
   http.setTimeout(HTTP_TIMEOUT_MS);
   int toHttpCode = http.GET();
   http.end();
   esp_task_wdt_reset();
-  
+
   if (toHttpCode != 200) {
     Serial.println("[TRANSFER] Failed: Target slave is unreachable");
     server.send(502, "application/json", "{\"ok\":0,\"error\":\"Target is unreachable\"}");
@@ -1142,7 +1166,7 @@ void handleTransferTime() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int httpCode = http.GET();
   esp_task_wdt_reset();
-  
+
   if (httpCode != 200) {
     http.end();
     Serial.println("[TRANSFER] Failed: Could not get state from source");
@@ -1151,7 +1175,7 @@ void handleTransferTime() {
   }
   String statePayload = http.getString();
   http.end();
-  
+
   int rem = extractJsonInt(statePayload, "rem");
   if (rem <= 0) {
     Serial.println("[TRANSFER] Failed: Source has 0 remaining time");
@@ -1166,7 +1190,7 @@ void handleTransferTime() {
   int stopCode = http.POST("{\"cmd\":\"STOP\",\"val\":0}");
   http.end();
   esp_task_wdt_reset();
-  
+
   if (stopCode != 200) {
     Serial.println("[TRANSFER] Failed: Could not stop source slave");
     server.send(502, "application/json", "{\"ok\":0,\"error\":\"Failed to stop source\"}");
@@ -1186,9 +1210,14 @@ void handleTransferTime() {
     http.begin("http://" + fromIp + "/api/command");
     http.addHeader("Content-Type", "application/json");
     http.setTimeout(HTTP_TIMEOUT_MS);
-    http.POST("{\"cmd\":\"ADD_TIME\",\"val\":" + String(rem) + "}");
+    int revertCode = http.POST("{\"cmd\":\"ADD_TIME\",\"val\":" + String(rem) + "}");
     http.end();
-    server.send(502, "application/json", "{\"ok\":0,\"error\":\"Target failed to receive time. Reverted.\"}");
+    if (revertCode != 200) {
+      Serial.println("[TRANSFER] FATAL: Revert also failed! Time may be lost!");
+      server.send(502, "application/json", "{\"ok\":0,\"error\":\"Transfer failed and revert failed. Time may be lost.\"}");
+    } else {
+      server.send(502, "application/json", "{\"ok\":0,\"error\":\"Target failed to receive time. Reverted.\"}");
+    }
     return;
   }
 
@@ -1198,24 +1227,26 @@ void handleTransferTime() {
 
 void onApEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   switch (event) {
-    case ARDUINO_EVENT_WIFI_AP_STACONNECTED: {
-      uint8_t* mac = info.wifi_ap_staconnected.mac;
-      Serial.printf("[AP] Station connected: %02X:%02X:%02X:%02X:%02X:%02X\n",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-      break;
-    }
-    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED: {
-      uint8_t* mac = info.wifi_ap_stadisconnected.mac;
-      Serial.printf("[AP] Station disconnected: %02X:%02X:%02X:%02X:%02X:%02X\n",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-      break;
-    }
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      {
+        uint8_t* mac = info.wifi_ap_staconnected.mac;
+        Serial.printf("[AP] Station connected: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        break;
+      }
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      {
+        uint8_t* mac = info.wifi_ap_stadisconnected.mac;
+        Serial.printf("[AP] Station disconnected: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        break;
+      }
     default:
       break;
   }
 }
 
-void pollSlavesTask(void *pvParameters) {
+void pollSlavesTask(void* pvParameters) {
   esp_task_wdt_add(NULL);
 
   for (;;) {
@@ -1223,7 +1254,7 @@ void pollSlavesTask(void *pvParameters) {
     digitalWrite(LED_PIN, HIGH);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     digitalWrite(LED_PIN, LOW);
-    
+
     uint32_t now = millis();
     String targetIps[50];
     int targetCount = 0;
@@ -1277,9 +1308,9 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   initTaskWatchdog();
   esp_task_wdt_add(NULL);
-  
+
   slavesMutex = xSemaphoreCreateMutex();
-  
+
   Serial.println("Starting Master Access Point (DHCP enabled)");
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 
@@ -1289,28 +1320,28 @@ void setup() {
 
   WiFi.onEvent(onApEvent);
 
-  server.on("/", HTTP_GET, []() { 
+  server.on("/", HTTP_GET, []() {
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.sendHeader("Pragma", "no-cache");
     server.sendHeader("Expires", "-1");
-    server.send(200, "text/html", DASHBOARD_HTML); 
+    server.send(200, "text/html", DASHBOARD_HTML);
   });
-  
+
   server.on("/api/register", HTTP_GET, handleRegister);
   server.on("/api/register", HTTP_OPTIONS, handleOptions);
   server.on("/api/slaves", HTTP_GET, handleSlaves);
   server.on("/api/slaves", HTTP_OPTIONS, handleOptions);
-  
+
   server.on("/api/edit_slave", HTTP_POST, handleEditSlave);
   server.on("/api/edit_slave", HTTP_OPTIONS, handleOptions);
   server.on("/api/delete_slave", HTTP_POST, handleDeleteSlave);
   server.on("/api/delete_slave", HTTP_OPTIONS, handleOptions);
-  
+
   server.on("/api/command", HTTP_POST, handleCommandProxy);
   server.on("/api/command", HTTP_OPTIONS, handleOptions);
   server.on("/api/transfer_time", HTTP_POST, handleTransferTime);
   server.on("/api/transfer_time", HTTP_OPTIONS, handleOptions);
-  
+
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");
 

@@ -45,7 +45,6 @@ static const uint8_t BUTTON_PIN = 32;
 static const bool RELAY_ACTIVE_HIGH = true;
 
 // ===== TIMING CONSTANTS =====
-static const uint32_t REGISTRATION_TIMEOUT_MS = 60000;
 static const uint32_t REGISTRATION_RETRY_INTERVAL_MS = 5000;
 static const uint32_t HEARTBEAT_INTERVAL_MS = 15000;
 static const uint32_t WIFI_RETRY_INTERVAL_MS = 5000;
@@ -89,7 +88,7 @@ enum RentalState : uint8_t {
   STATE_FAULT = 5,
 };
 
-String stateName(RentalState value);
+const char* stateName(RentalState value);
 void changeState(RentalState nextState);
 
 RentalState state = STATE_LOCKED;
@@ -97,12 +96,12 @@ uint32_t remainingSeconds = 0;
 uint32_t totalPaidSeconds = 0;
 uint8_t seq = 0;
 uint32_t lastTickMs = 0;
-uint32_t lastRegisterMs = 0;
 uint32_t lastWifiCheck = 0;
 uint32_t lastButtonPressMs = 0;
-uint32_t registrationStartMs = 0;
 bool isRegistered = false;
-bool wifiDisconnected = false;
+volatile bool wifiDisconnected = false;
+uint32_t regRetryDelay = REGISTRATION_RETRY_INTERVAL_MS;
+int pendingBeepMs = 0;
 
 void updateDisplay() {
   if (state == STATE_LOCKED || state == STATE_ENDED) {
@@ -133,7 +132,7 @@ void applyRelay() {
   }
 }
 
-String stateName(RentalState value) {
+const char* stateName(RentalState value) {
   switch (value) {
     case STATE_LOCKED: return "LOCKED";
     case STATE_RUNNING: return "RUNNING";
@@ -165,11 +164,10 @@ void changeState(RentalState nextState) {
 }
 
 String buildJsonState() {
-  char buf[128];
-  snprintf(buf, sizeof(buf), 
-    "{\"toy\":\"%s\",\"state\":\"%s\",\"rem\":%lu,\"disp\":\"%02lu:%02lu\",\"paid\":%lu,\"bat\":\"OK\",\"fault\":0,\"seq\":%u}",
-    TOY_ID.c_str(), stateName(state).c_str(), remainingSeconds, remainingSeconds/60, remainingSeconds%60, totalPaidSeconds, seq
-  );
+  char buf[256];
+  snprintf(buf, sizeof(buf),
+           "{\"toy\":\"%s\",\"state\":\"%s\",\"rem\":%lu,\"disp\":\"%02lu:%02lu\",\"paid\":%lu,\"bat\":\"OK\",\"fault\":0,\"seq\":%u}",
+           TOY_ID.c_str(), stateName(state), remainingSeconds, remainingSeconds / 60, remainingSeconds % 60, totalPaidSeconds, seq);
   return String(buf);
 }
 
@@ -200,18 +198,18 @@ void handleCommand() {
     server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_FORMAT\"}");
     return;
   }
-  
+
   String body = server.arg("plain");
   String cmd = "";
   int val = 0;
-  
+
   int cmdIdx = body.indexOf("\"cmd\":");
   if (cmdIdx >= 0) {
     int start = body.indexOf("\"", cmdIdx + 6) + 1;
     int end = body.indexOf("\"", start);
     if (start > 0 && end > start) cmd = body.substring(start, end);
   }
-  
+
   int valIdx = body.indexOf("\"val\":");
   if (valIdx >= 0) {
     int start = valIdx + 6;
@@ -221,9 +219,9 @@ void handleCommand() {
   }
 
   bool ok = false;
-  String code = "OK";
+  const char* code = "OK";
   String respString = "";
-  
+
   cmd.toUpperCase();
   Serial.printf("[API] Received Command: '%s' with Val: %d\n", cmd.c_str(), val);
   beep(50, 1);
@@ -246,14 +244,17 @@ void handleCommand() {
         changeState(STATE_PAUSED);
         saveStateToFlash();
         ok = true;
-      } else { code = "BAD_STATE"; }
+      } else {
+        code = "BAD_STATE";
+      }
     } else if (cmd == "RESUME") {
-      if (remainingSeconds == 0) { code = "BAD_STATE"; }
-      else { 
+      if (remainingSeconds == 0) {
+        code = "BAD_STATE";
+      } else {
         Serial.println("[ACTION] Resumed Timer via API");
-        changeState(STATE_RUNNING); 
+        changeState(STATE_RUNNING);
         saveStateToFlash();
-        ok = true; 
+        ok = true;
       }
     } else if (cmd == "STOP") {
       Serial.println("[ACTION] Stopped / Locked Timer");
@@ -274,25 +275,29 @@ void handleCommand() {
     } else {
       code = "UNKNOWN_COMMAND";
     }
-    
+
     char resp[128];
-    snprintf(resp, sizeof(resp), "{\"ok\":%d,\"code\":\"%s\",\"rem\":%lu,\"state\":\"%s\"}", 
-             ok ? 1 : 0, code.c_str(), remainingSeconds, stateName(state).c_str());
+    snprintf(resp, sizeof(resp), "{\"ok\":%d,\"code\":\"%s\",\"rem\":%lu,\"state\":\"%s\"}",
+             ok ? 1 : 0, code, remainingSeconds, stateName(state));
     respString = String(resp);
     xSemaphoreGive(stateMutex);
   }
-  
+
   server.send(200, "application/json", respString);
 
   if (cmd == "IDENTIFY") {
     for (int i = 0; i < 3; i++) {
       beep(100, 1);
-      display.clear();
-      delay(100);
+      if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        display.clear();
+        xSemaphoreGive(stateMutex);
+      }
+      delay(150);
       if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
         updateDisplay();
         xSemaphoreGive(stateMutex);
       }
+      delay(150);
     }
   }
 }
@@ -302,13 +307,11 @@ void onWiFiEvent(WiFiEvent_t event) {
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       Serial.println("[WIFI] Disconnected from AP");
       wifiDisconnected = true;
-      isRegistered = false;
       break;
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
       Serial.print("[WIFI] Got IP: ");
       Serial.println(WiFi.localIP());
       wifiDisconnected = false;
-      registrationStartMs = 0;
       break;
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
       Serial.println("[WIFI] Connected to AP");
@@ -326,7 +329,7 @@ bool tryRegister() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int httpCode = http.GET();
   bool success = false;
-  
+
   if (httpCode == 200) {
     String payload = http.getString();
     Serial.println("[API] Registration Response: " + payload);
@@ -336,13 +339,18 @@ bool tryRegister() {
       int end = payload.indexOf("}", start);
       if (end < 0) end = payload.indexOf(",", start);
       if (start > 0 && end > start) {
-        if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
-          TOY_NUMERIC_ID = payload.substring(start, end).toInt();
-          char buf[16];
-          snprintf(buf, sizeof(buf), "EXC-%02u", TOY_NUMERIC_ID);
-          TOY_ID = String(buf);
-          success = true;
-          xSemaphoreGive(stateMutex);
+        uint8_t parsedId = payload.substring(start, end).toInt();
+        if (parsedId > 0) {
+          if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+            TOY_NUMERIC_ID = parsedId;
+            char buf[16];
+            snprintf(buf, sizeof(buf), "EXC-%02u", TOY_NUMERIC_ID);
+            TOY_ID = String(buf);
+            success = true;
+            xSemaphoreGive(stateMutex);
+          }
+        } else {
+          Serial.println("[API] Registration rejected: Master assigned ID 0 (no free IDs)");
         }
       }
     }
@@ -360,7 +368,7 @@ int tryHeartbeat() {
   http.setTimeout(HTTP_TIMEOUT_MS);
   int httpCode = http.GET();
   int result = -1;
-  
+
   if (httpCode == 200) {
     result = 0;
     String payload = http.getString();
@@ -391,7 +399,15 @@ int tryHeartbeat() {
   return result;
 }
 
-void networkTask(void *pvParameters) {
+void delayWDT(uint32_t ms) {
+  uint32_t start = millis();
+  while (millis() - start < ms) {
+    esp_task_wdt_reset();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+void networkTask(void* pvParameters) {
   esp_task_wdt_add(NULL);
   for (;;) {
     esp_task_wdt_reset();
@@ -403,23 +419,25 @@ void networkTask(void *pvParameters) {
       }
 
       if (!regStat) {
-        vTaskDelay(random(1000, 3000) / portTICK_PERIOD_MS);
+        delayWDT(random(1000, 3000));
         if (tryRegister()) {
           if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
             isRegistered = true;
             failedHeartbeats = 0;
+            regRetryDelay = REGISTRATION_RETRY_INTERVAL_MS;
             xSemaphoreGive(stateMutex);
           }
           Serial.println("[SYSTEM] Successfully Registered as: " + TOY_ID);
           beep(150, 3);
         } else {
-          vTaskDelay(REGISTRATION_RETRY_INTERVAL_MS / portTICK_PERIOD_MS);
+          delayWDT(regRetryDelay);
+          if (regRetryDelay < 60000) regRetryDelay = min(regRetryDelay * 2, (uint32_t)60000);
         }
       } else {
-        vTaskDelay(HEARTBEAT_INTERVAL_MS / portTICK_PERIOD_MS);
+        delayWDT(HEARTBEAT_INTERVAL_MS);
         int hb = tryHeartbeat();
         if (hb == -1) {
-          failedHeartbeats++;
+          failedHeartbeats = failedHeartbeats + 1;
           if (failedHeartbeats >= 3) {
             Serial.println("[WIFI] Master unresponsive. Dropping registration.");
             if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
@@ -435,45 +453,45 @@ void networkTask(void *pvParameters) {
         }
       }
     } else {
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      delayWDT(1000);
     }
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  
+
   Serial.println("\n\n========================================");
   Serial.println("[SYSTEM] Starting Excavator Slave...");
   Serial.println("========================================");
-  
+
   display.setBrightness(0x0f);
-  
+
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   digitalWrite(BUZZER_PIN, LOW);
   initTaskWatchdog();
   esp_task_wdt_add(NULL);
-  
+
   stateMutex = xSemaphoreCreateMutex();
 
   preferences.begin("state", true);
   uint32_t savedRem = preferences.getUInt("rem", 0);
   uint32_t savedPaid = preferences.getUInt("paid", 0);
   preferences.end();
-  
+
   if (savedRem > 0) {
     remainingSeconds = savedRem;
     totalPaidSeconds = savedPaid;
-    
+
     Serial.println("Powerloss Recovery: Auto-resuming in 3 seconds...");
     for (int i = 0; i < 3; i++) {
-       beep(100, 1);
-       delay(900);
+      beep(100, 1);
+      delay(900);
     }
     beep(500, 1);
-    
+
     state = STATE_RUNNING;
     lastTickMs = millis();
     Serial.printf("Powerloss Recovery: Restored %lu seconds. State RUNNING.\n", remainingSeconds);
@@ -490,7 +508,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  
+
   Serial.print("[WIFI] Connecting to Wi-Fi");
   uint32_t connectStart = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -512,8 +530,6 @@ void setup() {
   uint8_t dataReg[] = { 0x50, 0x79, 0x6f, 0x00 };
   display.setSegments(dataReg);
 
-  registrationStartMs = 0;
-
   xTaskCreatePinnedToCore(networkTask, "NetworkTask", 8192, NULL, 1, NULL, 0);
 
   updateDisplay();
@@ -522,7 +538,7 @@ void setup() {
   server.on("/api/command", HTTP_POST, handleCommand);
   server.on("/api/command", HTTP_OPTIONS, handleOptions);
   server.begin();
-  
+
   Serial.println("[SYSTEM] Ready! Listening for commands...");
   beep(150, 3);
 }
@@ -554,7 +570,6 @@ void loop() {
         failedHeartbeats = 0;
         xSemaphoreGive(stateMutex);
       }
-      registrationStartMs = now;
       Serial.println("[WIFI] Reconnected! IP: " + WiFi.localIP().toString());
     }
     server.handleClient();
@@ -573,29 +588,28 @@ void loop() {
       }
     }
 
-    while (state == STATE_RUNNING && remainingSeconds > 0 && now - lastTickMs >= 1000) {
+    if (state == STATE_RUNNING && remainingSeconds > 0 && now - lastTickMs >= 1000) {
       lastTickMs += 1000;
       colonState = !colonState;
       remainingSeconds--;
-      
+
       if (remainingSeconds == 60) {
-        beep(200, 2);
+        pendingBeepMs = 200;
       } else if (remainingSeconds <= 10 && remainingSeconds > 0) {
-        beep(50, 1);
+        pendingBeepMs = 50;
       }
-      
+
       if (remainingSeconds % FLASH_SAVE_INTERVAL_S == 0 && remainingSeconds > 0) {
         saveStateToFlash();
       }
-      
+
       updateDisplay();
-      
+
       if (remainingSeconds == 0) {
         Serial.println("[TIMER] Time is up! Locking Excavator.");
         changeState(STATE_ENDED);
         saveStateToFlash();
-        beep(1000, 1);
-        break;
+        pendingBeepMs = 1000;
       }
     }
 
@@ -603,5 +617,11 @@ void loop() {
       lastTickMs = now;
     }
     xSemaphoreGive(stateMutex);
+  }
+
+  if (pendingBeepMs > 0) {
+    int ms = pendingBeepMs;
+    pendingBeepMs = 0;
+    beep(ms, 1);
   }
 }

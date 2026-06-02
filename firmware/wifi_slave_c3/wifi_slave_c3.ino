@@ -288,11 +288,12 @@ void handleCommand() {
     for (int i = 0; i < 3; i++) {
       beep(100, 1);
       display.clear();
-      delay(100);
+      delay(150);
       if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
         updateDisplay();
         xSemaphoreGive(stateMutex);
       }
+      delay(150);
     }
   }
 }
@@ -391,6 +392,14 @@ int tryHeartbeat() {
   return result;
 }
 
+void delayWDT(uint32_t ms) {
+  uint32_t start = millis();
+  while (millis() - start < ms) {
+    esp_task_wdt_reset();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
 void networkTask(void *pvParameters) {
   esp_task_wdt_add(NULL);
   for (;;) {
@@ -403,7 +412,7 @@ void networkTask(void *pvParameters) {
       }
 
       if (!regStat) {
-        vTaskDelay(random(1000, 3000) / portTICK_PERIOD_MS);
+        delayWDT(random(1000, 3000));
         if (tryRegister()) {
           if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
             isRegistered = true;
@@ -413,13 +422,13 @@ void networkTask(void *pvParameters) {
           Serial.println("[SYSTEM] Successfully Registered as: " + TOY_ID);
           beep(150, 3);
         } else {
-          vTaskDelay(REGISTRATION_RETRY_INTERVAL_MS / portTICK_PERIOD_MS);
+          delayWDT(REGISTRATION_RETRY_INTERVAL_MS);
         }
       } else {
-        vTaskDelay(HEARTBEAT_INTERVAL_MS / portTICK_PERIOD_MS);
+        delayWDT(HEARTBEAT_INTERVAL_MS);
         int hb = tryHeartbeat();
         if (hb == -1) {
-          failedHeartbeats++;
+          failedHeartbeats = failedHeartbeats + 1;
           if (failedHeartbeats >= 3) {
             Serial.println("[WIFI] Master unresponsive. Dropping registration.");
             if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
@@ -435,7 +444,7 @@ void networkTask(void *pvParameters) {
         }
       }
     } else {
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      delayWDT(1000);
     }
   }
 }
