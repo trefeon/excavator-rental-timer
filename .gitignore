@@ -35,6 +35,7 @@ desktop.ini
 PROPOSAL*.md
 PRD.md
 MVP_SPEC.md
+HANDOFF.md
 
 # Old backups and txt logs
 *.txt
@@ -47,3 +48,16 @@ docs/convert.ps1
 
 # Downloaded tools
 arduino-cli*
+
+# Python
+__pycache__/
+.mypy_cache/
+
+# AI Agents
+.gemini/
+.agents/
+.antigravity/
+
+# Environment
+.env
+.env.*

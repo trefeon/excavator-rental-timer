@@ -61,20 +61,8 @@ int slaveCount = 0;
 void recordSessionEnd(int id, uint32_t paidSec);
 
 // ══════════════════════════════════════════════════════════════
-//  USER / AUTH / PACKAGE / REVENUE SYSTEM
+//  PACKAGE / REVENUE SYSTEM
 // ══════════════════════════════════════════════════════════════
-
-enum UserRole : uint8_t {
-  ROLE_SUPERADMIN = 0,
-  ROLE_ADMIN = 1,
-  ROLE_STAFF = 2,
-};
-
-struct UserAccount {
-  char username[32];
-  char password[32];
-  uint8_t role;
-};
 
 struct TimePackage {
   uint8_t durationMin;
@@ -86,13 +74,6 @@ struct RevenueSession {
   uint32_t durationSec;
   uint32_t priceIDR;
   uint32_t timestamp;
-};
-
-struct AuthToken {
-  char token[33];
-  char username[32];
-  uint8_t role;
-  uint32_t expiresAtMs;
 };
 
 // ── Usage history (per slave, stored in NVS) ───────────────
@@ -169,113 +150,9 @@ void recordSessionEnd(int id, uint32_t paidSec) {
                 id, paidSec, price, h.totalSec, h.sessions);
 }
 
-static const int MAX_TOKENS = 10;
-AuthToken activeTokens[MAX_TOKENS];
-int tokenCount = 0;
 
 static const int PKG_COUNT = 7;
 int defaultDurations[PKG_COUNT] = {1, 2, 3, 5, 10, 30, 60};
-
-// ── Token helpers ────────────────────────────────────────────
-
-void generateToken(char* buf, int len) {
-  const char* hex = "0123456789abcdef";
-  for (int i = 0; i < len; i++) {
-    buf[i] = hex[random(0, 16)];
-  }
-  buf[len] = '\0';
-}
-
-AuthToken* findToken(const String& token) {
-  uint32_t now = millis();
-  for (int i = 0; i < tokenCount; i++) {
-    if (String(activeTokens[i].token) == token && now < activeTokens[i].expiresAtMs) {
-      return &activeTokens[i];
-    }
-  }
-  return NULL;
-}
-
-void cleanExpiredTokens() {
-  uint32_t now = millis();
-  int dst = 0;
-  for (int i = 0; i < tokenCount; i++) {
-    if (now < activeTokens[i].expiresAtMs) {
-      if (dst != i) activeTokens[dst] = activeTokens[i];
-      dst++;
-    }
-  }
-  tokenCount = dst;
-}
-
-String getTokenFromRequest() {
-  if (server.hasHeader("Authorization")) {
-    String auth = server.header("Authorization");
-    if (auth.startsWith("Bearer ")) {
-      return auth.substring(7);
-    }
-  }
-  if (server.hasArg("token")) {
-    return server.arg("token");
-  }
-  return "";
-}
-
-// ── User CRUD (NVS) ─────────────────────────────────────────
-
-int getUserCount() {
-  preferences.begin("users", true);
-  int c = preferences.getInt("count", 0);
-  preferences.end();
-  return c;
-}
-
-bool loadUser(int idx, UserAccount* u) {
-  memset(u, 0, sizeof(UserAccount));
-  char k[8];
-  snprintf(k, sizeof(k), "u%d", idx);
-  preferences.begin("users", true);
-  bool ok = preferences.getBytes(k, u, sizeof(UserAccount)) > 0;
-  preferences.end();
-  return ok;
-}
-
-void saveUser(int idx, const UserAccount* u) {
-  char k[8];
-  snprintf(k, sizeof(k), "u%d", idx);
-  preferences.begin("users", false);
-  preferences.putBytes(k, u, sizeof(UserAccount));
-  preferences.end();
-}
-
-void deleteUser(int idx) {
-  char k[8];
-  snprintf(k, sizeof(k), "u%d", idx);
-  preferences.begin("users", false);
-  preferences.remove(k);
-  int c = preferences.getInt("count", 0);
-  if (idx < c - 1) {
-    UserAccount last;
-    loadUser(c - 1, &last);
-    saveUser(idx, &last);
-  }
-  preferences.putInt("count", c - 1);
-  preferences.end();
-}
-
-void initDefaultUsers() {
-  if (getUserCount() > 0) return;
-  UserAccount u;
-  memset(&u, 0, sizeof(UserAccount));
-  strlcpy(u.username, "superadmin", sizeof(u.username));
-  strlcpy(u.password, "super123", sizeof(u.password));
-  u.role = ROLE_SUPERADMIN;
-  saveUser(0, &u);
-  preferences.begin("users", false);
-  preferences.putInt("count", 1);
-  preferences.end();
-  Serial.println("[AUTH] Default superadmin created (superadmin/super123)");
-}
 
 // ── Package CRUD (NVS) ──────────────────────────────────────
 
@@ -299,233 +176,9 @@ void initDefaultPackages() {
   Serial.println("[PKG] Default packages initialized (prices=0)");
 }
 
-// ── Auth check middleware ────────────────────────────────────
-
-bool checkAuth(uint8_t minRole) {
-  String tok = getTokenFromRequest();
-  if (tok.length() == 0) {
-    server.send(401, "application/json", "{\"ok\":0,\"error\":\"No token\"}");
-    return false;
-  }
-  AuthToken* t = findToken(tok);
-  if (!t) {
-    server.send(401, "application/json", "{\"ok\":0,\"error\":\"Invalid token\"}");
-    return false;
-  }
-  if (t->role > minRole) {
-    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Insufficient permissions\"}");
-    return false;
-  }
-  return true;
-}
-
 // ══════════════════════════════════════════════════════════════
 //  NEW API HANDLERS
 // ══════════════════════════════════════════════════════════════
-
-void handleLogin() {
-  addCorsHeaders();
-  if (!server.hasArg("plain")) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-  JsonDocument doc;
-  if (deserializeJson(doc, server.arg("plain"))) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-  String username = doc["username"] | "";
-  String password = doc["password"] | "";
-
-  int count = getUserCount();
-  for (int i = 0; i < count; i++) {
-    UserAccount u;
-    loadUser(i, &u);
-    if (username == u.username && password == u.password) {
-      cleanExpiredTokens();
-      if (tokenCount >= MAX_TOKENS) {
-        server.send(503, "application/json", "{\"ok\":0,\"error\":\"Too many sessions\"}");
-        return;
-      }
-      AuthToken& t = activeTokens[tokenCount++];
-      generateToken(t.token, 32);
-      strlcpy(t.username, u.username, sizeof(t.username));
-      t.role = u.role;
-      t.expiresAtMs = millis() + 86400000; // 24h
-
-      JsonDocument resp;
-      resp["ok"] = 1;
-      resp["token"] = t.token;
-      resp["username"] = t.username;
-      resp["role"] = t.role;
-      String out;
-      serializeJson(resp, out);
-      server.send(200, "application/json", out);
-      Serial.printf("[AUTH] Login: %s (role=%d)\n", u.username, u.role);
-      return;
-    }
-  }
-  server.send(401, "application/json", "{\"ok\":0,\"error\":\"Wrong username/password\"}");
-}
-
-void handleLogout() {
-  addCorsHeaders();
-  String tok = getTokenFromRequest();
-  for (int i = 0; i < tokenCount; i++) {
-    if (String(activeTokens[i].token) == tok) {
-      for (int j = i; j < tokenCount - 1; j++) {
-        activeTokens[j] = activeTokens[j + 1];
-      }
-      tokenCount--;
-      break;
-    }
-  }
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-void handleGetUsers() {
-  addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
-
-  JsonDocument doc;
-  JsonArray array = doc.to<JsonArray>();
-  int count = getUserCount();
-  for (int i = 0; i < count; i++) {
-    UserAccount u;
-    loadUser(i, &u);
-    JsonObject obj = array.add<JsonObject>();
-    obj["username"] = u.username;
-    obj["role"] = u.role;
-  }
-  String json;
-  serializeJson(doc, json);
-  server.send(200, "application/json", json);
-}
-
-void handleCreateUser() {
-  addCorsHeaders();
-  if (!checkAuth(ROLE_SUPERADMIN)) return;
-
-  JsonDocument doc;
-  if (deserializeJson(doc, server.arg("plain"))) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-  String username = doc["username"] | "";
-  String password = doc["password"] | "";
-  int role = doc["role"] | 2;
-
-  if (username.length() < 3 || password.length() < 4) {
-    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Username min 3, password min 4\"}");
-    return;
-  }
-
-  int count = getUserCount();
-  for (int i = 0; i < count; i++) {
-    UserAccount u;
-    loadUser(i, &u);
-    if (username == u.username) {
-      server.send(409, "application/json", "{\"ok\":0,\"error\":\"Username exists\"}");
-      return;
-    }
-  }
-
-  if (count >= 20) {
-    server.send(507, "application/json", "{\"ok\":0,\"error\":\"Max users reached\"}");
-    return;
-  }
-
-  UserAccount u;
-  memset(&u, 0, sizeof(UserAccount));
-  strlcpy(u.username, username.c_str(), sizeof(u.username));
-  strlcpy(u.password, password.c_str(), sizeof(u.password));
-  u.role = constrain(role, 0, 2);
-  saveUser(count, &u);
-  preferences.begin("users", false);
-  preferences.putInt("count", count + 1);
-  preferences.end();
-
-  server.send(200, "application/json", "{\"ok\":1}");
-  Serial.printf("[AUTH] Created user: %s (role=%d)\n", username.c_str(), role);
-}
-
-void handleDeleteUser() {
-  addCorsHeaders();
-  if (!checkAuth(ROLE_SUPERADMIN)) return;
-
-  JsonDocument doc;
-  if (deserializeJson(doc, server.arg("plain"))) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-  String username = doc["username"] | "";
-
-  int count = getUserCount();
-  for (int i = 0; i < count; i++) {
-    UserAccount u;
-    loadUser(i, &u);
-    if (username == u.username) {
-      if (u.role == ROLE_SUPERADMIN) {
-        int saCount = 0;
-        for (int j = 0; j < count; j++) {
-          UserAccount tmp;
-          loadUser(j, &tmp);
-          if (tmp.role == ROLE_SUPERADMIN) saCount++;
-        }
-        if (saCount <= 1) {
-          server.send(400, "application/json", "{\"ok\":0,\"error\":\"Cannot delete last superadmin\"}");
-          return;
-        }
-      }
-      deleteUser(i);
-      server.send(200, "application/json", "{\"ok\":1}");
-      Serial.printf("[AUTH] Deleted user: %s\n", username.c_str());
-      return;
-    }
-  }
-  server.send(404, "application/json", "{\"ok\":0,\"error\":\"User not found\"}");
-}
-
-void handleChangePassword() {
-  addCorsHeaders();
-  String tok = getTokenFromRequest();
-  AuthToken* t = findToken(tok);
-  if (!t) {
-    server.send(401, "application/json", "{\"ok\":0,\"error\":\"No token\"}");
-    return;
-  }
-
-  JsonDocument doc;
-  if (deserializeJson(doc, server.arg("plain"))) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-  String oldPass = doc["old_password"] | "";
-  String newPass = doc["new_password"] | "";
-
-  if (newPass.length() < 4) {
-    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Password min 4\"}");
-    return;
-  }
-
-  int count = getUserCount();
-  for (int i = 0; i < count; i++) {
-    UserAccount u;
-    loadUser(i, &u);
-    if (t->username == u.username) {
-      if (oldPass != u.password) {
-        server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong old password\"}");
-        return;
-      }
-      strlcpy(u.password, newPass.c_str(), sizeof(u.password));
-      saveUser(i, &u);
-      server.send(200, "application/json", "{\"ok\":1}");
-      return;
-    }
-  }
-  server.send(404, "application/json", "{\"ok\":0}");
-}
-
 void handleGetPackages() {
   addCorsHeaders();
   preferences.begin("packages", true);
@@ -551,7 +204,6 @@ void handleGetPackages() {
 
 void handleUpdatePackage() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
 
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) {
@@ -582,7 +234,6 @@ void handleUpdatePackage() {
 
 void handleGetRevenue() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
 
   preferences.begin("revenue", true);
   int count = preferences.getInt("count", 0);
@@ -644,10 +295,7 @@ void handleGetRevenue() {
 
 void handleResetRevenue() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
 
-  String tok = getTokenFromRequest();
-  AuthToken* t = findToken(tok);
 
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) {
@@ -708,14 +356,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .hidden{display:none!important}
 
 /* Login */
-#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.login-box{background:var(--card);border-radius:var(--radius);padding:32px;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
-.login-box h1{font-size:20px;text-align:center;margin-bottom:24px;color:var(--primary)}
-.login-box input{width:100%;padding:12px;border:1px solid var(--border);border-radius:8px;font-size:15px;margin-bottom:12px;outline:none}
-.login-box input:focus{border-color:var(--primary)}
-.login-box button{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
-.login-box button:active{opacity:.9}
-.login-err{color:var(--danger);font-size:13px;text-align:center;margin-top:8px;min-height:20px}
+
+
+
+
+
+
+
+
 
 /* Header */
 .header{background:var(--primary);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
@@ -723,9 +371,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .header-btn{background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer}
 
 /* Tabs */
-.tabs{display:flex;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:48px;z-index:9}
-.tab{flex:1;padding:12px;text-align:center;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
-.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+
+
 
 /* Content */
 .content{padding:12px;max-width:600px;margin:0 auto}
@@ -793,19 +441,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 </head>
 <body>
 
-<!-- LOGIN SCREEN -->
-<div id="loginScreen">
-  <div class="login-box">
-    <h1>🚜 Excavator Rental</h1>
-    <input id="loginUser" type="text" placeholder="Username" autocomplete="username">
-    <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password">
-    <button onclick="doLogin()">Masuk</button>
-    <div id="loginErr" class="login-err"></div>
-  </div>
 </div>
 
 <!-- MAIN APP -->
-<div id="mainApp" class="hidden">
+<div id="mainApp">
   <div class="header">
     <h2 id="headerTitle">🚜 Excavator Rental</h2>
     <div>
@@ -814,13 +453,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
     </div>
   </div>
 
-  <div class="tabs">
-    <div class="tab active" onclick="showTab('dashboard')">Dashboard</div>
-    <div class="tab" onclick="showTab('revenue')" id="tabRevenue">Pendapatan</div>
-    <div class="tab" onclick="showTab('admin')" id="tabAdmin">Admin</div>
-  </div>
-
-  <!-- DASHBOARD TAB -->
+    <!-- DASHBOARD TAB -->
   <div id="tab-dashboard" class="content">
     <div id="slaveList"></div>
   </div>
@@ -839,13 +472,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
     </div>
   </div>
 
-  <!-- ADMIN TAB -->
-  <div id="tab-admin" class="content hidden">
-    <div class="section">
-      <div class="section-title">Paket Waktu & Harga</div>
-      <div id="packageList"></div>
-    </div>
-    <div class="section">
+      <div class="section">
       <div class="section-title">Pengguna</div>
       <div id="userList"></div>
       <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="openModal('addUser')">+ Tambah Pengguna</button>
@@ -858,17 +485,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 </div>
 
 <!-- MODALS -->
-<div class="modal-overlay" id="modal-addUser" onclick="closeModal(event,'addUser')">
-  <div class="modal" onclick="event.stopPropagation()">
-    <h3>Tambah Pengguna</h3>
-    <input id="newUsername" placeholder="Username (min 3 karakter)">
-    <input id="newPassword" type="password" placeholder="Password (min 4 karakter)">
-    <select id="newRole"><option value="2">Staff</option><option value="1">Admin</option></select>
-    <div class="modal-actions">
-      <button class="btn btn-outline" onclick="closeModalDirect('addUser')">Batal</button>
-      <button class="btn btn-primary" onclick="createUser()">Simpan</button>
-    </div>
-  </div>
 </div>
 
 <div class="modal-overlay" id="modal-editPkg" onclick="closeModal(event,'editPkg')">
@@ -907,28 +523,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
   </div>
 </div>
 
-<div class="modal-overlay" id="modal-changePass" onclick="closeModal(event,'changePass')">
-  <div class="modal" onclick="event.stopPropagation()">
-    <h3>Ubah Password</h3>
-    <input id="oldPass" type="password" placeholder="Password lama">
-    <input id="newPass" type="password" placeholder="Password baru (min 4)">
-    <div class="modal-actions">
-      <button class="btn btn-outline" onclick="closeModalDirect('changePass')">Batal</button>
-      <button class="btn btn-primary" onclick="doChangePass()">Simpan</button>
-    </div>
-  </div>
 </div>
 
 <div id="toast" class="toast" style="display:none"></div>
 
 <script>
-var S={token:'',role:-1,username:'',devices:[],packages:[],users:[],revenue:[],history:[],selectedId:null};
+var S={devices:[],packages:[],revenue:[],history:[],selectedId:null};
 
 function api(ep,opts){
   opts=opts||{};
   var h={'Content-Type':'application/json'};
-  if(S.token)h['Authorization']='Bearer '+S.token;
-  if(opts.headers)Object.assign(h,opts.headers);
+  
+  
   return fetch(ep,{method:opts.m||'GET',headers:h,body:opts.b?JSON.stringify(opts.b):undefined})
     .then(function(r){return r.json().then(function(d){
       if(r.status===401&&d.error&&ep!=='/api/login'){
@@ -947,53 +553,14 @@ function toast(msg){
 }
 
 // ── Login/Logout ────────────────────────────────────────────
-function doLogin(){
-  var u=document.getElementById('loginUser').value;
-  var p=document.getElementById('loginPass').value;
-  document.getElementById('loginErr').textContent='';
-  api('/api/login',{m:'POST',b:{username:u,password:p}}).then(function(r){
-    if(r.data.ok){
-      S.token=r.data.token;S.role=r.data.role;S.username=r.data.username;
-      localStorage.setItem('token',S.token);localStorage.setItem('role',S.role);localStorage.setItem('username',S.username);
-      showApp();
-    }else{
-      document.getElementById('loginErr').textContent=r.data.error||'Login gagal';
-    }
-  }).catch(function(){
-    document.getElementById('loginErr').textContent='Koneksi gagal';
-  });
-}
 
-function doLogout(){
-  api('/api/logout',{m:'POST'}).catch(function(){});
-  S.token='';S.role=-1;S.username='';
-  localStorage.removeItem('token');localStorage.removeItem('role');localStorage.removeItem('username');
-  document.getElementById('mainApp').classList.add('hidden');
-  document.getElementById('loginScreen').style.display='flex';
-}
 
-function showApp(){
-  document.getElementById('loginScreen').style.display='none';
-  document.getElementById('mainApp').classList.remove('hidden');
-  document.getElementById('headerUser').textContent=S.username+' ('+['SuperAdmin','Admin','Staff'][S.role]+')';
-  var isAdmin=S.role<=1;
-  document.getElementById('tabRevenue').style.display=isAdmin?'':'none';
-  document.getElementById('tabAdmin').style.display=S.role===0?'':'none';
-  document.getElementById('resetButtons').style.display=isAdmin?'':'none';
-  loadDevices();loadPackages();loadHistory();if(S.role<=1)loadRevenue();
-  if(isAdmin)loadRevenue();
-  if(S.role===0)loadUsers();
-}
+
+
+
 
 // ── Tabs ────────────────────────────────────────────────────
-function showTab(name){
-  document.querySelectorAll('.tab').forEach(function(t,i){
-    t.classList.toggle('active',['dashboard','revenue','admin'][i]===name);
-  });
-  ['dashboard','revenue','admin'].forEach(function(t){
-    document.getElementById('tab-'+t).classList.toggle('hidden',t!==name);
-  });
-}
+
 
 // ── Devices ─────────────────────────────────────────────────
 function loadHistory(){
@@ -1007,7 +574,7 @@ function loadDevices(){
     if(r.status===200){
       S.devices=r.data;
       loadHistory();
-      if(S.role<=1)loadRevenue();else renderDevices();
+      loadRevenue();else renderDevices();
     }
   });
 }
@@ -1165,23 +732,9 @@ function deleteSlave(mac){
   });
 }
 
-function deleteUser(username){
-  if(!confirm('Hapus pengguna '+username+'?'))return;
-  api('/api/users/delete',{m:'POST',b:{username:username}}).then(function(r){
-    toast(r.data.ok?'Pengguna dihapus!':(r.data.error||'Gagal'));
-    loadUsers();
-  });
-}
 
-function doChangePass(){
-  var op=document.getElementById('oldPass').value;
-  var np=document.getElementById('newPass').value;
-  if(np.length<4){toast('Password baru min 4 karakter');return}
-  closeModalDirect('changePass');
-  api('/api/users/change-password',{m:'POST',b:{old_password:op,new_password:np}}).then(function(r){
-    toast(r.data.ok?'Password diubah!':(r.data.error||'Gagal'));
-  });
-}
+
+
 
 // ── Packages ────────────────────────────────────────────────
 function loadPackages(){
@@ -1275,37 +828,11 @@ function resetAll(){
 }
 
 // ── Users ───────────────────────────────────────────────────
-function loadUsers(){
-  api('/api/users').then(function(r){
-    if(r.status===200){S.users=r.data;renderUsers();}
-  });
-}
 
-function renderUsers(){
-  var roleNames=['SuperAdmin','Admin','Staff'];
-  var roleClasses=['role-0','role-1','role-2'];
-  document.getElementById('userList').innerHTML=S.users.map(function(u){
-    var delBtn=(u.username!==S.username)?'<button class="btn btn-outline" style="padding:4px 8px;font-size:11px;color:var(--danger)" onclick="deleteUser(\''+u.username+'\')">Hapus</button>':'';
-    return '<div class="user-item">'+
-      '<span class="user-name">'+u.username+'</span>'+
-      '<div style="display:flex;align-items:center;gap:8px">'+
-        '<span class="user-role '+roleClasses[u.role]+'">'+roleNames[u.role]+'</span>'+
-        delBtn+
-      '</div>'+
-    '</div>';
-  }).join('');
-}
 
-function createUser(){
-  var u=document.getElementById('newUsername').value;
-  var p=document.getElementById('newPassword').value;
-  var r=parseInt(document.getElementById('newRole').value);
-  api('/api/users',{m:'POST',b:{username:u,password:p,role:r}}).then(function(res){
-    toast(res.data.ok?'Pengguna ditambahkan!':(res.data.error||'Gagal'));
-    closeModalDirect('addUser');
-    loadUsers();
-  });
-}
+
+
+
 
 // ── Modal ───────────────────────────────────────────────────
 function openModal(id){document.getElementById('modal-'+id).classList.add('active')}
@@ -1485,7 +1012,6 @@ void handleSlaves() {
 
 void handleEditSlave() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -1545,7 +1071,6 @@ void handleEditSlave() {
 
 void handleDeleteSlave() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -1622,7 +1147,6 @@ void handleHistory() {
 
 void handleHistoryReset() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400, "application/json", "{\"ok\":0}");
     return;
@@ -1658,7 +1182,6 @@ void handleHistoryReset() {
 
 void handleResetAll() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400, "application/json", "{\"ok\":0}");
     return;
@@ -1719,7 +1242,6 @@ void handleResetAll() {
 
 void handleCommandProxy() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_STAFF)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -1802,7 +1324,6 @@ void handleCommandProxy() {
 
 void handleTransferTime() {
   addCorsHeaders();
-  if (!checkAuth(ROLE_ADMIN)) return;
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -2047,7 +1568,6 @@ void setup() {
   Serial.println("Starting Master Access Point (DHCP enabled)");
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 
-  initDefaultUsers();
   initDefaultPackages();
 
   IPAddress apIP(192, 168, 4, 1);
@@ -2063,19 +1583,15 @@ void setup() {
     server.send(200, "text/html", DASHBOARD_HTML);
   });
 
-  // Public endpoints (no auth)
+  // All endpoints (no auth - handled by Android app)
   server.on("/api/register", HTTP_GET, handleRegister);
   server.on("/api/register", HTTP_OPTIONS, handleOptions);
   server.on("/api/slaves", HTTP_GET, handleSlaves);
   server.on("/api/slaves", HTTP_OPTIONS, handleOptions);
-  server.on("/api/login", HTTP_POST, handleLogin);
-  server.on("/api/login", HTTP_OPTIONS, handleOptions);
   server.on("/api/packages", HTTP_GET, handleGetPackages);
   server.on("/api/packages", HTTP_OPTIONS, handleOptions);
 
-  // Protected endpoints (auth required)
-  server.on("/api/logout", HTTP_POST, handleLogout);
-  server.on("/api/logout", HTTP_OPTIONS, handleOptions);
+  // Command & slave management
   server.on("/api/command", HTTP_POST, handleCommandProxy);
   server.on("/api/command", HTTP_OPTIONS, handleOptions);
   server.on("/api/transfer_time", HTTP_POST, handleTransferTime);
@@ -2085,16 +1601,7 @@ void setup() {
   server.on("/api/delete_slave", HTTP_POST, handleDeleteSlave);
   server.on("/api/delete_slave", HTTP_OPTIONS, handleOptions);
 
-  // User management (superadmin)
-  server.on("/api/users", HTTP_GET, handleGetUsers);
-  server.on("/api/users", HTTP_OPTIONS, handleOptions);
-  server.on("/api/users", HTTP_POST, handleCreateUser);
-  server.on("/api/users/delete", HTTP_POST, handleDeleteUser);
-  server.on("/api/users/delete", HTTP_OPTIONS, handleOptions);
-  server.on("/api/users/change-password", HTTP_POST, handleChangePassword);
-  server.on("/api/users/change-password", HTTP_OPTIONS, handleOptions);
-
-  // Package management (admin)
+  // Package management
   server.on("/api/packages/update", HTTP_POST, handleUpdatePackage);
   server.on("/api/packages/update", HTTP_OPTIONS, handleOptions);
 
