@@ -181,14 +181,13 @@ void changeState(RentalState next) {
 
 String buildJsonState() {
   JsonDocument doc;
-  doc["toy"]   = TOY_ID;
+  doc["id"]   = TOY_ID;
   doc["state"] = stateName(state);
-  doc["rem"]   = remaining;
+  doc["time_left"]   = remaining;
   char t[6];
   snprintf(t, sizeof(t), "%02lu:%02lu", remaining / 60, remaining % 60);
-  doc["disp"]  = t;
-  doc["paid"]  = totalPaid;
-  doc["bat"]   = "OK";
+  doc["display"]  = t;
+  doc["battery"]   = "OK";
   doc["fault"] = 0;
   doc["seq"]   = seq;
   String out;
@@ -228,23 +227,24 @@ void handleCommand() {
   }
 
   String cmd = doc["cmd"] | "";
-  int    val = doc["val"] | 0;
+  int    time = doc["time"] | 0;
   cmd.toUpperCase();
-  Serial.printf("[API] cmd='%s' val=%d\n", cmd.c_str(), val);
+  Serial.printf("[API] cmd='%s' time=%d\n", cmd.c_str(), time);
   beep(50, 1);
   activityFlash(80);
 
   bool ok = false;
   const char* code = "OK";
 
-  if (cmd == "ADD_TIME") {
-    if (val <= 0) {
-      code = "BAD_VAL";
-    } else {
-      remaining += val;
-      if (remaining > MAX_REMAINING) remaining = MAX_REMAINING;
-      totalPaid += val;
-      Serial.printf("[ACTION] +${val}s rem=%lu\n", remaining);
+  if (cmd == "ADD_TIME" && time > 0) {
+    int maxLimit = MAX_ADD_TIME_MINUTES * 60;
+    if (time > maxLimit) {
+      Serial.printf("[COMMAND] ADD_TIME rejected. Max limit is %d minutes.\n", MAX_ADD_TIME_MINUTES);
+      sendResponse(request, 400, "ADD_TIME Exceeds maximum limit");
+      return;
+    }
+    addTime(time);
+    Serial.printf("[COMMAND] ADD_TIME: %d seconds. Total remaining: %lu\n", time, remainingSeconds);
       if (state == STATE_LOCKED || state == STATE_ENDED)
         changeState(STATE_RUNNING);
       else
@@ -288,7 +288,7 @@ void handleCommand() {
   }
 
   char resp[128];
-  snprintf(resp, sizeof(resp), "{\"ok\":%d,\"code\":\"%s\",\"rem\":%lu,\"state\":\"%s\"}",
+  snprintf(resp, sizeof(resp), "{\"ok\":%d,\"code\":\"%s\",\"time_left\":%lu,\"state\":\"%s\"}",
            ok ? 1 : 0, code, remaining, stateName(state));
   server.send(200, "application/json", resp);
 

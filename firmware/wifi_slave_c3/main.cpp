@@ -173,16 +173,15 @@ void changeState(RentalState nextState) {
 
 String buildJsonState() {
   JsonDocument doc;
-  doc["toy"] = TOY_ID;
+  doc["id"] = TOY_ID;
   doc["state"] = stateName(state);
-  doc["rem"] = remainingSeconds;
+  doc["time_left"] = remainingSeconds;
   
   char timeStr[6];
   snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu", remainingSeconds / 60, remainingSeconds % 60);
-  doc["disp"] = timeStr;
+  doc["display"] = timeStr;
   
-  doc["paid"] = totalPaidSeconds;
-  doc["bat"] = "OK";
+  doc["battery"] = "OK";
   doc["fault"] = 0;
   doc["seq"] = seq;
 
@@ -228,31 +227,18 @@ void handleCommand() {
   }
 
   String cmd = doc["cmd"] | "";
-  int val = doc["val"] | 0;
+  int time = doc["time"] | 0;
 
   bool ok = false;
   const char* code = "OK";
   String respString = "";
 
   cmd.toUpperCase();
-  Serial.printf("[API] Received Command: '%s' with Val: %d\n", cmd.c_str(), val);
+  Serial.printf("[API] Received Command: '%s' with Val: %d\n", cmd.c_str(), time);
   beep(50, 1);
   netLedFlash(50);
 
   if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
-    if (cmd == "ADD_TIME") {
-      if (val <= 0) {
-        code = "BAD_VAL";
-      } else {
-        remainingSeconds += val;
-        if (remainingSeconds > 28800) remainingSeconds = 28800;
-        totalPaidSeconds += val;
-        Serial.printf("[ACTION] Added %d seconds. Total remaining: %lu\n", val, remainingSeconds);
-        if (state == STATE_LOCKED || state == STATE_ENDED) {
-          changeState(STATE_RUNNING);
-        } else {
-          changeState(state);
-        }
         saveStateToFlash();
         ok = true;
       }

@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: Excavator Rental Timer API
+  description: API for managing ESP32 Master and Slave nodes in the Excavator Rental System.
+  version: 1.0.0
+servers:
+  - url: http://192.168.4.1
+    description: ESP32 Master Node (Local WiFi)
+paths:
+  /api/slaves:
+    get:
+      summary: Get all connected slaves
+      responses:
+        '200':
+          description: A list of slave devices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Slave'
+  /api/command:
+    post:
+      summary: Send command to a specific slave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+      responses:
+        '200':
+          description: Command executed successfully
+        '400':
+          description: Bad request (Missing ID/CMD)
+        '404':
+          description: Slave not found
+        '502':
+          description: Slave offline or timeout
+  /api/edit_slave:
+    post:
+      summary: Edit slave ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditSlave'
+      responses:
+        '200':
+          description: Slave updated
+        '400':
+          description: Validation error (e.g., ID taken)
+  /api/delete_slave:
+    post:
+      summary: Delete slave from registry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteSlave'
+      responses:
+        '200':
+          description: Slave deleted
+
+components:
+  schemas:
+    Slave:
+      type: object
+      properties:
+        id:
+          type: integer
+        ip:
+          type: string
+        mac:
+          type: string
+        name:
+          type: string
+        state:
+          type: string
+        rem:
+          type: integer
+        online:
+          type: boolean
+    CommandRequest:
+      type: object
+      required:
+        - id
+        - cmd
+        - val
+      properties:
+        id:
+          type: integer
+        cmd:
+          type: string
+          enum: [ADD_TIME, STOP, RESUME, START, RESET, RESET_TOTAL, IDENTIFY, REBOOT]
+        val:
+          type: integer
+          description: Value in seconds (only for ADD_TIME, otherwise 0)
+    EditSlave:
+      type: object
+      properties:
+        mac:
+          type: string
+        id:
+          type: integer
+    DeleteSlave:
+      type: object
+      properties:
+        mac:
+          type: string
