@@ -63,7 +63,7 @@ Preferences preferences;
 SemaphoreHandle_t stateMutex;
 volatile int failedHeartbeats = 0;
 
-uint32_t netLedEndMs = 0;
+volatile uint32_t netLedEndMs = 0;
 
 uint8_t TOY_NUMERIC_ID = 0;
 String TOY_ID = "EXC-00";
@@ -124,13 +124,13 @@ void applyRelay() {
 
 void netLedFlash(int ms = 50) {
   netLedEndMs = millis() + ms;
-  digitalWrite(NET_LED_PIN, LOW);  // ON (active LOW)
+  digitalWrite(NET_LED_PIN, HIGH);  // ON (active HIGH for ESP32)
 }
 
 void updateNetLed() {
   if (netLedEndMs > 0 && millis() < netLedEndMs) return;
   netLedEndMs = 0;
-  digitalWrite(NET_LED_PIN, HIGH);  // OFF
+  digitalWrite(NET_LED_PIN, LOW);  // OFF
 }
 
 const char* stateName(RentalState value) {
@@ -382,7 +382,6 @@ int tryHeartbeat() {
 
   if (httpCode == 200) {
     result = 0;
-    netLedFlash(50);
     String payload = http.getString();
     JsonDocument doc;
     if (!deserializeJson(doc, payload)) {
@@ -443,6 +442,7 @@ void networkTask(void* pvParameters) {
       } else {
         delayWDT(HEARTBEAT_INTERVAL_MS);
         int hb = tryHeartbeat();
+        netLedFlash(80);
         if (hb == -1) {
           failedHeartbeats = failedHeartbeats + 1;
           if (failedHeartbeats >= 3) {
@@ -645,6 +645,8 @@ void loop() {
     pendingBeepMs = 0;
     beep(ms, 1);
   }
+
+  updateNetLed();
 
   static uint32_t lastHb = 0;
   if (millis() - lastHb >= 1000) {

@@ -916,6 +916,7 @@ void handleSlaves() {
       obj["rem"] = slaves[i].rem;
       obj["disp"] = slaves[i].disp;
       obj["paid"] = slaves[i].paid;
+      obj["totalSeconds"] = slaves[i].paid;
       obj["bat"] = slaves[i].bat;
     }
     xSemaphoreGive(slavesMutex);

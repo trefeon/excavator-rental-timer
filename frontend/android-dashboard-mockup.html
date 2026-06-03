@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
-  <title>Dashboard BLE - Excavator Rental</title>
+  <title>Dashboard Wi-Fi - Excavator Rental</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -188,7 +188,7 @@
       <div class="header">
         <div class="header-text">
           <h1>Rental Excavator</h1>
-          <div class="header-sub">Pemantauan Armada (BLE Advertising)</div>
+          <div class="header-sub">Pemantauan Armada (Wi-Fi Master)</div>
         </div>
       </div>
       <div class="summary-grid">
@@ -203,7 +203,7 @@
       </div>
       <div class="scanner-bar">
         <div class="pulse-dot"></div>
-        Mendengarkan BLE Broadcasts...
+        Polling Data Master...
       </div>
       <div class="list-content" id="unit-list">
         <!-- Static DOM elements updated by JS -->
@@ -224,7 +224,7 @@
       
       <div class="detail-content">
         <div style="text-align:center; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:16px; display: flex; justify-content: center; align-items: center; gap: 6px;" id="detail-last-seen">
-          Last Broadcast: <span id="dt-seen" style="color:var(--text-main)">0s ago</span>
+          Last Update: <span id="dt-seen" style="color:var(--text-main)">0s ago</span>
           <svg id="global-spinner" style="display:none; animation: spin 1s linear infinite;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
         </div>
 
@@ -250,17 +250,17 @@
               <div>Kurangi Waktu</div>
             </div>
           </button>
-          <button class="btn-pause" id="btn-toggle-pause" onclick="sendCommand('TOGGLE_PAUSE')">
+          <button class="btn-pause" id="btn-toggle-pause" onclick="sendCommand('PAUSE')">
             <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="icon-pause"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
             <span id="txt-toggle-pause">Pause</span>
           </button>
-          <button class="btn-stop" id="btn-toggle-power" onclick="sendCommand('TOGGLE_POWER')">
+          <button class="btn-stop" id="btn-toggle-power" onclick="sendCommand('STOP')">
             <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="icon-power"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>
             <span id="txt-toggle-power">Stop</span>
           </button>
         </div>
 
-        <h3 class="section-title">Data Broadcast (Advertising)</h3>
+        <h3 class="section-title">Status Wi-Fi</h3>
         <div class="info-box">
           <div class="metric-row">
             <span class="metric-label">Baterai</span>
@@ -271,7 +271,7 @@
             <span class="metric-value" style="font-family: monospace;" id="hw-rssi">-0 dBm</span>
           </div>
           <div class="metric-row">
-            <span class="metric-label">Koneksi BLE</span>
+            <span class="metric-label">Koneksi Wi-Fi</span>
             <span class="metric-value" style="color:var(--text-muted)">On-Demand</span>
           </div>
         </div>
@@ -312,8 +312,8 @@
 
   <script>
     /* 
-      BLE Protocol Simulator
-      Based on ANDROID_APP_FLOW.md and BLE_PROTOCOL_SPEC.md 
+      Wi-Fi Protocol Simulator
+      Based on ANDROID_APP_GUIDE.md and SYSTEM_MANUAL.md
     */
 
     // Source of truth for our mock devices
@@ -444,7 +444,7 @@
       document.getElementById('global-played').innerText = formatPlayedTime(totalPlayed);
     }, 500);
 
-    // ESP32 BLE ADVERTISEMENT SIMULATOR (Background)
+    // ESP32 WI-FI SIMULATOR (Background)
     // ESPs decrement their own time and broadcast their state periodically
     setInterval(() => {
       Object.keys(devices).forEach(id => {
@@ -457,7 +457,7 @@
           if (dev.time <= 0) { dev.time = 0; dev.status = 'locked'; }
         }
 
-        // Simulate BLE Advertisement Packet (Variable intervals)
+        // Simulate Wi-Fi Polling Packet (Variable intervals)
         // RUNNING: 0.5s-1s, LOCKED/PAUSED: 1s-2s
         const isBroadcastTime = Math.random() > 0.3; // 70% chance to broadcast this second
         
@@ -497,9 +497,11 @@
       
       if (dev.status === 'running') {
         txtPause.innerText = 'Pause';
+        btnPause.setAttribute('onclick', "sendCommand('PAUSE')");
         iconPause.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
       } else if (dev.status === 'paused') {
         txtPause.innerText = 'Resume';
+        btnPause.setAttribute('onclick', "sendCommand('RESUME')");
         iconPause.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
       } else {
         txtPause.innerText = 'Pause';
@@ -527,11 +529,11 @@
       const dev = devices[activeUnitId];
       if (!dev) return;
 
-      if (cmd === 'TOGGLE_POWER' && (dev.status === 'running' || dev.status === 'paused')) {
+      if (cmd === 'STOP' && (dev.status === 'running' || dev.status === 'paused')) {
         if (!confirm("Peringatan: Menghentikan (Stop) akan me-reset sisa waktu menjadi 00:00. Anda yakin ingin melanjutkan?")) return;
       }
 
-      if (cmd === 'TOGGLE_POWER' && dev.status === 'locked' && dev.time <= 0) {
+      if (cmd === 'STOP' && dev.status === 'locked' && dev.time <= 0) {
         showToast("Harap tambah waktu terlebih dahulu sebelum memulai.");
         openTimeModal('add');
         return;
@@ -570,9 +572,11 @@
           if (dev.time === 0 && dev.status === 'running') {
              dev.status = 'locked'; // Auto lock if time runs out
           }
-        } else if (cmd === 'TOGGLE_PAUSE') {
-          dev.status = dev.status === 'running' ? 'paused' : 'running';
-        } else if (cmd === 'TOGGLE_POWER') {
+        } else if (cmd === 'PAUSE') {
+          dev.status = 'paused';
+        } else if (cmd === 'RESUME') {
+          dev.status = 'running';
+        } else if (cmd === 'STOP') {
           if (dev.status === 'running' || dev.status === 'paused') {
             dev.time = 0; dev.status = 'locked';
           } else {
