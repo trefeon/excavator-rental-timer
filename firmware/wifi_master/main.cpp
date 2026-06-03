@@ -298,16 +298,7 @@ void handleResetRevenue() {
 
 
   JsonDocument doc;
-  if (deserializeJson(doc, server.arg("plain"))) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-
-  String password = doc["password"] | "";
-  if (password != ADMIN_PASS) {
-    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong password\"}");
-    return;
-  }
+  deserializeJson(doc, server.arg("plain"));
 
   int targetId = doc["id"] | 0;
 
@@ -354,16 +345,6 @@ const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 :root{--bg:#f0f2f5;--card:#fff;--primary:#2563eb;--success:#10b981;--danger:#ef4444;--warning:#f59e0b;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;--radius:12px}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 .hidden{display:none!important}
-
-/* Login */
-
-
-
-
-
-
-
-
 
 /* Header */
 .header{background:var(--primary);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
@@ -418,13 +399,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .rev-total-label{font-size:13px;opacity:.8}
 .rev-total-amount{font-size:28px;font-weight:700}
 
-/* User List */
-.user-item{background:var(--card);border-radius:var(--radius);padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.user-name{font-weight:600}
-.user-role{font-size:12px;padding:2px 8px;border-radius:8px;font-weight:600}
-.role-0{background:#dbeafe;color:#1e40af}
-.role-1{background:#fef3c7;color:#92400e}
-.role-2{background:#d1fae5;color:#065f46}
+
 
 /* Modal */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:flex-end;justify-content:center}
@@ -447,10 +422,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 <div id="mainApp">
   <div class="header">
     <h2 id="headerTitle">🚜 Excavator Rental</h2>
-    <div>
-      <span id="headerUser" style="font-size:12px;opacity:.8;margin-right:8px"></span>
-      <button class="header-btn" onclick="doLogout()">Keluar</button>
-    </div>
   </div>
 
     <!-- DASHBOARD TAB -->
@@ -459,7 +430,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
   </div>
 
   <!-- REVENUE TAB -->
-  <div id="tab-revenue" class="content hidden">
+  <div id="tab-revenue" class="content">
     <div id="revenueTotal"></div>
     <div id="revenueList"></div>
     <div id="resetButtons" style="margin-top:12px">
@@ -472,15 +443,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
     </div>
   </div>
 
-      <div class="section">
-      <div class="section-title">Pengguna</div>
-      <div id="userList"></div>
-      <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="openModal('addUser')">+ Tambah Pengguna</button>
-    </div>
-    <div class="section">
-      <div class="section-title">Akun</div>
-      <button class="btn btn-outline" style="width:100%" onclick="openModal('changePass')">Ubah Password</button>
-    </div>
   </div>
 </div>
 
@@ -537,12 +499,6 @@ function api(ep,opts){
   
   return fetch(ep,{method:opts.m||'GET',headers:h,body:opts.b?JSON.stringify(opts.b):undefined})
     .then(function(r){return r.json().then(function(d){
-      if(r.status===401&&d.error&&ep!=='/api/login'){
-        S.token='';localStorage.removeItem('token');
-        document.getElementById('mainApp').classList.add('hidden');
-        document.getElementById('loginScreen').style.display='flex';
-        document.getElementById('loginErr').textContent='Sesi habis, login lagi';
-      }
       return{status:r.status,data:d};
     })});
 }
@@ -551,13 +507,6 @@ function toast(msg){
   var t=document.getElementById('toast');t.textContent=msg;t.style.display='block';
   setTimeout(function(){t.style.display='none'},2500);
 }
-
-// ── Login/Logout ────────────────────────────────────────────
-
-
-
-
-
 
 // ── Tabs ────────────────────────────────────────────────────
 
@@ -574,7 +523,7 @@ function loadDevices(){
     if(r.status===200){
       S.devices=r.data;
       loadHistory();
-      loadRevenue();else renderDevices();
+      loadRevenue();
     }
   });
 }
@@ -588,7 +537,7 @@ function renderDevices(){
     var isRunning=state==='RUNNING';
     var isPaused=state==='PAUSED';
     var pkgsHtml='';
-    if(S.token&&S.packages.length){
+    if(S.packages.length){
       pkgsHtml='<div class="pkg-grid">'+S.packages.map(function(p){
         return '<div class="pkg-btn" onclick="addTime('+d.id+','+p.durationMin+')">'+
           '<div class="pkg-min">'+p.durationMin+'</div>'+
@@ -598,27 +547,21 @@ function renderDevices(){
       }).join('')+'</div>';
     }
     var actions='';
-    if(S.token){
-      actions='<div class="action-row">'+
-        (isPaused?'<button class="btn btn-success" onclick="sendCmd('+d.id+',\'RESUME\')">Lanjut</button>':
-         isRunning?'<button class="btn btn-warning" onclick="sendCmd('+d.id+',\'PAUSE\')">Jeda</button>':
-         '<button class="btn btn-outline" disabled>Tidak Aktif</button>')+
-        '<button class="btn btn-danger" onclick="sendCmd('+d.id+',\'STOP\')">Stop</button>'+
-      '</div>';
-      if(S.role<=1){
-        actions+='<div class="action-row" style="margin-top:4px">'+
-          '<button class="btn btn-outline" style="font-size:12px" onclick="identifySlave('+d.id+')">Identify</button>'+
-          '<button class="btn btn-outline" style="font-size:12px" onclick="openTransfer('+d.id+')">Transfer</button>'+
-        '</div>';
-        actions+='<div class="action-row" style="margin-top:4px">'+
-          '<button class="btn btn-outline" style="font-size:12px" onclick="openEditSlave('+d.id+')">Edit ID</button>'+
-          '<button class="btn btn-outline" style="font-size:12px;color:var(--danger)" onclick="deleteSlave(\''+d.mac+'\')">Hapus</button>'+
-        '</div>';
-      }
-      if(S.role===0){
-        actions+='<div style="margin-top:4px"><button class="btn btn-outline" style="font-size:12px;width:100%;color:var(--danger)" onclick="rebootSlave('+d.id+')">Reboot</button></div>';
-      }
-    }
+    actions='<div class="action-row">'+
+      (isPaused?'<button class="btn btn-success" onclick="sendCmd('+d.id+',\'RESUME\')">Lanjut</button>':
+       isRunning?'<button class="btn btn-warning" onclick="sendCmd('+d.id+',\'PAUSE\')">Jeda</button>':
+       '<button class="btn btn-outline" disabled>Tidak Aktif</button>')+
+      '<button class="btn btn-danger" onclick="sendCmd('+d.id+',\'STOP\')">Stop</button>'+
+    '</div>';
+    actions+='<div class="action-row" style="margin-top:4px">'+
+      '<button class="btn btn-outline" style="font-size:12px" onclick="identifySlave('+d.id+')">Identify</button>'+
+      '<button class="btn btn-outline" style="font-size:12px" onclick="openTransfer('+d.id+')">Transfer</button>'+
+    '</div>';
+    actions+='<div class="action-row" style="margin-top:4px">'+
+      '<button class="btn btn-outline" style="font-size:12px" onclick="openEditSlave('+d.id+')">Edit ID</button>'+
+      '<button class="btn btn-outline" style="font-size:12px;color:var(--danger)" onclick="deleteSlave(\''+d.mac+'\')">Hapus</button>'+
+    '</div>';
+    actions+='<div style="margin-top:4px"><button class="btn btn-outline" style="font-size:12px;width:100%;color:var(--danger)" onclick="rebootSlave('+d.id+')">Reboot</button></div>';
     return '<div class="device">'+
       '<div class="device-header">'+
         '<span class="device-name">EXC-0'+d.id+'</span>'+
@@ -744,7 +687,6 @@ function loadPackages(){
 }
 
 function renderPackages(){
-  if(S.role>1)return;
   var c=document.getElementById('packageList');
   c.innerHTML=S.packages.map(function(p){
     return '<div class="rev-card" onclick="editPkg('+p.id+',\''+p.durationMin+' min\',\''+p.priceIDR+'\')">'+
@@ -799,9 +741,7 @@ function renderRevenue(){
 // ── Reset Functions ─────────────────────────────────────────
 function resetHistory(){
   if(!confirm('Reset total waktu & sesi untuk semua slave?'))return;
-  var pw=prompt('Masukkan password admin:');
-  if(!pw)return;
-  api('/api/history/reset',{m:'POST',b:{password:pw}}).then(function(r){
+  api('/api/history/reset',{m:'POST',b:{}}).then(function(r){
     toast(r.data.ok?'Total waktu direset!':'Gagal: '+(r.data.error||''));
     if(r.data.ok){loadRevenue();loadDevices();}
   });
@@ -809,9 +749,7 @@ function resetHistory(){
 
 function resetRevenue(){
   if(!confirm('Reset pendapatan (uang) untuk semua slave?'))return;
-  var pw=prompt('Masukkan password admin:');
-  if(!pw)return;
-  api('/api/revenue/reset',{m:'POST',b:{password:pw}}).then(function(r){
+  api('/api/revenue/reset',{m:'POST',b:{}}).then(function(r){
     toast(r.data.ok?'Pendapatan direset!':'Gagal: '+(r.data.error||''));
     if(r.data.ok)loadRevenue();
   });
@@ -819,20 +757,11 @@ function resetRevenue(){
 
 function resetAll(){
   if(!confirm('Reset SEMUA data (waktu + uang)?\nTindakan ini tidak bisa dibatalkan!'))return;
-  var pw=prompt('Masukkan password admin:');
-  if(!pw)return;
-  api('/api/reset-all',{m:'POST',b:{password:pw}}).then(function(r){
+  api('/api/reset-all',{m:'POST',b:{}}).then(function(r){
     toast(r.data.ok?'Semua data direset!':'Gagal: '+(r.data.error||''));
     if(r.data.ok){loadRevenue();loadDevices();}
   });
 }
-
-// ── Users ───────────────────────────────────────────────────
-
-
-
-
-
 
 // ── Modal ───────────────────────────────────────────────────
 function openModal(id){document.getElementById('modal-'+id).classList.add('active')}
@@ -841,21 +770,8 @@ function closeModalDirect(id){document.getElementById('modal-'+id).classList.rem
 
 // ── Init ────────────────────────────────────────────────────
 (function(){
-  var t=localStorage.getItem('token');
-  var r=localStorage.getItem('role');
-  var u=localStorage.getItem('username');
-  if(t&&r!==null){
-    S.token=t;S.role=parseInt(r);S.username=u;
-    api('/api/slaves').then(function(resp){
-      if(resp.status===200){showApp();}
-      else{
-        S.token='';localStorage.removeItem('token');localStorage.removeItem('role');localStorage.removeItem('username');
-        document.getElementById('loginScreen').style.display='flex';
-      }
-    }).catch(function(){
-      document.getElementById('loginScreen').style.display='flex';
-    });
-  }
+  loadDevices();
+  loadPackages();
   setInterval(loadDevices,3000);
 })();
 </script>
@@ -1153,16 +1069,7 @@ void handleHistoryReset() {
   }
   String body = server.arg("plain");
   JsonDocument doc;
-  if (deserializeJson(doc, body)) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-
-  String password = doc["password"] | "";
-  if (password != ADMIN_PASS) {
-    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong password\"}");
-    return;
-  }
+  deserializeJson(doc, body);
 
   int targetId = doc["id"] | 0;
 
@@ -1187,15 +1094,7 @@ void handleResetAll() {
     return;
   }
   JsonDocument doc;
-  if (deserializeJson(doc, server.arg("plain"))) {
-    server.send(400, "application/json", "{\"ok\":0}");
-    return;
-  }
-  String password = doc["password"] | "";
-  if (password != ADMIN_PASS) {
-    server.send(403, "application/json", "{\"ok\":0,\"error\":\"Wrong password\"}");
-    return;
-  }
+  deserializeJson(doc, server.arg("plain"));
   int targetId = doc["id"] | 0;
 
   // Reset history
