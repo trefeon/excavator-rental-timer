@@ -43,6 +43,9 @@ old_*
 
 # Scratch and Generator scripts
 scratch.py
+test_logic.py
+test_real_hardware.py
+com_test.py
 generate_docx.py
 docs/convert.ps1
 
