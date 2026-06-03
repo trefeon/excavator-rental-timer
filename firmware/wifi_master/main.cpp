@@ -27,7 +27,7 @@ WebServer server(80);
 Preferences preferences;
 SemaphoreHandle_t slavesMutex = NULL;
 
-static const uint32_t HTTP_TIMEOUT_MS = 2000;
+static const uint32_t HTTP_TIMEOUT_MS = 1500;
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
 static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
 
@@ -1401,7 +1401,8 @@ void pollSlavesTask(void* pvParameters) {
     }
 
     for (int i = 0; i < targetCount; i++) {
-
+      esp_task_wdt_reset(); // PREVENT BOOTLOOP if multiple slaves timeout!
+      
       HTTPClient http;
       http.begin("http://" + targetIps[i] + "/api/state");
       http.setTimeout(HTTP_TIMEOUT_MS);
