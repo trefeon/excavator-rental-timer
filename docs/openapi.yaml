@@ -1,15 +1,20 @@
 openapi: 3.0.3
 info:
   title: Excavator Rental Timer API
-  description: API for managing ESP32 Master and Slave nodes in the Excavator Rental System.
-  version: 1.0.0
+  description: |
+    REST API for the ESP32 Master Bridge in the Excavator Rental Timer system.
+    Master acts as a proxy between Android app and Slave devices.
+    All values are RAW (seconds, booleans). No business logic on firmware side.
+  version: 2.0.0
 servers:
   - url: http://192.168.4.1
-    description: ESP32 Master Node (Local WiFi)
+    description: ESP32 Master Node (Local WiFi AP)
+
 paths:
   /api/slaves:
     get:
-      summary: Get all connected slaves
+      summary: Get all connected slave units
+      description: Returns an array of all registered slave devices with their current status. Poll every 3-5 seconds.
       responses:
         '200':
           description: A list of slave devices
@@ -19,9 +24,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Slave'
+
   /api/command:
     post:
-      summary: Send command to a specific slave
+      summary: Send command to a specific slave unit
+      description: Master proxies the command to the target slave via HTTP. Response is forwarded back from slave.
       requestBody:
         required: true
         content:
@@ -30,27 +37,53 @@ paths:
               $ref: '#/components/schemas/CommandRequest'
       responses:
         '200':
-          description: Command executed successfully
+          description: Command forwarded and response received from slave
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
         '400':
-          description: Bad request (Missing ID/CMD)
+          description: Bad request (missing id/cmd, invalid JSON)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Slave not found
+          description: Slave not found in registry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '502':
-          description: Slave offline or timeout
+          description: Slave offline or connection timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/edit_slave:
     post:
-      summary: Edit slave ID
+      summary: Change a slave's assigned ID
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EditSlave'
+              $ref: '#/components/schemas/EditSlaveRequest'
       responses:
         '200':
-          description: Slave updated
+          description: Slave ID updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
         '400':
-          description: Validation error (e.g., ID taken)
+          description: Validation error (e.g., ID already taken)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/delete_slave:
     post:
       summary: Delete slave from registry
@@ -59,10 +92,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DeleteSlave'
+              $ref: '#/components/schemas/DeleteSlaveRequest'
       responses:
         '200':
-          description: Slave deleted
+          description: Slave deleted from registry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
 
 components:
   schemas:
@@ -71,42 +108,118 @@ components:
       properties:
         id:
           type: integer
+          description: Unit number (1-50)
+          example: 1
         ip:
           type: string
+          description: IP address of slave on the network
+          example: "192.168.4.2"
         mac:
           type: string
-        name:
-          type: string
-        state:
-          type: string
-        rem:
-          type: integer
+          description: Hardware MAC address
+          example: "48:3F:DA:00:11:22"
         online:
           type: boolean
+          description: true if slave responded within last 30 seconds
+          example: true
+        state:
+          type: string
+          enum: [LOCKED, RUNNING, PAUSED, ENDED]
+          description: Current timer state
+          example: "RUNNING"
+        time_left:
+          type: integer
+          description: Remaining time in SECONDS (raw value)
+          example: 287
+        battery:
+          type: string
+          description: Battery status (currently always "OK" - hardcoded)
+          example: "OK"
+
     CommandRequest:
       type: object
       required:
         - id
         - cmd
-        - val
       properties:
         id:
           type: integer
+          description: Target unit number
+          example: 1
         cmd:
           type: string
-          enum: [ADD_TIME, STOP, RESUME, START, RESET, RESET_TOTAL, IDENTIFY, REBOOT]
-        val:
+          enum: [ADD_TIME, PAUSE, RESUME, STOP, IDENTIFY, REBOOT]
+          description: Command to send to the slave
+        time:
           type: integer
-          description: Value in seconds (only for ADD_TIME, otherwise 0)
-    EditSlave:
+          description: Time value in SECONDS (only for ADD_TIME, max 28800)
+          default: 0
+          example: 300
+
+    CommandResponse:
       type: object
+      properties:
+        ok:
+          type: integer
+          enum: [0, 1]
+          description: 1 = success, 0 = failure
+          example: 1
+        code:
+          type: string
+          enum: [OK, BAD_STATE, EXCEEDS_LIMIT, UNKNOWN_COMMAND, BAD_FORMAT, BAD_JSON, REBOOTING]
+          description: Status code from slave
+          example: "OK"
+        time_left:
+          type: integer
+          description: Updated remaining time in SECONDS
+          example: 587
+        state:
+          type: string
+          enum: [LOCKED, RUNNING, PAUSED, ENDED]
+          description: Updated state after command
+          example: "RUNNING"
+
+    EditSlaveRequest:
+      type: object
+      required:
+        - mac
+        - id
       properties:
         mac:
           type: string
+          description: MAC address of the slave to edit
+          example: "48:3F:DA:00:11:22"
         id:
           type: integer
-    DeleteSlave:
+          description: New ID to assign
+          example: 5
+
+    DeleteSlaveRequest:
       type: object
+      required:
+        - mac
       properties:
         mac:
           type: string
+          description: MAC address of the slave to delete
+          example: "48:3F:DA:00:11:22"
+
+    StatusResponse:
+      type: object
+      properties:
+        ok:
+          type: integer
+          enum: [0, 1]
+          example: 1
+
+    ErrorResponse:
+      type: object
+      properties:
+        ok:
+          type: integer
+          enum: [0]
+          example: 0
+        error:
+          type: string
+          description: Human-readable error message
+          example: "Slave offline/timeout"

@@ -38,6 +38,7 @@ static const uint32_t FLASH_SAVE_INTERVAL_S = 30;
 static const uint32_t BUTTON_DEBOUNCE_MS    = 300;
 static const uint32_t HTTP_TIMEOUT_MS       = 2000;
 static const uint32_t MAX_REMAINING         = 28800; // 8 hours
+static const int      MAX_ADD_TIME_MINUTES  = 480;
 
 // ===== GLOBALS =====
 TM1637Display display(CLK_PIN, DIO_PIN);
@@ -177,6 +178,12 @@ void changeState(RentalState next) {
   updateDisplay();
 }
 
+void addTime(int seconds) {
+  remaining += seconds;
+  if (remaining > MAX_REMAINING) remaining = MAX_REMAINING;
+  totalPaid += seconds;
+}
+
 // ── JSON state ───────────────────────────────────────────────
 
 String buildJsonState() {
@@ -240,11 +247,10 @@ void handleCommand() {
     int maxLimit = MAX_ADD_TIME_MINUTES * 60;
     if (time > maxLimit) {
       Serial.printf("[COMMAND] ADD_TIME rejected. Max limit is %d minutes.\n", MAX_ADD_TIME_MINUTES);
-      sendResponse(request, 400, "ADD_TIME Exceeds maximum limit");
-      return;
-    }
-    addTime(time);
-    Serial.printf("[COMMAND] ADD_TIME: %d seconds. Total remaining: %lu\n", time, remainingSeconds);
+      code = "EXCEEDS_LIMIT";
+    } else {
+      addTime(time);
+      Serial.printf("[COMMAND] ADD_TIME: %d seconds. Total remaining: %lu\n", time, (unsigned long)remaining);
       if (state == STATE_LOCKED || state == STATE_ENDED)
         changeState(STATE_RUNNING);
       else

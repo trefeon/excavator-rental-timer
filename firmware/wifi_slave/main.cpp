@@ -53,6 +53,8 @@ static const uint32_t WIFI_RETRY_INTERVAL_MS = 5000;
 static const uint32_t FLASH_SAVE_INTERVAL_S = 30;
 static const uint32_t BUTTON_DEBOUNCE_MS = 300;
 static const uint32_t HTTP_TIMEOUT_MS = 2000;
+static const int MAX_ADD_TIME_MINUTES = 480;
+static const uint32_t MAX_REMAINING = 28800;  // 8 hours in seconds
 
 // ===== GLOBALS =====
 TM1637Display display(CLK_PIN, DIO_PIN);
@@ -161,6 +163,12 @@ void changeState(RentalState nextState) {
   colonState = true;
   applyRelay();
   updateDisplay();
+}
+
+void addTime(int seconds) {
+  remainingSeconds += seconds;
+  if (remainingSeconds > MAX_REMAINING) remainingSeconds = MAX_REMAINING;
+  totalPaidSeconds += seconds;
 }
 
 String buildJsonState() {
@@ -288,7 +296,7 @@ void handleCommand() {
     }
 
     char resp[128];
-    snprintf(resp, sizeof(resp), "{\"ok\":%d,\"code\":\"%s\",\"rem\":%lu,\"state\":\"%s\"}",
+    snprintf(resp, sizeof(resp), "{\"ok\":%d,\"code\":\"%s\",\"time_left\":%lu,\"state\":\"%s\"}",
              ok ? 1 : 0, code, remainingSeconds, stateName(state));
     respString = String(resp);
     xSemaphoreGive(stateMutex);

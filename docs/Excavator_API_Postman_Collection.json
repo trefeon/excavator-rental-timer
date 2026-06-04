@@ -2,34 +2,26 @@
 	"info": {
 		"_postman_id": "e4a7a8d9-2a9c-4c4f-a9b0-9f1e1f7d5c7f",
 		"name": "Excavator Rental Timer API",
-		"description": "Koleksi API untuk Master ESP32 Excavator Timer. IP default adalah 192.168.4.1.",
+		"description": "Koleksi API untuk Master ESP32 Excavator Timer (Bridge Mode). IP default: 192.168.4.1. Semua value waktu dalam DETIK.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
 		{
-			"name": "Daftar Slaves (Dashboard)",
+			"name": "Daftar Slaves (Dashboard Polling)",
 			"request": {
 				"method": "GET",
 				"header": [],
 				"url": {
 					"raw": "http://192.168.4.1/api/slaves",
 					"protocol": "http",
-					"host": [
-						"192",
-						"168",
-						"4",
-						"1"
-					],
-					"path": [
-						"api",
-						"slaves"
-					]
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "slaves"]
 				}
 			},
 			"response": []
 		},
 		{
-			"name": "Kirim Command (Play, Stop, Add Time)",
+			"name": "Command: ADD_TIME (5 menit = 300 detik)",
 			"request": {
 				"method": "POST",
 				"header": [
@@ -41,21 +33,181 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"ADD_TIME\",\n    \"val\": 300\n}"
+					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"ADD_TIME\",\n    \"time\": 300\n}"
 				},
 				"url": {
 					"raw": "http://192.168.4.1/api/command",
 					"protocol": "http",
-					"host": [
-						"192",
-						"168",
-						"4",
-						"1"
-					],
-					"path": [
-						"api",
-						"command"
-					]
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "command"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Command: PAUSE",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"PAUSE\",\n    \"time\": 0\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/command",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "command"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Command: RESUME",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"RESUME\",\n    \"time\": 0\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/command",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "command"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Command: STOP",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"STOP\",\n    \"time\": 0\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/command",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "command"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Command: IDENTIFY (Buzzer 3x)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"IDENTIFY\",\n    \"time\": 0\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/command",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "command"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Command: REBOOT",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 1,\n    \"cmd\": \"REBOOT\",\n    \"time\": 0\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/command",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "command"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Edit Slave ID",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"mac\": \"48:3F:DA:00:11:22\",\n    \"id\": 5\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/edit_slave",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "edit_slave"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Delete Slave",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"mac\": \"48:3F:DA:00:11:22\"\n}"
+				},
+				"url": {
+					"raw": "http://192.168.4.1/api/delete_slave",
+					"protocol": "http",
+					"host": ["192", "168", "4", "1"],
+					"path": ["api", "delete_slave"]
 				}
 			},
 			"response": []

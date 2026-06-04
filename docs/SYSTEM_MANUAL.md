@@ -1,6 +1,6 @@
-# Excavator Rental Timer - System Manual (Current State)
+# Excavator Rental Timer - System Manual
 
-Last Updated: June 3, 2026
+Last Updated: June 4, 2026
 
 Sistem timer rental excavator RC berbasis Wi-Fi dengan arsitektur Master-Slave.
 
@@ -9,26 +9,25 @@ Sistem timer rental excavator RC berbasis Wi-Fi dengan arsitektur Master-Slave.
 ## 1. Arsitektur Sistem
 
 ```text
-┌─────────────────┐     Wi-Fi AP       ┌─────────────────┐
-│  Master ESP32   │◄──────────────────►│  Slave ESP32    │
-│  (192.168.4.1)  │ (ExcavatorMaster)  │  (192.168.4.x)  │
-│                 │                    │                 │
-│  - DHCP Server  │                    │  - Timer        │
-│  - Web Dashboard│                    │  - Relay        │
-│  - REST API     │                    │  - TM1637       │
-│  - History/Rev  │                    │  - Buzzer       │
-└─────────────────┘                    │  - Button       │
-        ▲                              └─────────────────┘
-        │                                      ▲
-   Android App                           Excavator RC
-   (http://192.168.4.1)
+┌─────────────────┐                    ┌─────────────────┐
+│  Android App    │    Wi-Fi AP        │  Slave ESP32    │
+│  (Dashboard +   │◄──────────────────►│  (192.168.4.x)  │
+│   Bisnis Logic) │ (ExcavatorMaster)  │                 │
+│                 │                    │  - Timer        │
+│  - User Auth    │   ┌────────────┐   │  - Relay        │
+│  - Pricing      │◄─►│Master ESP32│◄─►│  - TM1637       │
+│  - History      │   │(Bridge API)│   │  - Buzzer       │
+│  - Revenue      │   │192.168.4.1 │   │  - Button       │
+└─────────────────┘   └────────────┘   └─────────────────┘
 ```
+
+> **PENTING:** Master ESP32 hanya berfungsi sebagai **jembatan (bridge)** antara Android App dan Slave. Master TIDAK menyimpan harga, histori, revenue, atau user data. Semua logika bisnis ditangani oleh aplikasi Android.
 
 ### Komponen
 
 | Komponen            | Fungsi                                                   |
 | ------------------- | -------------------------------------------------------- |
-| Master ESP32 (V1)   | Access Point, API, Web Dashboard, History Tracking       |
+| Master ESP32 (V1)   | Access Point, Bridge API (proxy command ke slave)        |
 | Slave ESP32 (V1/C3) | Mengatur Timer, Relay, Display, Buzzer                   |
 | Slave ESP8266       | Alternatif modul timer, Relay, Display, Buzzer           |
 | TM1637              | Display 4-digit MM:SS                                    |
@@ -59,10 +58,10 @@ LED indikator menggunakan GPIO 2.
 
 | Pin    | Fungsi     | Ke                       |
 | ------ | ---------- | ------------------------ |
-| GPIO 4 | TM1637 CLK | Display CLK              |
-| GPIO 5 | TM1637 DIO | Display DIO              |
-| GPIO 6 | Relay IN   | Relay Module             |
-| GPIO 7 | Buzzer +   | Buzzer aktif             |
+| GPIO 4 | Relay IN   | Relay Module             |
+| GPIO 5 | Buzzer +   | Buzzer aktif             |
+| GPIO 6 | TM1637 CLK | Display CLK              |
+| GPIO 7 | TM1637 DIO | Display DIO              |
 | GPIO 9 | Button     | Push button (pull-up)    |
 | GPIO 8 | LED        | LED built-in (aktif LOW) |
 
@@ -91,52 +90,34 @@ LED indikator menggunakan GPIO 2.
 
 ---
 
-## 4. REST API (Open Endpoints)
+## 4. REST API (Master Bridge Endpoints)
 
-**Catatan Penting:** Auth di-handle sepenuhnya oleh sisi aplikasi Android. Master ESP32 saat ini membiarkan seluruh endpoint terbuka (open access) untuk kemudahan integrasi dengan aplikasi Android.
+**Catatan Penting:** Master hanya meneruskan (proxy) perintah ke Slave. Auth di-handle sepenuhnya oleh aplikasi Android. Semua endpoint terbuka (open access).
 
 ### Endpoints
 
-| Method | Endpoint               | Description                                      |
-| ------ | ---------------------- | ------------------------------------------------ |
-| GET    | `/api/slaves`          | Status semua slave (IP, timer state, remaining)  |
-| GET    | `/api/packages`        | Daftar paket & harga                             |
-| GET    | `/api/history`         | Riwayat penggunaan (totalSec, sessions)          |
-| POST   | `/api/command`         | Kirim command ke slave                           |
-| POST   | `/api/transfer_time`   | Transfer sisa waktu antar slave                  |
-| POST   | `/api/edit_slave`      | Ubah ID slave                                    |
-| POST   | `/api/delete_slave`    | Hapus registrasi slave                           |
-| POST   | `/api/packages/update` | Ubah harga paket                                 |
-| GET    | `/api/revenue`         | Pendapatan per slave                             |
-| POST   | `/api/history/reset`   | Reset riwayat permainan                          |
-| POST   | `/api/revenue/reset`   | Reset pendapatan finansial                       |
-| POST   | `/api/reset-all`       | Factory reset semua data history & revenue       |
-| GET    | `/api/register?mac=XX` | Registrasi internal slave (dipanggil oleh slave) |
+| Method | Endpoint            | Description                                     |
+| ------ | ------------------- | ----------------------------------------------- |
+| GET    | `/api/slaves`       | Status semua slave (IP, state, time_left, dll)  |
+| POST   | `/api/command`      | Kirim command ke slave (proxy)                  |
+| POST   | `/api/edit_slave`   | Ubah ID slave                                   |
+| POST   | `/api/delete_slave` | Hapus registrasi slave                          |
+| GET    | `/api/register`     | Registrasi internal slave (dipanggil oleh slave)|
 
 ### Commands (POST `/api/command`)
 
-Body berupa JSON: `{"id": 1, "cmd": "ADD_TIME", "val": 5}`
+Body berupa JSON: `{"id": 1, "cmd": "ADD_TIME", "time": 300}`
 
-| cmd        | val  | Keterangan                                    |
-| ---------- | ---- | --------------------------------------------- |
-| `ADD_TIME` | 1-60 | Menambah waktu (dalam menit)                  |
-| `PAUSE`    | 0    | Pause waktu berjalan                          |
-| `RESUME`   | 0    | Lanjutkan waktu yang di-pause                 |
-| `STOP`     | 0    | Reset waktu jadi 0 & lock relay               |
-| `IDENTIFY` | 0    | Bunyikan buzzer slave 3x untuk mencari posisi |
-| `REBOOT`   | 0    | Restart ESP slave secara software             |
+| cmd        | time     | Keterangan                                    |
+| ---------- | -------- | --------------------------------------------- |
+| `ADD_TIME` | 1-28800  | Menambah waktu (dalam **detik**)              |
+| `PAUSE`    | 0        | Pause waktu berjalan                          |
+| `RESUME`   | 0        | Lanjutkan waktu yang di-pause                 |
+| `STOP`     | 0        | Reset waktu jadi 0 & lock relay               |
+| `IDENTIFY` | 0        | Bunyikan buzzer slave 3x untuk mencari posisi |
+| `REBOOT`   | 0        | Restart ESP slave secara software             |
 
-### Default Paket Waktu
-
-| Durasi (val) | Default Harga |
-| ------------ | ------------- |
-| 1 min        | Rp 5.000      |
-| 2 min        | Rp 8.000      |
-| 3 min        | Rp 10.000     |
-| 5 min        | Rp 15.000     |
-| 10 min       | Rp 25.000     |
-| 30 min       | Rp 60.000     |
-| 60 min       | Rp 100.000    |
+> **Semua value waktu dalam satuan DETIK.** Konversi menit/jam ke detik dilakukan oleh aplikasi Android sebelum dikirim ke API.
 
 ---
 
@@ -144,8 +125,8 @@ Body berupa JSON: `{"id": 1, "cmd": "ADD_TIME", "val": 5}`
 
 1. **Powerloss Recovery**: Waktu (`remaining`) pada slave disimpan secara periodik ke dalam EEPROM (ESP8266) atau NVS (ESP32) setiap 30 detik. Jika listrik mati/baterai dicabut, slave akan resume sisa waktunya saat dinyalakan kembali.
 2. **Timer Accuracy**: Logic loop non-blocking (ESP32) mencegah _drift_ pada timer dibandingkan mengandalkan `delay()`.
-3. **Data Logging (History & Revenue)**: Dicatat secara independen di NVS Master tiap kali ada siklus permainan (berakhirnya state `RUNNING` menjadi `LOCKED`).
-4. **Waktu Transfer**: Fitur pemindahan sisa waktu antar slave, otomatis me-reset sumber dan menggantikan sisa waktu yang ada di target.
+3. **Max Time Limit**: Slave menolak ADD_TIME melebihi 480 menit (28800 detik / 8 jam) per sekali command.
+4. **Battery Field**: Slave mengirim field `battery` dengan value `"OK"` (hardcoded). Tidak ada sensor battery fisik — field ini disiapkan untuk pengembangan future.
 
 ---
 
@@ -156,16 +137,14 @@ Body berupa JSON: `{"id": 1, "cmd": "ADD_TIME", "val": 5}`
 ### Build & Upload
 
 ```bash
-# Compile Master
+# Compile semua environment
+pio run
 
-pio run -e master
+# Compile & upload individual
 pio run -e master -t upload --upload-port COM_MASTER
-
-# Compile Slaves
-
-pio run -e slave       # DevKit V1
-pio run -e slave_c3    # C3 Super Mini
-pio run -e slave8266   # NodeMCU ESP8266
+pio run -e slave -t upload --upload-port COM_SLAVE
+pio run -e slave_c3 -t upload --upload-port COM_SLAVE_C3
+pio run -e slave8266 -t upload --upload-port COM_SLAVE_8266
 ```
 
 ### Stress Testing

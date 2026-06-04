@@ -51,7 +51,6 @@ struct SlaveRecord {
   uint32_t lastSeen;
   String state; // "RUNNING", "LOCKED", "PAUSED", "ENDED", "OFFLINE"
   int time_left;      // remaining time in seconds
-  int time_left;      // remaining time in seconds
   String battery;
 };
 SlaveRecord slaves[50];
@@ -434,7 +433,7 @@ void pollSlavesTask(void* pvParameters) {
           if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
             for (int j = 0; j < slaveCount; j++) {
               if (slaves[j].ip == targetIps[i]) {
-                if (stateDoc.containsKey("state")) {
+                if (stateDoc["state"].is<const char*>()) {
                   int time_left = stateDoc["time_left"] | -1;
                   if (time_left >= 0) slaves[j].time_left = time_left;
                   slaves[j].state = stateDoc["state"].as<String>();
