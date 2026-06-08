@@ -357,6 +357,20 @@ void handleCommandProxy() {
     return;
   }
 
+  // --- WORKAROUND FOR ANDROID APP BUG ---
+  // The Android app mistakenly sends CMD_ADD_TIME with time = remaining seconds when resuming a paused timer.
+  // Since the app's UI doesn't allow opening the "Add Time" dialog while the timer is paused, 
+  // any ADD_TIME received while PAUSED is guaranteed to be this resume bug.
+  // We intercept it and convert it to a proper RESUME command.
+  /*
+  if (cmd == "ADD_TIME" && slaveState == "PAUSED") {
+    Serial.println("[PROXY] Intercepted Android App Resume Bug. Converting ADD_TIME to RESUME.");
+    cmd = "RESUME";
+    time = 0;
+  }
+  */
+  // --------------------------------------
+
   Serial.printf("[PROXY] Forwarding to %s/api/command\n", targetIp.c_str());
   HTTPClient http;
   http.begin("http://" + targetIp + "/api/command");
