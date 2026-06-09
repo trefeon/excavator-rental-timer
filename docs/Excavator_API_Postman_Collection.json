@@ -2,12 +2,12 @@
 	"info": {
 		"_postman_id": "e4a7a8d9-2a9c-4c4f-a9b0-9f1e1f7d5c7f",
 		"name": "Excavator Rental Timer API",
-		"description": "Koleksi API untuk Master ESP32 Excavator Timer (Bridge Mode). IP default: 192.168.4.1. Semua value waktu dalam DETIK.",
+		"description": "API collection for Master ESP32 Excavator Timer (Bridge Mode). Default IP: 192.168.4.1. All time values are in SECONDS.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
 		{
-			"name": "Daftar Slaves (Dashboard Polling)",
+			"name": "List Slaves (Dashboard Polling)",
 			"request": {
 				"method": "GET",
 				"header": [],
@@ -21,7 +21,7 @@
 			"response": []
 		},
 		{
-			"name": "Command: ADD_TIME (5 menit = 300 detik)",
+			"name": "Command: ADD_TIME (5 minutes = 300 seconds)",
 			"request": {
 				"method": "POST",
 				"header": [

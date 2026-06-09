@@ -2,17 +2,17 @@
 
 Last Updated: June 4, 2026
 
-Sistem timer rental excavator RC berbasis Wi-Fi dengan arsitektur Master-Slave.
+Wi-Fi based RC excavator rental timer system with Master-Slave architecture.
 
 ---
 
-## 1. Arsitektur Sistem
+## 1. System Architecture
 
 ```text
 ┌─────────────────┐                    ┌─────────────────┐
 │  Android App    │    Wi-Fi AP        │  Slave ESP32    │
 │  (Dashboard +   │◄──────────────────►│  (192.168.4.x)  │
-│   Bisnis Logic) │ (ExcavatorMaster)  │                 │
+│   Business Logic)│ (ExcavatorMaster)  │                 │
 │                 │                    │  - Timer        │
 │  - User Auth    │   ┌────────────┐   │  - Relay        │
 │  - Pricing      │◄─►│Master ESP32│◄─►│  - TM1637       │
@@ -21,18 +21,18 @@ Sistem timer rental excavator RC berbasis Wi-Fi dengan arsitektur Master-Slave.
 └─────────────────┘   └────────────┘   └─────────────────┘
 ```
 
-> **PENTING:** Master ESP32 hanya berfungsi sebagai **jembatan (bridge)** antara Android App dan Slave. Master TIDAK menyimpan harga, histori, revenue, atau user data. Semua logika bisnis ditangani oleh aplikasi Android.
+> **IMPORTANT:** Master ESP32 acts ONLY as a **bridge** between the Android App and the Slaves. The Master DOES NOT store pricing, history, revenue, or user data. All business logic is handled by the Android application.
 
-### Komponen
+### Components
 
-| Komponen            | Fungsi                                                   |
+| Component            | Function                                                 |
 | ------------------- | -------------------------------------------------------- |
-| Master ESP32 (V1)   | Access Point, Bridge API (proxy command ke slave)        |
-| Slave ESP32 (V1/C3) | Mengatur Timer, Relay, Display, Buzzer                   |
-| Slave ESP8266       | Alternatif modul timer, Relay, Display, Buzzer           |
-| TM1637              | Display 4-digit MM:SS                                    |
-| Relay               | ON/OFF power excavator                                   |
-| Buzzer              | Notifikasi suara (contoh saat transfer atau waktu habis) |
+| Master ESP32 (V1)   | Access Point, Bridge API (proxies commands to slaves)    |
+| Slave ESP32 (V1/C3) | Controls Timer, Relay, Display, Buzzer                   |
+| Slave ESP8266       | Alternative timer module, Relay, Display, Buzzer         |
+| TM1637              | 4-digit MM:SS Display                                    |
+| Relay               | Power ON/OFF for the excavator                           |
+| Buzzer              | Sound notifications (e.g. time transfer or time up)      |
 
 ---
 
@@ -40,107 +40,107 @@ Sistem timer rental excavator RC berbasis Wi-Fi dengan arsitektur Master-Slave.
 
 ### Master
 
-Cukup colok USB 5V ke ESP32 DOIT DevKit V1. Tidak ada wiring eksternal.
-LED indikator menggunakan GPIO 2.
+Just plug a 5V USB cable into the ESP32 DOIT DevKit V1. No external wiring needed.
+The indicator LED uses GPIO 2.
 
 ### Slave (ESP32 DevKit V1)
 
-| Pin     | Fungsi     | Ke                       |
-| ------- | ---------- | ------------------------ |
-| GPIO 22 | TM1637 CLK | Display CLK              |
-| GPIO 23 | TM1637 DIO | Display DIO              |
-| GPIO 26 | Relay IN   | Relay Module             |
-| GPIO 27 | Buzzer +   | Buzzer aktif             |
-| GPIO 32 | Button     | Push button (pull-up)    |
-| GPIO 2  | LED        | LED built-in (aktif LOW) |
+| Pin     | Function   | Connects To               |
+| ------- | ---------- | ------------------------- |
+| GPIO 22 | TM1637 CLK | Display CLK               |
+| GPIO 23 | TM1637 DIO | Display DIO               |
+| GPIO 26 | Relay IN   | Relay Module              |
+| GPIO 27 | Buzzer +   | Active Buzzer             |
+| GPIO 32 | Button     | Push button (pull-up)     |
+| GPIO 2  | LED        | Built-in LED (active LOW) |
 
 ### Slave (ESP32-C3 Super Mini)
 
-| Pin    | Fungsi     | Ke                       |
-| ------ | ---------- | ------------------------ |
-| GPIO 4 | Relay IN   | Relay Module             |
-| GPIO 5 | Buzzer +   | Buzzer aktif             |
-| GPIO 6 | TM1637 CLK | Display CLK              |
-| GPIO 7 | TM1637 DIO | Display DIO              |
-| GPIO 9 | Button     | Push button (pull-up)    |
-| GPIO 8 | LED        | LED built-in (aktif LOW) |
+| Pin    | Function   | Connects To               |
+| ------ | ---------- | ------------------------- |
+| GPIO 4 | Relay IN   | Relay Module              |
+| GPIO 5 | Buzzer +   | Active Buzzer             |
+| GPIO 6 | TM1637 CLK | Display CLK               |
+| GPIO 7 | TM1637 DIO | Display DIO               |
+| GPIO 9 | Button     | Push button (pull-up)     |
+| GPIO 8 | LED        | Built-in LED (active LOW) |
 
 ### Slave (ESP8266/NodeMCU)
 
-| Pin         | Fungsi     | Ke              |
+| Pin         | Function   | Connects To     |
 | ----------- | ---------- | --------------- |
 | D1 (GPIO5)  | Relay      | Relay Module    |
-| D2 (GPIO4)  | Buzzer     | Buzzer aktif    |
+| D2 (GPIO4)  | Buzzer     | Active Buzzer   |
 | D5 (GPIO14) | Button     | Push button     |
 | D6 (GPIO12) | TM1637 CLK | Display CLK     |
 | D7 (GPIO13) | TM1637 DIO | Display DIO     |
-| D4 (GPIO2)  | LED1       | LED relay state |
-| D0 (GPIO16) | LED2       | LED activity    |
+| D4 (GPIO2)  | LED1       | Relay state LED |
+| D0 (GPIO16) | LED2       | Activity LED    |
 
 ---
 
 ## 3. Wi-Fi Configuration
 
-| Parameter | Nilai                                     |
+| Parameter | Value                                     |
 | --------- | ----------------------------------------- |
 | SSID      | `ExcavatorMaster`                         |
 | Password  | `12345678`                                |
 | Master IP | `192.168.4.1`                             |
-| Slave IP  | DHCP (otomatis, misal `192.168.4.2`, dll) |
+| Slave IP  | DHCP (automatic, e.g. `192.168.4.2`, etc.)|
 
 ---
 
 ## 4. REST API (Master Bridge Endpoints)
 
-**Catatan Penting:** Master hanya meneruskan (proxy) perintah ke Slave. Auth di-handle sepenuhnya oleh aplikasi Android. Semua endpoint terbuka (open access).
+**Important Note:** Master only forwards (proxies) commands to the Slave. Auth is handled entirely by the Android application. All endpoints are open access.
 
 ### Endpoints
 
 | Method | Endpoint            | Description                                     |
 | ------ | ------------------- | ----------------------------------------------- |
-| GET    | `/api/slaves`       | Status semua slave (IP, state, time_left, dll)  |
-| POST   | `/api/command`      | Kirim command ke slave (proxy)                  |
-| POST   | `/api/edit_slave`   | Ubah ID slave                                   |
-| POST   | `/api/delete_slave` | Hapus registrasi slave                          |
-| GET    | `/api/register`     | Registrasi internal slave (dipanggil oleh slave)|
+| GET    | `/api/slaves`       | Status of all slaves (IP, state, time_left, etc.)|
+| POST   | `/api/command`      | Send command to slave (proxied)                 |
+| POST   | `/api/edit_slave`   | Change slave ID                                 |
+| POST   | `/api/delete_slave` | Remove slave registration                       |
+| GET    | `/api/register`     | Internal slave registration (called by slave)   |
 
 ### Commands (POST `/api/command`)
 
-Body berupa JSON: `{"id": 1, "cmd": "ADD_TIME", "time": 300}`
+JSON Body: `{"id": 1, "cmd": "ADD_TIME", "time": 300}`
 
-| cmd        | time     | Keterangan                                    |
+| cmd        | time     | Description                                   |
 | ---------- | -------- | --------------------------------------------- |
-| `ADD_TIME` | 1-28800  | Menambah waktu (dalam **detik**)              |
-| `PAUSE`    | 0        | Pause waktu berjalan                          |
-| `RESUME`   | 0        | Lanjutkan waktu yang di-pause                 |
-| `STOP`     | 0        | Reset waktu jadi 0 & lock relay               |
-| `IDENTIFY` | 0        | Bunyikan buzzer slave 3x untuk mencari posisi |
-| `REBOOT`   | 0        | Restart ESP slave secara software             |
+| `ADD_TIME` | 1-28800  | Add time (in **seconds**)                     |
+| `PAUSE`    | 0        | Pause running time                            |
+| `RESUME`   | 0        | Resume paused time                            |
+| `STOP`     | 0        | Reset time to 0 & lock relay                  |
+| `IDENTIFY` | 0        | Beep slave buzzer 3x to locate its physical position |
+| `REBOOT`   | 0        | Software restart the ESP slave                |
 
-> **Semua value waktu dalam satuan DETIK.** Konversi menit/jam ke detik dilakukan oleh aplikasi Android sebelum dikirim ke API.
+> **All time values are in SECONDS.** Conversion from minutes/hours to seconds is done by the Android app before sending to the API.
 
 ---
 
-## 5. Fitur Penting
+## 5. Important Features
 
-1. **Powerloss Recovery**: Waktu (`remaining`) pada slave disimpan secara periodik ke dalam EEPROM (ESP8266) atau NVS (ESP32) setiap 30 detik. Jika listrik mati/baterai dicabut, slave akan resume sisa waktunya saat dinyalakan kembali.
-2. **Timer Accuracy**: Logic loop non-blocking (ESP32) mencegah _drift_ pada timer dibandingkan mengandalkan `delay()`.
-3. **Max Time Limit**: Slave menolak ADD_TIME melebihi 480 menit (28800 detik / 8 jam) per sekali command.
-4. **Battery Field**: Slave mengirim field `battery` dengan value `"OK"` (hardcoded). Tidak ada sensor battery fisik — field ini disiapkan untuk pengembangan future.
+1. **Powerloss Recovery**: The remaining time on the slave is saved periodically to the EEPROM (ESP8266) or NVS (ESP32) every 30 seconds. If power fails or the battery is unplugged, the slave will resume its remaining time when turned back on.
+2. **Timer Accuracy**: Non-blocking logic loop (ESP32) prevents timer drift compared to relying on `delay()`.
+3. **Max Time Limit**: Slave rejects ADD_TIME exceeding 480 minutes (28800 seconds / 8 hours) per single command.
+4. **Battery Field**: Slave sends `battery` field with `"OK"` value (hardcoded). There is no physical battery sensor — this field is prepared for future development.
 
 ---
 
 ## 6. Build & Test (PlatformIO)
 
-**Build File:** `platformio.ini` memiliki environment yang tersedia: `master`, `slave`, `slave_c3`, dan `slave8266`.
+**Build File:** `platformio.ini` has the following available environments: `master`, `slave`, `slave_c3`, and `slave8266`.
 
 ### Build & Upload
 
 ```bash
-# Compile semua environment
+# Compile all environments
 pio run
 
-# Compile & upload individual
+# Compile & upload individually
 pio run -e master -t upload --upload-port COM_MASTER
 pio run -e slave -t upload --upload-port COM_SLAVE
 pio run -e slave_c3 -t upload --upload-port COM_SLAVE_C3
@@ -149,4 +149,4 @@ pio run -e slave8266 -t upload --upload-port COM_SLAVE_8266
 
 ### Stress Testing
 
-Testing otomatis menggunakan `python scratch.py` (didukung opsi `--stress` untuk concurrent connection flooding, rogue testing, payload fuzzing, dan poll check).
+Automated testing uses `python scratch.py` (supports `--stress` option for concurrent connection flooding, rogue testing, payload fuzzing, and poll checks).

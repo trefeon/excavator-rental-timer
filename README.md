@@ -1,17 +1,17 @@
 # Excavator Rental Timer
 
-## Arsitektur: Wi-Fi Master-Slave (Centralized API) Dashboard + Android Proxy API
+## Architecture: Wi-Fi Master-Slave (Centralized API) Dashboard + Android Proxy API
 
-Sistem timer rental untuk mainan excavator RC di mall. Menggunakan arsitektur **Master-Slave berbasis Wi-Fi ESP32** tanpa internet, tanpa cloud.
+Rental timer system for RC excavator toys in malls. Uses a **Wi-Fi Master-Slave ESP32** architecture without internet, without cloud.
 
 ---
 
-## Ringkasan
+## Summary
 
-- **1 Master (ESP32):** Access Point Wi-Fi (DHCP), Web Server Dashboard, Registry Pusat, API Proxy Gateway untuk Android.
-- **Banyak Slave (ESP32 per mainan):** Terhubung ke Wi-Fi Master. Kontrol relay (power gate), tampilkan sisa waktu di TM1637, simpan sesi ke NVS (powerloss recovery).
+- **1 Master (ESP32):** Wi-Fi Access Point (DHCP), Dashboard Web Server, Central Registry, API Proxy Gateway for Android.
+- **Multiple Slaves (ESP32 per toy):** Connected to Master Wi-Fi. Controls relay (power gate), displays remaining time on TM1637, saves session to NVS (powerloss recovery).
 
-## Arsitektur
+## Architecture
 
 ```
 ┌──────────────────┐    Wi-Fi (API)   ┌──────────────────┐    Wi-Fi    ┌───────────────┐
@@ -19,30 +19,30 @@ Sistem timer rental untuk mainan excavator RC di mall. Menggunakan arsitektur **
 │ Web Browser      │   (Single IP)    │ (Access Point +  │             └───────────────┘
 │ (Dashboard)      │                  │  API Gateway)    │◄───────────►│ ESP32 Slave 2 │
 └──────────────────┘                  └──────────────────┘             └───────────────┘
-                                                                       ... (hingga 9 Slave + 1 perangkat operator)
+                                                                       ... (up to 9 Slaves + 1 operator device)
 ```
 
-**Fitur Utama:**
-1. **Centralized API:** Android/browser hanya perlu 1 IP Master (`192.168.4.1`).
-2. **Zero-Touch Provisioning:** Slave baru otomatis daftar ke Master, dapat ID (EXC-01, EXC-02).
-3. **Powerloss Recovery:** Slave simpan sisa waktu ke NVS tiap 30 detik dan setiap perubahan state.
-4. **Thread-Safe Registry:** Mutex melindungi akses data slave antara Core 0 (polling) dan Core 1 (web server).
-5. **WiFi Auto-Reconnect:** Slave pakai `WiFi.onEvent()` + `WiFi.setAutoReconnect(true)`, server tetap responsif saat WiFi putus.
-6. **Hardware Watchdog:** 10 detik watchdog di kedua perangkat, auto-reboot jika hang.
-7. **HTTP Timeout:** Semua panggilan HTTPClient dibatasi 2 detik timeout.
+**Key Features:**
+1. **Centralized API:** Android/browser only needs 1 Master IP (`192.168.4.1`).
+2. **Zero-Touch Provisioning:** New slave automatically registers to Master, gets an ID (EXC-01, EXC-02).
+3. **Powerloss Recovery:** Slave saves remaining time to NVS every 30 seconds and on every state change.
+4. **Thread-Safe Registry:** Mutex protects slave data access between Core 0 (polling) and Core 1 (web server).
+5. **WiFi Auto-Reconnect:** Slave uses `WiFi.onEvent()` + `WiFi.setAutoReconnect(true)`, server remains responsive when WiFi drops.
+6. **Hardware Watchdog:** 10-second watchdog on both devices, auto-reboot if frozen.
+7. **HTTP Timeout:** All HTTPClient calls are limited to a 2-second timeout.
 
 ---
 
-## Struktur Proyek
+## Project Structure
 
 ```
 excavator-rental-timer/
-├── docs/                  ← Dokumentasi sistem, arsitektur, API, wiring.
+├── docs/                  ← System documentation, architecture, API, wiring.
 ├── firmware/              
-│   ├── wifi_master/       ← Firmware ESP32 Master (Access Point, Dashboard WebUI, API Gateway)
-│   └── wifi_slave/        ← Firmware ESP32 Slave (WiFi Client, Relay, TM1637, NVS)
+│   ├── wifi_master/       ← ESP32 Master Firmware (Access Point, Dashboard WebUI, API Gateway)
+│   └── wifi_slave/        ← ESP32 Slave Firmware (WiFi Client, Relay, TM1637, NVS)
 ├── frontend/              
-│   └── android_reference/ ← SDK / kode referensi aplikasi Android (Kotlin)
+│   └── android_reference/ ← Android App reference code / SDK (Kotlin)
 ├── .gitignore
 └── README.md
 ```
@@ -52,26 +52,26 @@ excavator-rental-timer/
 ## Hardware
 
 ### Master Unit
-1 buah ESP32 DevKit V1 (DOIT), ditenagai USB 5V, disimpan di meja kasir.
+1 unit ESP32 DevKit V1 (DOIT), powered by 5V USB, placed at the cashier's desk.
 
-### Slave Unit (per mainan)
+### Slave Unit (per toy)
 
-| Komponen | Harga Est. |
-|----------|-----------|
-| ESP32 DevKit V1 | Rp 35.000-60.000 |
-| TM1637 4-Digit 7-Segment | Rp 8.000-15.000 |
-| Module Relay 1-Channel 3.3V | Rp 10.000-15.000 |
-| Kabel Jumper | Rp 4.000 |
-| Buck Converter (LM2596) | Rp 8.000-15.000 |
-| Box/Enclosure | Rp 20.000-40.000 |
-| **Total per unit** | **Rp 80.000-145.000** |
+| Component | Est. Price |
+|-----------|------------|
+| ESP32 DevKit V1 | Rp 35,000-60,000 |
+| TM1637 4-Digit 7-Segment | Rp 8,000-15,000 |
+| Relay Module 1-Channel 3.3V | Rp 10,000-15,000 |
+| Jumper Wires | Rp 4,000 |
+| Buck Converter (LM2596) | Rp 8,000-15,000 |
+| Box/Enclosure | Rp 20,000-40,000 |
+| **Total per unit** | **Rp 80,000-145,000** |
 
 ---
 
-## Wiring Slave (per mainan)
+## Slave Wiring (per toy)
 
-| Komponen | Pin ESP32 Slave |
-|----------|----------------|
+| Component | ESP32 Slave Pin |
+|-----------|-----------------|
 | TM1637 CLK | GPIO 22 |
 | TM1637 DIO | GPIO 23 |
 | TM1637 VCC | 3.3V / 5V |
@@ -79,140 +79,140 @@ excavator-rental-timer/
 | Relay IN | GPIO 26 |
 | Buzzer (+) | GPIO 27 |
 | Button (Resume) | GPIO 32 (INPUT_PULLUP) |
-| LED Status | GPIO 2 (built-in) |
+| Status LED | GPIO 2 (built-in) |
 
-Lihat detail wiring di [docs/RELAY_WIRING.md](docs/RELAY_WIRING.md).
+See detailed wiring in [docs/RELAY_WIRING.md](docs/RELAY_WIRING.md).
 
 ---
 
-## State Mainan
+## Toy State
 
-| State | Display | Relay | Deskripsi |
-|-------|---------|-------|-----------|
-| LOCKED | `----` | OFF | Standby, tidak ada sesi |
-| RUNNING | `MM:SS` (kedip) | ON | Countdown aktif |
-| PAUSED | `MM:SS` (kedip) | OFF | Timer dijeda |
-| ENDED | `----` | OFF | Waktu habis |
-| FAULT | `----` | OFF | Error (butuh restart) |
+| State | Display | Relay | Description |
+|-------|---------|-------|-------------|
+| LOCKED | `----` | OFF | Standby, no session |
+| RUNNING | `MM:SS` (blink) | ON | Countdown active |
+| PAUSED | `MM:SS` (blink) | OFF | Timer paused |
+| ENDED | `----` | OFF | Time is up |
+| FAULT | `----` | OFF | Error (needs restart) |
 
 **Powerloss Recovery Behavior:**
-- Saat battery dicabut & dipasang kembali, slave akan **bunyi 3x peringatan** lalu **auto-resume** ke state RUNNING (bukan PAUSED).
-- Safety: ada jeda 3 detik dengan bunyi peringatan sebelum auto-resume, memberi waktu staff menjauhkan tangan.
-- Jika ingin mengubah ke mode PAUSED (tidak auto-resume), ubah `state = STATE_RUNNING` menjadi `state = STATE_PAUSED` di bagian Powerloss Recovery pada `wifi_slave.ino`.
+- When battery is disconnected & reconnected, the slave will **sound 3 warning beeps** then **auto-resume** to RUNNING state (not PAUSED).
+- Safety: there is a 3-second delay with warning beeps before auto-resume, giving staff time to move their hands away.
+- If you want to change to PAUSED mode (no auto-resume), change `state = STATE_RUNNING` to `state = STATE_PAUSED` in the Powerloss Recovery section of `wifi_slave.ino`.
 
 ---
 
-## API Endpoint Master (192.168.4.1)
+## Master API Endpoints (192.168.4.1)
 
-| Method | Endpoint | Fungsi |
-|--------|----------|--------|
+| Method | Endpoint | Function |
+|--------|----------|----------|
 | GET | `/` | Dashboard WebUI |
-| GET | `/api/slaves` | Status seluruh armada (JSON array) |
-| POST | `/api/command` | Proxy command ke slave `{id, cmd, val}` |
-| POST | `/api/transfer_time` | Transfer sisa waktu antar slave `{from_id, to_id}` |
-| POST | `/api/edit_slave` | Ubah ID slave `{mac, id}` |
-| POST | `/api/delete_slave` | Hapus slave dari registry `{mac}` |
-| GET | `/api/register?mac=...` | Registrasi / heartbeat slave |
+| GET | `/api/slaves` | Fleet status (JSON array) |
+| POST | `/api/command` | Proxy command to slave `{id, cmd, val}` |
+| POST | `/api/transfer_time` | Transfer remaining time between slaves `{from_id, to_id}` |
+| POST | `/api/edit_slave` | Change slave ID `{mac, id}` |
+| POST | `/api/delete_slave` | Delete slave from registry `{mac}` |
+| GET | `/api/register?mac=...` | Slave registration / heartbeat |
 
 ### Command List
 
-| Command | Val | Deskripsi |
-|---------|-----|-----------|
-| ADD_TIME | detik | Tambah waktu (300 = 5 menit) |
-| PAUSE | 0 | Jeda timer |
-| RESUME | 0 | Lanjutkan timer |
-| STOP | 0 | Kunci / reset timer ke 0 |
-| IDENTIFY | 0 | Buzzer 3x + layar kedip (cari mainan) |
+| Command | Val | Description |
+|---------|-----|-------------|
+| ADD_TIME | seconds | Add time (300 = 5 minutes) |
+| PAUSE | 0 | Pause timer |
+| RESUME | 0 | Resume timer |
+| STOP | 0 | Lock / reset timer to 0 |
+| IDENTIFY | 0 | Buzzer 3x + screen blink (find toy) |
 | REBOOT | 0 | Restart ESP32 slave |
 
-Lihat spesifikasi lengkap di [docs/WIFI_API_SPEC.md](docs/WIFI_API_SPEC.md) dan [docs/openapi.yaml](docs/openapi.yaml).
+See full specifications in [docs/WIFI_API_SPEC.md](docs/WIFI_API_SPEC.md) and [docs/openapi.yaml](docs/openapi.yaml).
 
 ---
 
-## Paket Harga (Mall)
+## Pricing Packages (Mall)
 
-| Durasi | Harga |
-|--------|-------|
-| 5 menit | Rp 25.000 |
-| 10 menit | Rp 40.000 |
-| 15 menit | Rp 55.000 |
+| Duration | Price |
+|----------|-------|
+| 5 minutes | Rp 25,000 |
+| 10 minutes | Rp 40,000 |
+| 15 minutes | Rp 55,000 |
 
 ---
 
 ## Production Build
 
-### Prasyarat
-- **Board:** ESP32 (bukan Arduino Uno). Gunakan ESP32 DevKit V1 / DOIT.
+### Prerequisites
+- **Board:** ESP32 (not Arduino Uno). Use ESP32 DevKit V1 / DOIT.
 - **Arduino IDE:** Install ESP32 board via Boards Manager (URL: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`)
-- **Library yang dibutuhkan:**
+- **Required Libraries:**
   - `TM1637Display` (by Avishay Orpaz) — via Library Manager
-  - `WiFi`, `WebServer`, `HTTPClient`, `Preferences` — bawaan ESP32 core
+  - `WiFi`, `WebServer`, `HTTPClient`, `Preferences` — built into ESP32 core
 
 ### Upload Master
-1. Buka `firmware/wifi_master/wifi_master.ino` di Arduino IDE.
-2. Pilih board: `ESP32 Dev Module` atau `DOIT ESP32 DEVKIT V1`.
-3. Upload ke ESP32 yang akan jadi router/server pusat.
-4. Buka Serial Monitor (115200 baud) untuk melihat log.
-5. Dashboard tersedia di `http://192.168.4.1`.
+1. Open `firmware/wifi_master/wifi_master.ino` in Arduino IDE.
+2. Select board: `ESP32 Dev Module` or `DOIT ESP32 DEVKIT V1`.
+3. Upload to the ESP32 that will act as the central router/server.
+4. Open Serial Monitor (115200 baud) to view logs.
+5. Dashboard is available at `http://192.168.4.1`.
 
 ### Upload Slave
-1. Buka `firmware/wifi_slave/wifi_slave.ino` di Arduino IDE.
-2. Sesuaikan SSID/password WiFi di kode jika Master diubah.
-3. Upload ke ESP32 di masing-masing excavator.
-4. Slave akan otomatis daftar ke Master (Zero-Touch Provisioning).
+1. Open `firmware/wifi_slave/wifi_slave.ino` in Arduino IDE.
+2. Adjust WiFi SSID/password in the code if Master was changed.
+3. Upload to the ESP32 on each excavator.
+4. Slave will automatically register to Master (Zero-Touch Provisioning).
 
 ---
 
 ## Troubleshooting
 
-### Slave tidak muncul di Dashboard
-1. Pastikan Master sudah menyala dan memancarkan Wi-Fi `ExcavatorMaster`.
-2. Cek Serial Monitor slave (115200 baud) — lihat log `[WIFI]` dan `[API]`.
-3. Pastikan slave dalam jangkauan Wi-Fi Master.
-4. Jika MAC sudah terdaftar tapi ID salah, gunakan fitur **Edit** di modal Manage Slaves.
+### Slave doesn't appear in Dashboard
+1. Ensure Master is turned on and broadcasting `ExcavatorMaster` Wi-Fi.
+2. Check slave Serial Monitor (115200 baud) — look at `[WIFI]` and `[API]` logs.
+3. Ensure slave is within Master's Wi-Fi range.
+4. If MAC is registered but ID is wrong, use the **Edit** feature in the Manage Slaves modal.
 
-### Timer tidak jalan setelah battery diganti
-- Slave akan auto-resume setelah 3 detik peringatan bunyi.
-- Jika tetap LOCKED, cek NVS — sisa waktu mungkin sudah 0 sebelum battery dicabut.
+### Timer doesn't run after battery replacement
+- Slave will auto-resume after 3 seconds of warning beeps.
+- If it remains LOCKED, check NVS — remaining time might have reached 0 before battery disconnection.
 
-### Master mati sementara
-- Slave tetap menghitung timer lokal walau master/AP mati.
-- Saat Wi-Fi kembali, slave akan register ulang lalu master membaca state terbaru dari `/api/state`.
-- Dashboard master akan menandai slave offline setelah 30 detik tanpa heartbeat.
+### Master temporarily down
+- Slaves continue to run local timers even if master/AP goes down.
+- When Wi-Fi returns, slaves will re-register and master will read latest state from `/api/state`.
+- Master dashboard will mark slave offline after 30 seconds without a heartbeat.
 
-### Master hang / tidak responsif
-- Hardware watchdog akan auto-reboot Master setelah 10 detik hang.
-- Cek Serial Monitor untuk error `[PROXY]` atau `[REGISTRY]`.
+### Master frozen / unresponsive
+- Hardware watchdog will auto-reboot Master after 10 seconds of freeze.
+- Check Serial Monitor for `[PROXY]` or `[REGISTRY]` errors.
 
-### Kompilasi gagal
-- Pastikan ESP32 core versi 3.x terinstall.
-- Library TM1637Display harus terinstall via Library Manager.
-- Jika error `esp_task_wdt_init`, pastikan kode menggunakan config struct (sudah diperbaiki untuk core 3.3.0+).
+### Compilation failed
+- Ensure ESP32 core version 3.x is installed.
+- TM1637Display library must be installed via Library Manager.
+- If `esp_task_wdt_init` error occurs, ensure code uses config struct (already fixed for core 3.3.0+).
 
 ---
 
-## Dokumen Terkait
+## Related Documents
 
-| Dokumen | Isi |
-|---------|-----|
-| [MVP_SPEC.md](MVP_SPEC.md) | Spesifikasi MVP lengkap |
+| Document | Content |
+|----------|---------|
+| [MVP_SPEC.md](MVP_SPEC.md) | Complete MVP specifications |
 | [PRD.md](PRD.md) | Product Requirement Document |
-| [docs/WIFI_API_SPEC.md](docs/WIFI_API_SPEC.md) | Spesifikasi API untuk Android |
+| [docs/WIFI_API_SPEC.md](docs/WIFI_API_SPEC.md) | API specification for Android |
 | [docs/openapi.yaml](docs/openapi.yaml) | OpenAPI 3.0 spec (Swagger) |
-| [docs/ANDROID_APP_FLOW.md](docs/ANDROID_APP_FLOW.md) | Flow aplikasi Android |
-| [docs/RELAY_WIRING.md](docs/RELAY_WIRING.md) | Wiring relay & pinout |
-| [docs/MERMAID_DIAGRAMS.md](docs/MERMAID_DIAGRAMS.md) | Diagram arsitektur & flow |
-| [docs/excavator-rental-module-design.md](docs/excavator-rental-module-design.md) | Desain konsep modul |
+| [docs/ANDROID_APP_FLOW.md](docs/ANDROID_APP_FLOW.md) | Android app flow |
+| [docs/RELAY_WIRING.md](docs/RELAY_WIRING.md) | Relay wiring & pinout |
+| [docs/MERMAID_DIAGRAMS.md](docs/MERMAID_DIAGRAMS.md) | Architecture & flow diagrams |
+| [docs/excavator-rental-module-design.md](docs/excavator-rental-module-design.md) | Module concept design |
 
 ---
 
-## Keamanan
+## Security
 
-- Sistem **tidak terhubung internet** — hanya LAN Wi-Fi AP Master lokal.
-- Slave terhubung via Wi-Fi dengan password.
-- MAC address digunakan sebagai identitas unik hardware.
-- Tidak ada enkripsi data (MVP) — network terisolasi dari internet.
+- System is **not connected to the internet** — only local Wi-Fi LAN from Master AP.
+- Slaves connect via Wi-Fi with password.
+- MAC address is used as unique hardware identity.
+- No data encryption (MVP) — network is isolated from the internet.
 
-## Lisensi
+## License
 
 Proprietary — Excavator Timer Rental

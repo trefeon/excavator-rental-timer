@@ -1,58 +1,58 @@
-# Panduan Integrasi Android — Excavator Rental Timer API
+# Android Integration Guide — Excavator Rental Timer API
 
 Last Updated: June 4, 2026
 
 ---
 
-## 1. Prinsip Arsitektur
+## 1. Architectural Principles
 
 ```text
 ┌─────────────────────┐          ┌──────────────┐          ┌──────────────┐
-│  Aplikasi Android   │──HTTP──► │ Master ESP32 │──HTTP──► │ Slave ESP32  │
+│  Android App        │──HTTP──► │ Master ESP32 │──HTTP──► │ Slave ESP32  │
 │                     │◄──JSON── │ (Bridge API) │◄──JSON── │ (Timer HW)   │
 │  ● User Auth        │          │              │          │              │
-│  ● Pricing/Tarif    │          │ HANYA proxy  │          │ ● Relay      │
-│  ● History/Revenue  │          │ Tidak simpan │          │ ● TM1637     │
-│  ● Role-based UI    │          │ data bisnis  │          │ ● Buzzer     │
-│  ● Semua kalkulasi  │          │              │          │ ● Timer      │
+│  ● Pricing/Tariff   │          │ ONLY proxy   │          │ ● Relay      │
+│  ● History/Revenue  │          │ No business  │          │ ● TM1637     │
+│  ● Role-based UI    │          │ data stored  │          │ ● Buzzer     │
+│  ● All calculations │          │              │          │ ● Timer      │
 └─────────────────────┘          └──────────────┘          └──────────────┘
 ```
 
-### Tanggung Jawab Masing-Masing Layer
+### Layer Responsibilities
 
-| Layer | Tanggung Jawab |
+| Layer | Responsibility |
 |---|---|
-| **Android App** | Auth lokal/cloud, harga & paket, histori sewa, revenue, konversi menit→detik, format display, role-based access |
-| **Master ESP32** | Bridge/proxy saja: forward command ke slave, polling state dari slave, registry MAC↔ID |
-| **Slave ESP32** | Timer countdown, relay ON/OFF, display TM1637, buzzer, powerloss recovery, simpan state ke NVS |
+| **Android App** | Local/cloud auth, prices & packages, rental history, revenue, minutes→seconds conversion, display formatting, role-based access |
+| **Master ESP32** | Bridge/proxy only: forwards commands to slaves, polls state from slaves, MAC↔ID registry |
+| **Slave ESP32** | Timer countdown, relay ON/OFF, TM1637 display, buzzer, powerloss recovery, save state to NVS |
 
-> **KUNCI:** Semua value dari API adalah **RAW** (mentah). Tidak ada kalkulasi apapun. Aplikasi Android bertanggung jawab 100% atas semua logika bisnis.
+> **KEY:** All values from the API are **RAW**. There are no calculations whatsoever. The Android App is 100% responsible for all business logic.
 
 ---
 
-## 2. Koneksi ke Master
+## 2. Connection to Master
 
-| Parameter | Nilai |
+| Parameter | Value |
 |---|---|
 | Wi-Fi SSID | `ExcavatorMaster` |
 | Password | `12345678` |
 | Base URL | `http://192.168.4.1` |
 | Protocol | HTTP (cleartext) |
 
-**Wajib di `AndroidManifest.xml`:**
+**Required in `AndroidManifest.xml`:**
 ```xml
 <application android:usesCleartextTraffic="true" ...>
 ```
 
 ---
 
-## 3. API Endpoints Lengkap
+## 3. Full API Endpoints
 
-Semua endpoint **open access** (tanpa token/auth). Auth dikelola 100% di internal Android.
+All endpoints are **open access** (no token/auth). Auth is 100% managed internally by Android.
 
-### 3.1 `GET /api/slaves` — Daftar Semua Unit
+### 3.1 `GET /api/slaves` — List All Units
 
-Polling endpoint utama. Panggil setiap **3-5 detik**.
+Primary polling endpoint. Call every **3-5 seconds**.
 
 **Response (`200 OK`):**
 ```json
@@ -80,21 +80,21 @@ Polling endpoint utama. Panggil setiap **3-5 detik**.
 
 #### Field Dictionary
 
-| Field | Type | Deskripsi | Catatan untuk Android |
+| Field | Type | Description | Notes for Android |
 |---|---|---|---|
-| `id` | `int` | Nomor urut unit (1-50) | Format tampilan: `String.format("EXC-%02d", id)` |
-| `ip` | `string` | IP address slave di jaringan | Untuk debugging saja, tidak perlu ditampilkan ke user |
-| `mac` | `string` | MAC address hardware (format `XX:XX:XX:XX:XX:XX`) | Digunakan saat edit/delete slave |
-| `online` | `boolean` | `true` jika slave merespon dalam 30 detik terakhir | Gunakan untuk indikator koneksi |
-| `state` | `string` | Status unit saat ini | Lihat tabel State di bawah |
-| `time_left` | `int` | Sisa waktu dalam **detik** (raw) | Android harus format sendiri: `time_left / 60` = menit, `time_left % 60` = detik |
-| `battery` | `string` | Status baterai | Saat ini selalu `"OK"` (hardcoded, belum ada sensor) |
+| `id` | `int` | Unit sequence number (1-50) | Display format: `String.format("EXC-%02d", id)` |
+| `ip` | `string` | Slave IP address on network | For debugging only, no need to show to user |
+| `mac` | `string` | Hardware MAC address (`XX:XX:XX:XX:XX:XX`) | Used when editing/deleting slaves |
+| `online` | `boolean` | `true` if slave responded in last 30s | Use for connection indicator |
+| `state` | `string` | Current unit status | See State table below |
+| `time_left` | `int` | Remaining time in **seconds** (raw) | Android must format itself: `time_left / 60` = mins, `time_left % 60` = secs |
+| `battery` | `string` | Battery status | Currently always `"OK"` (hardcoded, no sensor yet) |
 
-> **⚠️ Field yang TIDAK ada:** `name` (format sendiri dari `id`), `last_seen` (gunakan `online` boolean saja).
+> **⚠️ Fields NOT present:** `name` (format yourself from `id`), `last_seen` (just use `online` boolean).
 
 ---
 
-### 3.2 `POST /api/command` — Kirim Perintah ke Unit
+### 3.2 `POST /api/command` — Send Command to Unit
 
 **Request Body:**
 ```json
@@ -107,26 +107,26 @@ Polling endpoint utama. Panggil setiap **3-5 detik**.
 
 #### Request Fields
 
-| Field | Type | Wajib | Deskripsi |
+| Field | Type | Required | Description |
 |---|---|---|---|
-| `id` | `int` | ✅ | Nomor unit target (dari `GET /api/slaves`) |
-| `cmd` | `string` | ✅ | Command yang dikirim (lihat tabel di bawah) |
-| `time` | `int` | Untuk `ADD_TIME` saja | Jumlah waktu dalam **detik** |
+| `id` | `int` | ✅ | Target unit number (from `GET /api/slaves`) |
+| `cmd` | `string` | ✅ | Command sent (see table below) |
+| `time` | `int` | `ADD_TIME` only | Time amount in **seconds** |
 
-#### Daftar Commands
+#### Command List
 
-| Command | `time` | Kapan Digunakan |
+| Command | `time` | When Used |
 |---|---|---|
-| `ADD_TIME` | 1 - 28800 | Menambah waktu sewa (dalam detik). Contoh: 300 = 5 menit |
-| `PAUSE` | 0 | Jeda timer (relay OFF, countdown berhenti) |
-| `RESUME` | 0 | Lanjutkan timer yang di-pause |
-| `STOP` | 0 | Reset waktu ke 0 & kunci relay |
-| `IDENTIFY` | 0 | Buzzer 3x + display kedip (untuk mencari unit fisik) |
+| `ADD_TIME` | 1 - 28800 | Add rental time (in seconds). Example: 300 = 5 minutes |
+| `PAUSE` | 0 | Pause timer (relay OFF, countdown stops) |
+| `RESUME` | 0 | Resume paused timer |
+| `STOP` | 0 | Reset time to 0 & lock relay |
+| `IDENTIFY` | 0 | Buzzer 3x + display blink (to find physical unit) |
 | `REBOOT` | 0 | Restart ESP32 slave |
 
-> **PENTING:** Satuan `time` selalu **DETIK**. Jika Android menampilkan pilihan "5 menit", kirim `time: 300`.
+> **IMPORTANT:** `time` unit is always **SECONDS**. If Android shows a "5 minutes" option, send `time: 300`.
 
-**Response Sukses (`200 OK`):**
+**Success Response (`200 OK`):**
 ```json
 {
   "ok": 1,
@@ -136,7 +136,7 @@ Polling endpoint utama. Panggil setiap **3-5 detik**.
 }
 ```
 
-**Response Gagal (contoh: state tidak sesuai):**
+**Failed Response (example: invalid state):**
 ```json
 {
   "ok": 0,
@@ -148,27 +148,27 @@ Polling endpoint utama. Panggil setiap **3-5 detik**.
 
 #### Response Fields
 
-| Field | Type | Deskripsi |
+| Field | Type | Description |
 |---|---|---|
-| `ok` | `int` | `1` = berhasil, `0` = gagal |
-| `code` | `string` | Kode status (lihat tabel error codes) |
-| `time_left` | `int` | Sisa waktu terbaru dalam **detik** |
-| `state` | `string` | State terbaru setelah command |
+| `ok` | `int` | `1` = success, `0` = failed |
+| `code` | `string` | Status code (see error codes table) |
+| `time_left` | `int` | Latest remaining time in **seconds** |
+| `state` | `string` | Latest state after command |
 
-#### Error Codes dari Slave
+#### Slave Error Codes
 
-| Code | Arti | Tindakan Android |
+| Code | Meaning | Android Action |
 |---|---|---|
-| `OK` | Berhasil | Update UI |
-| `BAD_STATE` | Command tidak valid untuk state saat ini (misal PAUSE saat LOCKED) | Tampilkan toast "Unit tidak dalam kondisi yang sesuai" |
-| `EXCEEDS_LIMIT` | ADD_TIME melebihi batas max (480 menit) | Tampilkan toast "Waktu melebihi batas maksimum" |
-| `UNKNOWN_COMMAND` | Command tidak dikenali | Bug — cek kode Android |
-| `BAD_FORMAT` | Body request bukan JSON | Bug — cek request format |
-| `BAD_JSON` | JSON parse error | Bug — cek JSON syntax |
+| `OK` | Success | Update UI |
+| `BAD_STATE` | Invalid command for current state (e.g. PAUSE when LOCKED) | Show toast "Unit not in a suitable state" |
+| `EXCEEDS_LIMIT` | ADD_TIME exceeds max limit (480 mins) | Show toast "Time exceeds maximum limit" |
+| `UNKNOWN_COMMAND` | Unrecognized command | Bug — check Android code |
+| `BAD_FORMAT` | Request body is not JSON | Bug — check request format |
+| `BAD_JSON` | JSON parse error | Bug — check JSON syntax |
 
 ---
 
-### 3.3 `POST /api/edit_slave` — Ubah ID Unit
+### 3.3 `POST /api/edit_slave` — Change Unit ID
 
 **Request Body:**
 ```json
@@ -178,11 +178,11 @@ Polling endpoint utama. Panggil setiap **3-5 detik**.
 }
 ```
 
-**Response:** `{"ok": 1}` atau `{"ok": 0, "error": "ID Taken"}`
+**Response:** `{"ok": 1}` or `{"ok": 0, "error": "ID Taken"}`
 
 ---
 
-### 3.4 `POST /api/delete_slave` — Hapus Unit dari Registry
+### 3.4 `POST /api/delete_slave` — Delete Unit from Registry
 
 **Request Body:**
 ```json
@@ -197,99 +197,99 @@ Polling endpoint utama. Panggil setiap **3-5 detik**.
 
 ## 4. HTTP Status Codes
 
-| HTTP Status | Arti | Penanganan Android |
+| HTTP Status | Meaning | Android Handling |
 |---|---|---|
-| `200 OK` | Sukses | Parse JSON response |
-| `400 Bad Request` | Input tidak valid / JSON rusak / ID sudah dipakai | Tampilkan `error` field ke user |
-| `404 Not Found` | Slave tidak ditemukan di registry | "Unit belum terdaftar" |
-| `502 Bad Gateway` | Slave offline / koneksi radio terputus | "Unit tidak merespon (offline)" |
-| `503 Service Unavailable` | Master sibuk (race condition) | Auto-retry setelah 1-2 detik |
+| `200 OK` | Success | Parse JSON response |
+| `400 Bad Request` | Invalid input / malformed JSON / ID taken | Show `error` field to user |
+| `404 Not Found` | Slave not found in registry | "Unit is not registered yet" |
+| `502 Bad Gateway` | Slave offline / radio connection dropped | "Unit is not responding (offline)" |
+| `503 Service Unavailable` | Master busy (race condition) | Auto-retry after 1-2 seconds |
 
 ---
 
 ## 5. State Machine & Color Mapping
 
-| State | Warna UI | Icon | Relay | Display | Deskripsi |
+| State | UI Color | Icon | Relay | Display | Description |
 |---|---|---|---|---|---|
-| `LOCKED` | Abu-abu | 🔒 | OFF | `----` | Standby, tidak ada sesi |
-| `RUNNING` | Hijau | ▶ | ON | `MM:SS` | Countdown aktif |
-| `PAUSED` | Oranye | ⏸ | OFF | `MM:SS` | Timer dijeda |
-| `ENDED` | Merah | ⏹ | OFF | `----` | Waktu habis |
-| `OFFLINE` | Abu-abu pudar | ⚫ | - | - | Unit tidak merespon (field `online: false`) |
+| `LOCKED` | Gray | 🔒 | OFF | `----` | Standby, no session |
+| `RUNNING` | Green | ▶ | ON | `MM:SS` | Countdown active |
+| `PAUSED` | Orange | ⏸ | OFF | `MM:SS` | Timer paused |
+| `ENDED` | Red | ⏹ | OFF | `----` | Time is up |
+| `OFFLINE` | Faded gray | ⚫ | - | - | Unit not responding (`online: false` field) |
 
-> **Catatan:** `OFFLINE` bukan state dari firmware. Ini disimpulkan dari field `online == false` di response `GET /api/slaves`.
+> **Note:** `OFFLINE` is not a firmware state. It is deduced from the `online == false` field in the `GET /api/slaves` response.
 
 ---
 
-## 6. Yang WAJIB Di-handle Android (Bukan Firmware)
+## 6. MUST Be Handled by Android (Not Firmware)
 
-| Fitur | Tanggung Jawab | Penjelasan |
+| Feature | Responsibility | Explanation |
 |---|---|---|
-| **Nama Unit** | Android | Format dari `id`: `String.format("EXC-%02d", id)` |
-| **Display Waktu** | Android | Format dari `time_left`: `String.format("%02d:%02d", time_left/60, time_left%60)` |
-| **Harga/Tarif** | Android | Simpan di Room/SQLite. Master tidak tahu soal harga |
-| **Histori Sewa** | Android | Catat setiap transaksi ADD_TIME di database lokal |
-| **Revenue/Pendapatan** | Android | Hitung dari histori sewa × tarif |
-| **User Auth** | Android | SuperAdmin / Admin / Staff — simpan di Room atau Firebase |
-| **Role-Based UI** | Android | Tampilkan/sembunyikan tombol berdasarkan role |
-| **Konversi Waktu** | Android | User pilih "5 menit" → Android kirim `time: 300` |
+| **Unit Name** | Android | Format from `id`: `String.format("EXC-%02d", id)` |
+| **Time Display** | Android | Format from `time_left`: `String.format("%02d:%02d", time_left/60, time_left%60)` |
+| **Price/Tariff** | Android | Save in Room/SQLite. Master knows nothing about prices |
+| **Rental History**| Android | Log every ADD_TIME transaction in local database |
+| **Revenue** | Android | Calculate from rental history × tariff |
+| **User Auth** | Android | SuperAdmin / Admin / Staff — save in Room or Firebase |
+| **Role-Based UI** | Android | Show/hide buttons based on role |
+| **Time Conversion**| Android | User selects "5 mins" → Android sends `time: 300` |
 
 ---
 
 ## 7. DTO Classes (Java)
 
 ```java
-// === Response dari GET /api/slaves ===
+// === Response from GET /api/slaves ===
 public class SlaveDto {
-    public int id;           // Nomor unit (1-50)
-    public String ip;        // IP address slave
-    public String mac;       // MAC address hardware
-    public boolean online;   // true = unit merespon
+    public int id;           // Unit number (1-50)
+    public String ip;        // Slave IP address
+    public String mac;       // Hardware MAC address
+    public boolean online;   // true = unit responding
     public String state;     // "LOCKED", "RUNNING", "PAUSED", "ENDED"
-    public int time_left;    // Sisa waktu dalam DETIK
+    public int time_left;    // Remaining time in SECONDS
     public String battery;   // "OK" (hardcoded)
 
-    /** Helper: format nama unit */
+    /** Helper: format unit name */
     public String getDisplayName() {
         return String.format("EXC-%02d", id);
     }
 
-    /** Helper: format sisa waktu MM:SS */
+    /** Helper: format remaining time MM:SS */
     public String getDisplayTime() {
         return String.format("%02d:%02d", time_left / 60, time_left % 60);
     }
 }
 
-// === Request body untuk POST /api/command ===
+// === Request body for POST /api/command ===
 public class CommandDto {
-    public int id;       // Nomor unit target
+    public int id;       // Target unit number
     public String cmd;   // "ADD_TIME", "PAUSE", "RESUME", "STOP", "IDENTIFY", "REBOOT"
-    public int time;     // Detik (hanya untuk ADD_TIME, 0 untuk lainnya)
+    public int time;     // Seconds (only for ADD_TIME, 0 for others)
 }
 
-// === Response dari POST /api/command ===
+// === Response from POST /api/command ===
 public class CommandResponse {
-    public int ok;           // 1 = sukses, 0 = gagal
-    public String code;      // "OK", "BAD_STATE", "EXCEEDS_LIMIT", dll
-    public int time_left;    // Sisa waktu terbaru (detik)
-    public String state;     // State terbaru
+    public int ok;           // 1 = success, 0 = failed
+    public String code;      // "OK", "BAD_STATE", "EXCEEDS_LIMIT", etc
+    public int time_left;    // Latest remaining time (seconds)
+    public String state;     // Latest state
 }
 
-// === Request body untuk POST /api/edit_slave ===
+// === Request body for POST /api/edit_slave ===
 public class EditSlaveDto {
-    public String mac;   // MAC address unit yang mau diubah
-    public int id;       // ID baru
+    public String mac;   // MAC address of unit to modify
+    public int id;       // New ID
 }
 
-// === Request body untuk POST /api/delete_slave ===
+// === Request body for POST /api/delete_slave ===
 public class DeleteSlaveDto {
-    public String mac;   // MAC address unit yang mau dihapus
+    public String mac;   // MAC address of unit to delete
 }
 
-// === Generic response untuk edit/delete ===
+// === Generic response for edit/delete ===
 public class StatusDto {
-    public int ok;          // 1 = sukses, 0 = gagal
-    public String error;    // Pesan error (opsional)
+    public int ok;          // 1 = success, 0 = failed
+    public String error;    // Error message (optional)
 }
 ```
 
@@ -353,9 +353,9 @@ public class ApiClient {
 
 ---
 
-## 10. Contoh Implementasi
+## 10. Implementation Example
 
-### A. Dashboard Polling (setiap 3 detik)
+### A. Dashboard Polling (every 3 seconds)
 
 ```java
 private Handler handler = new Handler();
@@ -375,9 +375,9 @@ private Runnable pollRunnable = new Runnable() {
 
             @Override
             public void onFailure(Call<List<SlaveDto>> call, Throwable t) {
-                // Tampilkan indikator "Master Offline"
+                // Show "Master Offline" indicator
                 showMasterOffline();
-                handler.postDelayed(pollRunnable, 5000); // retry lebih lambat
+                handler.postDelayed(pollRunnable, 5000); // retry slower
             }
         });
     }
@@ -387,14 +387,14 @@ private Runnable pollRunnable = new Runnable() {
 handler.post(pollRunnable);
 ```
 
-### B. Menambah Waktu (5 menit = 300 detik)
+### B. Add Time (5 minutes = 300 seconds)
 
 ```java
 public void addTime(int excavatorId, int durationMinutes, int priceRupiah) {
-    // 1. Konversi menit ke detik
+    // 1. Convert minutes to seconds
     int seconds = durationMinutes * 60;
 
-    // 2. Kirim ke firmware
+    // 2. Send to firmware
     CommandDto cmd = new CommandDto();
     cmd.id = excavatorId;
     cmd.cmd = "ADD_TIME";
@@ -404,18 +404,18 @@ public void addTime(int excavatorId, int durationMinutes, int priceRupiah) {
         @Override
         public void onResponse(Call<CommandResponse> call, Response<CommandResponse> res) {
             if (res.isSuccessful() && res.body() != null && res.body().ok == 1) {
-                // 3. Catat revenue di database lokal Android
+                // 3. Log revenue in local Android database
                 db.insertRentalRecord(excavatorId, durationMinutes, priceRupiah);
-                Toast.makeText(ctx, "Waktu ditambahkan!", Toast.LENGTH_SHORT).show();
+                Toast.makeText(ctx, "Time added!", Toast.LENGTH_SHORT).show();
             } else {
                 String errorCode = res.body() != null ? res.body().code : "UNKNOWN";
-                Toast.makeText(ctx, "Gagal: " + errorCode, Toast.LENGTH_SHORT).show();
+                Toast.makeText(ctx, "Failed: " + errorCode, Toast.LENGTH_SHORT).show();
             }
         }
 
         @Override
         public void onFailure(Call<CommandResponse> call, Throwable t) {
-            Toast.makeText(ctx, "Koneksi terputus", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, "Connection lost", Toast.LENGTH_SHORT).show();
         }
     });
 }
@@ -425,5 +425,5 @@ public void addTime(int excavatorId, int durationMinutes, int priceRupiah) {
 
 ## 11. Testing Tools
 
-- **OpenAPI Spec**: `docs/openapi.yaml` — import ke Swagger UI untuk interactive docs
-- **Postman Collection**: `docs/Excavator_API_Postman_Collection.json` — import ke Postman untuk test manual
+- **OpenAPI Spec**: `docs/openapi.yaml` — import to Swagger UI for interactive docs
+- **Postman Collection**: `docs/Excavator_API_Postman_Collection.json` — import to Postman for manual testing
