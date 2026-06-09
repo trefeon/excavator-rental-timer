@@ -4,6 +4,7 @@
 # Whitelist directories and root files
 !/firmware/
 !/docs/
+!/scripts/
 !.gitignore
 !/platformio.ini
 !/README.md
@@ -35,5 +36,10 @@
 
 # Docs specific ignores
 /docs/*.pdf
-!/docs/ANDROID_APP_GUIDE.pdf
 /docs/convert.ps1
+
+# Python & Node ignores
+**/__pycache__/
+**/*.pyc
+**/node_modules/
+**/.env
