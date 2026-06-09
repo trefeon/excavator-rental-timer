@@ -52,7 +52,12 @@ static const uint8_t CLK_PIN = 6;
 static const uint8_t DIO_PIN = 7;
 static const uint8_t BUTTON_PIN = 9;
 static const uint8_t NET_LED_PIN = 8;   // built-in LED (network activity)
-static const bool RELAY_ACTIVE_HIGH = true;
+
+// ===== KONFIGURASI TRIGGER RELAY / MOSFET =====
+// 1 = Relay Module High Trigger
+// 2 = Relay Module Low Trigger (Butuh trik High-Z untuk modul 5V)
+// 3 = MOSFET Module (seperti XY-MOS, aktif HIGH)
+static const uint8_t TRIGGER_MODE = 2; // Ganti angka ini sesuai hardware
 
 // ===== TIMING CONSTANTS =====
 static const uint32_t REGISTRATION_RETRY_INTERVAL_MS = 5000;
@@ -124,23 +129,45 @@ void beep(int durationMs, int count = 1) {
   }
 }
 
+bool isRelayOn() {
+  return (state == STATE_RUNNING && remainingSeconds > 0);
+}
+
 void applyRelay() {
-  if (state == STATE_RUNNING && remainingSeconds > 0) {
-    digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? HIGH : LOW);
+  if (isRelayOn()) {
+    pinMode(RELAY_PIN, OUTPUT);
+    if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
+      digitalWrite(RELAY_PIN, HIGH);
+    } else {
+      digitalWrite(RELAY_PIN, LOW); // Low Trigger On
+    }
   } else {
-    digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? LOW : HIGH);
+    if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
+      pinMode(RELAY_PIN, OUTPUT);
+      digitalWrite(RELAY_PIN, LOW);
+    } else {
+      // Trik Active LOW: atur sebagai INPUT (High-Z) untuk mematikan optocoupler 5V
+      pinMode(RELAY_PIN, INPUT);
+    }
+  }
+  // Immediately update LED base state if not currently flashing
+  if (netLedEndMs == 0) {
+    digitalWrite(NET_LED_PIN, isRelayOn() ? LOW : HIGH);
   }
 }
 
 void netLedFlash(int ms = 50) {
   netLedEndMs = millis() + ms;
-  digitalWrite(NET_LED_PIN, LOW);  // ON (active LOW for ESP32-C3 Super Mini)
+  // Invert current base state to create a flash/wink
+  // Active LOW: LOW = ON, HIGH = OFF
+  digitalWrite(NET_LED_PIN, isRelayOn() ? HIGH : LOW);
 }
 
 void updateNetLed() {
   if (netLedEndMs > 0 && millis() < netLedEndMs) return;
   netLedEndMs = 0;
-  digitalWrite(NET_LED_PIN, HIGH);  // OFF
+  // Restore to base state
+  digitalWrite(NET_LED_PIN, isRelayOn() ? LOW : HIGH);
 }
 
 const char* stateName(RentalState value) {
@@ -489,7 +516,12 @@ void setup() {
 
   display.setBrightness(0x0f);
 
-  pinMode(RELAY_PIN, OUTPUT);
+  if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
+    digitalWrite(RELAY_PIN, LOW);
+    pinMode(RELAY_PIN, OUTPUT);
+  } else {
+    pinMode(RELAY_PIN, INPUT); // Default ke High-Z (Mati) untuk relay active low
+  }
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(NET_LED_PIN, OUTPUT);
@@ -529,7 +561,7 @@ void setup() {
     changeState(STATE_RUNNING);
     Serial.printf("Powerloss Recovery: Restored %lu seconds. State RUNNING.\n", remainingSeconds);
   } else {
-    state = STATE_LOCKED;
+    changeState(STATE_LOCKED);
   }
 
   applyRelay();
@@ -539,6 +571,8 @@ void setup() {
 
   WiFi.onEvent(onWiFiEvent);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(WIFI_PS_NONE); // Disable modem sleep
+  WiFi.setTxPower(WIFI_POWER_8_5dBm); // Lower TX power to prevent voltage brownouts on C3 Super Mini
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -662,6 +696,12 @@ void loop() {
   }
 
   updateNetLed();
+
+  static uint32_t lastLedBlink = 0;
+  if (millis() - lastLedBlink >= 3000) {
+    lastLedBlink = millis();
+    netLedFlash(50);
+  }
 
   static uint32_t lastHb = 0;
   if (millis() - lastHb >= 1000) {

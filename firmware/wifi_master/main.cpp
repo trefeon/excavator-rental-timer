@@ -341,10 +341,12 @@ void handleCommandProxy() {
   netLedFlash(80);
 
   String targetIp = "";
+  String slaveState = "";
   if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
     for (int i = 0; i < slaveCount; i++) {
       if (slaves[i].id == targetId) {
         targetIp = slaves[i].ip;
+        slaveState = slaves[i].state;
         break;
       }
     }
@@ -357,19 +359,7 @@ void handleCommandProxy() {
     return;
   }
 
-  // --- WORKAROUND FOR ANDROID APP BUG ---
-  // The Android app mistakenly sends CMD_ADD_TIME with time = remaining seconds when resuming a paused timer.
-  // Since the app's UI doesn't allow opening the "Add Time" dialog while the timer is paused, 
-  // any ADD_TIME received while PAUSED is guaranteed to be this resume bug.
-  // We intercept it and convert it to a proper RESUME command.
-  /*
-  if (cmd == "ADD_TIME" && slaveState == "PAUSED") {
-    Serial.println("[PROXY] Intercepted Android App Resume Bug. Converting ADD_TIME to RESUME.");
-    cmd = "RESUME";
-    time = 0;
-  }
-  */
-  // --------------------------------------
+
 
   Serial.printf("[PROXY] Forwarding to %s/api/command\n", targetIp.c_str());
   HTTPClient http;
@@ -382,6 +372,28 @@ void handleCommandProxy() {
   if (httpCode > 0) {
     String response = http.getString();
     Serial.printf("[PROXY] Slave replied (%d): %s\n", httpCode, response.c_str());
+    
+    // OPTIMISTIC UPDATE: Sync Master's cache immediately from slave's response
+    if (httpCode == 200) {
+      JsonDocument respDoc;
+      if (!deserializeJson(respDoc, response)) {
+        if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+          for (int i = 0; i < slaveCount; i++) {
+            if (slaves[i].id == targetId) {
+              if (respDoc["state"].is<const char*>()) {
+                slaves[i].state = respDoc["state"].as<String>();
+              }
+              if (respDoc["time_left"].is<int>()) {
+                slaves[i].time_left = respDoc["time_left"].as<int>();
+              }
+              break;
+            }
+          }
+          xSemaphoreGive(slavesMutex);
+        }
+      }
+    }
+
     server.send(httpCode, "application/json", response);
   } else {
     Serial.printf("[PROXY] Slave %s offline or timeout\n", targetIp.c_str());
@@ -417,7 +429,7 @@ void pollSlavesTask(void* pvParameters) {
     esp_task_wdt_reset();
 
     digitalWrite(LED_PIN, HIGH);
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     digitalWrite(LED_PIN, LOW);
 
     uint32_t now = millis();
@@ -437,6 +449,7 @@ void pollSlavesTask(void* pvParameters) {
       esp_task_wdt_reset(); // PREVENT BOOTLOOP if multiple slaves timeout!
       
       HTTPClient http;
+      http.setReuse(true);
       http.begin("http://" + targetIps[i] + "/api/state");
       http.setTimeout(HTTP_TIMEOUT_MS);
       int code = http.GET();
@@ -496,6 +509,7 @@ void setup() {
   IPAddress apIP(192, 168, 4, 1);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 10);
+  WiFi.setSleep(false);
 
   WiFi.onEvent(onApEvent);
 
@@ -533,9 +547,16 @@ void setup() {
 
 void loop() {
   static uint32_t lastHb = 0;
+  static uint32_t lastLedBlink = 0;
   esp_task_wdt_reset();
   server.handleClient();
   uint32_t now = millis();
+
+  if (now - lastLedBlink >= 3000) {
+    lastLedBlink = now;
+    netLedFlash(50);
+  }
+
   if (now - lastHb >= 1000) {
     lastHb = now;
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {

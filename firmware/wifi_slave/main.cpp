@@ -44,7 +44,12 @@ static const uint8_t CLK_PIN = 22;
 static const uint8_t DIO_PIN = 23;
 static const uint8_t BUTTON_PIN = 32;
 static const uint8_t NET_LED_PIN = 2;   // built-in LED (network activity)
-static const bool RELAY_ACTIVE_HIGH = true;
+
+// ===== KONFIGURASI TRIGGER RELAY / MOSFET =====
+// 1 = Relay Module High Trigger (Standar ESP32)
+// 2 = Relay Module Low Trigger (Butuh trik High-Z)
+// 3 = MOSFET Module (seperti XY-MOS, aktif HIGH)
+static const uint8_t TRIGGER_MODE = 1; // Ganti angka ini sesuai hardware
 
 // ===== TIMING CONSTANTS =====
 static const uint32_t REGISTRATION_RETRY_INTERVAL_MS = 5000;
@@ -117,10 +122,22 @@ void beep(int durationMs, int count = 1) {
 }
 
 void applyRelay() {
-  if (state == STATE_RUNNING && remainingSeconds > 0) {
-    digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? HIGH : LOW);
+  bool isOn = (state == STATE_RUNNING && remainingSeconds > 0);
+  if (isOn) {
+    pinMode(RELAY_PIN, OUTPUT);
+    if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
+      digitalWrite(RELAY_PIN, HIGH);
+    } else {
+      digitalWrite(RELAY_PIN, LOW); // Low Trigger On
+    }
   } else {
-    digitalWrite(RELAY_PIN, RELAY_ACTIVE_HIGH ? LOW : HIGH);
+    if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
+      pinMode(RELAY_PIN, OUTPUT);
+      digitalWrite(RELAY_PIN, LOW);
+    } else {
+      // Trik Active LOW: atur sebagai INPUT (High-Z) untuk mematikan optocoupler 5V
+      pinMode(RELAY_PIN, INPUT);
+    }
   }
 }
 
@@ -481,7 +498,12 @@ void setup() {
 
   display.setBrightness(0x0f);
 
-  pinMode(RELAY_PIN, OUTPUT);
+  if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
+    digitalWrite(RELAY_PIN, LOW);
+    pinMode(RELAY_PIN, OUTPUT);
+  } else {
+    pinMode(RELAY_PIN, INPUT); // Default ke High-Z (Mati) untuk relay active low
+  }
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(NET_LED_PIN, OUTPUT);
@@ -531,7 +553,7 @@ void setup() {
 
   WiFi.onEvent(onWiFiEvent);
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(WIFI_PS_NONE);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
   Serial.print("[WIFI] Connecting to Wi-Fi");
