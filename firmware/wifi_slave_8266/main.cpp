@@ -5,7 +5,7 @@
  * Connects to "ExcavatorMaster", auto-registers, handles commands.
  *
  * NodeMCU Pin Mapping:
- *   D1 (GPIO5)  -> Relay
+ *   D1 (GPIO5)  -> MOSFET Trigger (Active HIGH)
  *   D2 (GPIO4)  -> Buzzer (active)
  *   D5 (GPIO14) -> Button (INPUT_PULLUP)
  *   D6 (GPIO12) -> TM1637 CLK
@@ -121,8 +121,7 @@ void eepromLoad() {
 
 void updateDisplay() {
   if (state == STATE_LOCKED || state == STATE_ENDED) {
-    uint8_t dash[] = { 0x40, 0x40, 0x40, 0x40 };
-    display.setSegments(dash);
+    display.clear(); // Turn off display to save battery
   } else {
     uint32_t show = remaining > 5999 ? 5999 : remaining;
     int mins = show / 60;
@@ -413,6 +412,11 @@ void setup() {
 
   // WiFi
   WiFi.mode(WIFI_STA);
+  
+  // OPTIMIZATION: Maximize Range (Force 802.11b & Max TX Power)
+  WiFi.setPhyMode(WIFI_PHY_MODE_11B);
+  WiFi.setOutputPower(20.5);
+
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("[WIFI] Connecting");
   uint32_t t0 = millis();

@@ -18,6 +18,7 @@
 #include <esp_idf_version.h>
 #include <freertos/semphr.h>
 #include <esp_task_wdt.h>
+#include <esp_wifi.h>
 
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
@@ -510,6 +511,10 @@ void setup() {
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 10);
   WiFi.setSleep(false);
+
+  // OPTIMIZATION: Maximize Range (Force 802.11b & Max TX Power)
+  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B);
+  esp_wifi_set_max_tx_power(84); // 21dBm Max power
 
   WiFi.onEvent(onApEvent);
 

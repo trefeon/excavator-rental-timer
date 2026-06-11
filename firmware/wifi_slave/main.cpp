@@ -11,10 +11,10 @@
  *    - CLK  -> GPIO 22
  *    - DIO  -> GPIO 23
  * 
- * 2. Relay Module (1-Channel)
- *    - VCC  -> 5V (or 3.3V depending on relay module)
- *    - GND  -> GND
- *    - IN   -> GPIO 26
+ * 2. MOSFET Module (e.g., XY-MOS)
+ *    - V+   -> Power Source (e.g., 12V/24V depending on load)
+ *    - V-   -> GND
+ *    - TRIG -> GPIO 26 (Active HIGH)
  * 
  * 3. Buzzer (Active)
  *    - VCC / +  -> GPIO 27
@@ -36,6 +36,7 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_idf_version.h>
+#include <esp_wifi.h>
 
 // ===== PINS =====
 static const uint8_t RELAY_PIN = 26;
@@ -49,7 +50,7 @@ static const uint8_t NET_LED_PIN = 2;   // built-in LED (network activity)
 // 1 = Relay Module High Trigger (Standar ESP32)
 // 2 = Relay Module Low Trigger (Butuh trik High-Z)
 // 3 = MOSFET Module (seperti XY-MOS, aktif HIGH)
-static const uint8_t TRIGGER_MODE = 1; // Ganti angka ini sesuai hardware
+static const uint8_t TRIGGER_MODE = 3; // Ganti angka ini sesuai hardware (XY-MOS)
 
 // ===== TIMING CONSTANTS =====
 static const uint32_t REGISTRATION_RETRY_INTERVAL_MS = 5000;
@@ -102,8 +103,7 @@ int pendingBeepMs = 0;
 
 void updateDisplay() {
   if (state == STATE_LOCKED || state == STATE_ENDED) {
-    uint8_t data[] = { 0x40, 0x40, 0x40, 0x40 };
-    display.setSegments(data);
+    display.clear(); // Turn off display to save battery
   } else {
     int mins = remainingSeconds / 60;
     int secs = remainingSeconds % 60;
@@ -553,7 +553,12 @@ void setup() {
 
   WiFi.onEvent(onWiFiEvent);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(WIFI_PS_NONE);
+  WiFi.setSleep(WIFI_PS_MIN_MODEM); // Enable modem sleep to save battery
+
+  // OPTIMIZATION: Maximize Range (Force 802.11b & Max TX Power)
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B);
+  esp_wifi_set_max_tx_power(84); // 21dBm Max power
+
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
   Serial.print("[WIFI] Connecting to Wi-Fi");

@@ -12,10 +12,10 @@
  *    - CLK  -> GPIO 6
  *    - DIO  -> GPIO 7
  * 
- * 2. Relay Module (1-Channel)
- *    - VCC  -> 5V
- *    - GND  -> GND
- *    - IN   -> GPIO 4
+ * 2. MOSFET Module (e.g., XY-MOS)
+ *    - V+   -> Power Source (e.g., 12V/24V depending on load)
+ *    - V-   -> GND
+ *    - TRIG -> GPIO 4 (Active HIGH)
  * 
  * 3. Buzzer (Active)
  *    - VCC / +  -> GPIO 5
@@ -44,6 +44,7 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_idf_version.h>
+#include <esp_wifi.h>
 
 // ===== PINS =====
 static const uint8_t RELAY_PIN = 4;
@@ -57,7 +58,7 @@ static const uint8_t NET_LED_PIN = 8;   // built-in LED (network activity)
 // 1 = Relay Module High Trigger
 // 2 = Relay Module Low Trigger (Butuh trik High-Z untuk modul 5V)
 // 3 = MOSFET Module (seperti XY-MOS, aktif HIGH)
-static const uint8_t TRIGGER_MODE = 2; // Ganti angka ini sesuai hardware
+static const uint8_t TRIGGER_MODE = 3; // Ganti angka ini sesuai hardware (XY-MOS)
 
 // ===== TIMING CONSTANTS =====
 static const uint32_t REGISTRATION_RETRY_INTERVAL_MS = 5000;
@@ -110,8 +111,7 @@ int pendingBeepMs = 0;
 
 void updateDisplay() {
   if (state == STATE_LOCKED || state == STATE_ENDED) {
-    uint8_t data[] = { 0x40, 0x40, 0x40, 0x40 };
-    display.setSegments(data);
+    display.clear(); // Turn off display to save battery
   } else {
     int mins = remainingSeconds / 60;
     int secs = remainingSeconds % 60;
@@ -571,8 +571,12 @@ void setup() {
 
   WiFi.onEvent(onWiFiEvent);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(WIFI_PS_NONE); // Disable modem sleep
+  WiFi.setSleep(WIFI_PS_MIN_MODEM); // Enable modem sleep to save battery
   WiFi.setTxPower(WIFI_POWER_8_5dBm); // Lower TX power to prevent voltage brownouts on C3 Super Mini
+  
+  // OPTIMIZATION: Maximize Range (Force 802.11b)
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B);
+  
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
