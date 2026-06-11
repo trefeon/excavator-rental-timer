@@ -12,7 +12,7 @@ If the ESP module dies, gets damaged, or encounters an error, the Relay will not
 
 ## 2. Required Components
 1. ESP32-C3 Super Mini Module (already flashed with `slave_c3` firmware).
-2. 1-Channel Relay Module (5V, capable of holding a 10A load).
+2. Dual MOSFET Module (e.g., XY-MOS) to replace mechanical relays.
 3. Step-down / Buck Converter (e.g. LM2596 or Mini360) to lower the RC battery voltage to 5V.
 4. TM1637 4-Digit Display.
 5. Active Buzzer 3.3V/5V.
@@ -33,24 +33,28 @@ The cable from the RC battery connector is split into **two branches**:
 - **OUT (+)** Buck Converter *(set to 5V)* ➔ **5V Pin** on ESP32-C3.
 - **OUT (-)** Buck Converter ➔ **GND Pin** on ESP32-C3.
 
-**Branch 2 (To power the RC controlled by Relay):**
-- RC Battery (-) ➔ Goes straight to **(-) Cable of RC Mainboard** without being cut.
-- RC Battery (+) ➔ First goes to the **COM** screw on the Relay.
-- The **NO (Normally Open)** screw on the Relay ➔ Goes to the **(+) Cable of RC Mainboard**.
+**Branch 2 (To power the RC controlled by MOSFET):**
+- RC Battery (+) ➔ First goes to the **VIN (+)** screw on the MOSFET module.
+- RC Battery (-) ➔ First goes to the **VIN (-)** screw on the MOSFET module.
+- The **OUT (+)** screw on the MOSFET ➔ Goes to the **(+) Cable of RC Mainboard**.
+- The **OUT (-)** screw on the MOSFET ➔ Goes to the **(-) Cable of RC Mainboard**.
 
 *Electrical Flow Schematic:*
 `Battery (+)` ──┬──> `Buck Converter` ──> `ESP32` (Always On)
               │
-              └──> `Relay (COM)` ──[Open/Close]──> `Relay (NO)` ──> `RC Mainboard (+)`
+              └──> `MOSFET (VIN+)` ──[Gate]──> `MOSFET (OUT+)` ──> `RC Mainboard (+)`
 
-### B. Relay Control Wiring from ESP32
-So the ESP32 can control the relay switch above:
-- **VCC Relay Pin** ➔ 5V Pin on ESP32-C3
-- **GND Relay Pin** ➔ GND Pin on ESP32-C3
-- **IN / Signal Relay Pin** ➔ **GPIO 4 Pin** on ESP32-C3
+`Battery (-)` ──┬──> `Buck Converter` ──> `ESP32` (Always On)
+              │
+              └──> `MOSFET (VIN-)` ──[Gate]──> `MOSFET (OUT-)` ──> `RC Mainboard (-)`
+
+### B. MOSFET Control Wiring from ESP32
+So the ESP32 can control the MOSFET switch above:
+- **TRIG / PWM Pin** on MOSFET ➔ **GPIO 4 Pin** on ESP32-C3
+- **GND Pin** on MOSFET ➔ GND Pin on ESP32-C3
 
 > [!NOTE]
-> The `slave_c3` firmware is configured using **Active LOW (Low Trigger Relay)** logic. A LOW signal (0V) from GPIO 4 will activate the relay, and a HIGH signal (3.3V) will deactivate the relay. If you use a MOSFET (for example, P-channel with pull-up, or MOSFET inverter driver circuit), make sure this logic is adjusted accordingly.
+> The `slave_c3` firmware is configured using **Active HIGH (MOSFET Trigger)** logic. A HIGH signal (3.3V) from GPIO 4 will activate the MOSFET, and a LOW signal (0V) will deactivate it.
 
 ### C. Peripheral Wiring (Display, Buzzer, Button)
 According to the code in the firmware:
@@ -80,11 +84,11 @@ According to the code in the firmware:
    * **Buzzer** should face the RC plastic vents so its sound comes out loud when time is up.
    * **Resume Button** can be hidden at the bottom of the RC (near the factory on/off switch) or behind the cabin, making it easy for operators to reach but not easy for children to press randomly.
 
-3. **ESP32 & Relay Module Protection:**
+3. **ESP32 & MOSFET Module Protection:**
    Wrap the ESP32 and Buck Converter using a large transparent Heat Shrink Tube or put them in a small plastic box (e.g., a candy box) then hot-glue it before hiding it inside the RC hull. This is to avoid short circuits caused by dust, sand, or water in the play area.
 
-4. **Relay Cable Strength:**
-   Because the excavator motor current is quite large when the RC climbs or digs sand (can reach 2-4 Amperes), **make sure the cables entering the COM and NO ports on the Relay are thick enough**, don't use regular dupont jumper cables.
+4. **MOSFET Cable Strength:**
+   Because the excavator motor current is quite large when the RC climbs or digs sand (can reach 2-4 Amperes), **make sure the cables entering the VIN and OUT ports on the MOSFET are thick enough**, don't use regular dupont jumper cables.
 
 ---
 
@@ -92,7 +96,7 @@ According to the code in the firmware:
 - RC is turned on (Factory ON Switch is pressed).
 - Battery supplies the Buck Converter ➔ ESP32 turns on.
 - ESP32 searches for Master WiFi signal.
-- Relay is in **OFF (Dead)** position, RC cannot be moved (Mainboard hasn't received power).
+- MOSFET is in **OFF (Closed Gate)** position, RC cannot be moved (Mainboard hasn't received power).
 - Operator adds time from the Android application ➔ Master sends instructions to ESP32.
-- ESP32 triggers Relay (Relay clicks) ➔ COM connects to NO ➔ RC Excavator turns on and can be controlled.
-- Time is up ➔ Relay turns back **OFF** ➔ Mainboard dies instantly.
+- ESP32 triggers MOSFET (GPIO 4 goes HIGH) ➔ VIN connects to OUT ➔ RC Excavator turns on and can be controlled.
+- Time is up ➔ MOSFET turns back **OFF** (GPIO 4 goes LOW) ➔ Mainboard dies instantly.
