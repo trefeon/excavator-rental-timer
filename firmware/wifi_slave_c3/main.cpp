@@ -113,14 +113,49 @@ volatile bool masterKnown = false;
 // Pending identify flag (processed in loop to avoid blocking ESP-NOW callback)
 volatile bool pendingIdentify = false;
 
+// ===== ANIMATION =====
+uint8_t animFrame = 0;
+const uint8_t SNAKE_FRAMES[12][4] = {
+  { 0x01, 0, 0, 0 }, // D0: A (Top)
+  { 0, 0x01, 0, 0 }, // D1: A (Top)
+  { 0, 0, 0x01, 0 }, // D2: A (Top)
+  { 0, 0, 0, 0x01 }, // D3: A (Top)
+  { 0, 0, 0, 0x02 }, // D3: B (Top-Right)
+  { 0, 0, 0, 0x04 }, // D3: C (Bot-Right)
+  { 0, 0, 0, 0x08 }, // D3: D (Bottom)
+  { 0, 0, 0x08, 0 }, // D2: D (Bottom)
+  { 0, 0x08, 0, 0 }, // D1: D (Bottom)
+  { 0x08, 0, 0, 0 }, // D0: D (Bottom)
+  { 0x10, 0, 0, 0 }, // D0: E (Bot-Left)
+  { 0x20, 0, 0, 0 }  // D0: F (Top-Left)
+};
+
 // ===== DISPLAY =====
 void updateDisplay() {
-  if (state == STATE_LOCKED || state == STATE_ENDED) {
-    display.clear(); // Turn off display to save battery
+  if (state == STATE_FAULT) {
+    uint8_t err[] = { 0x79, 0x50, 0x50, 0x00 }; // "Err "
+    display.setSegments(err);
+  } else if (state == STATE_LOCKED || state == STATE_ENDED) {
+    uint8_t segments[4] = {0, 0, 0, 0};
+    // Trail of 3 segments for the snake animation
+    for (int i = 0; i < 3; i++) {
+      int f = (animFrame - i + 12) % 12;
+      for (int d = 0; d < 4; d++) {
+        segments[d] |= SNAKE_FRAMES[f][d];
+      }
+    }
+    display.setSegments(segments);
   } else {
     int mins = remainingSeconds / 60;
     int secs = remainingSeconds % 60;
-    int dispTime = (mins * 100) + secs;
+    int dispTime;
+    if (mins > 99) {
+      int hours = mins / 60;
+      int remMins = mins % 60;
+      dispTime = (hours * 100) + remMins;
+    } else {
+      dispTime = (mins * 100) + secs;
+    }
     display.showNumberDecEx(dispTime, colonState ? 0b01000000 : 0, true);
   }
 }
@@ -516,6 +551,10 @@ void setup() {
   if (savedRem > 0) {
     remainingSeconds = savedRem;
     totalPaidSeconds = savedPaid;
+    state = STATE_RUNNING;
+    
+    // Immediately apply relay so toy doesn't lose power during boot delay
+    applyRelay();
 
     Serial.println("Powerloss Recovery: Auto-resuming in 3 seconds...");
     for (int i = 0; i < 3; i++) {
@@ -527,14 +566,16 @@ void setup() {
     changeState(STATE_RUNNING);
     Serial.printf("Powerloss Recovery: Restored %lu seconds. State RUNNING.\n", remainingSeconds);
   } else {
+    state = STATE_LOCKED;
     changeState(STATE_LOCKED);
   }
 
   applyRelay();
 
-  // Show "Conn" on display during setup
-  uint8_t dataConn[] = { 0x39, 0x5c, 0x54, 0x54 };
+  // Show "boot" on display during setup (looks much cleaner than Conn)
+  uint8_t dataConn[] = { 0x7c, 0x5c, 0x5c, 0x78 };
   display.setSegments(dataConn);
+  delay(1500); // Wait 1.5s so the user can actually see it!
 
   // ===== Wi-Fi + ESP-NOW INIT =====
   // STA mode only (no network connection, just radio for ESP-NOW)
@@ -598,37 +639,54 @@ void loop() {
     }
 
     // ===== TIMER TICK =====
-    while (state == STATE_RUNNING && remainingSeconds > 0 && now - lastTickMs >= 1000) {
-      lastTickMs += 1000;
-      now = millis();
-      colonState = !colonState;
-      remainingSeconds--;
+    if (state == STATE_RUNNING && remainingSeconds > 0) {
+      while (now - lastTickMs >= 1000) {
+        lastTickMs += 1000;
+        now = millis();
+        colonState = !colonState;
+        remainingSeconds--;
 
-      if (remainingSeconds == 60) {
-        pendingBeepMs = 200;
-        pendingBeepCount = 1;
-      } else if (remainingSeconds <= 10 && remainingSeconds > 0) {
-        pendingBeepMs = 50;
-        pendingBeepCount = 1;
+        if (remainingSeconds == 60) {
+          pendingBeepMs = 200;
+          pendingBeepCount = 1;
+        } else if (remainingSeconds <= 10 && remainingSeconds > 0) {
+          pendingBeepMs = 50;
+          pendingBeepCount = 1;
+        }
+
+        if (remainingSeconds % FLASH_SAVE_INTERVAL_S == 0 && remainingSeconds > 0) {
+          saveStateToFlash();
+        }
+
+        updateDisplay();
+
+        if (remainingSeconds == 0) {
+          Serial.println("[TIMER] Time is up! Locking Excavator.");
+          changeState(STATE_ENDED);
+          saveStateToFlash();
+          pendingBeepMs = 1000;
+          pendingBeepCount = 1;
+          break;
+        }
       }
-
-      if (remainingSeconds % FLASH_SAVE_INTERVAL_S == 0 && remainingSeconds > 0) {
-        saveStateToFlash();
+    } else if (state == STATE_PAUSED && remainingSeconds > 0) {
+      if (now - lastTickMs >= 500) {
+        lastTickMs = now;
+        static bool showDisplay = true;
+        showDisplay = !showDisplay;
+        if (showDisplay) {
+          updateDisplay();
+        } else {
+          display.clear();
+        }
       }
-
-      updateDisplay();
-
-      if (remainingSeconds == 0) {
-        Serial.println("[TIMER] Time is up! Locking Excavator.");
-        changeState(STATE_ENDED);
-        saveStateToFlash();
-        pendingBeepMs = 1000;
-        pendingBeepCount = 1;
-        break;
+    } else if (state == STATE_LOCKED || state == STATE_ENDED) {
+      if (now - lastTickMs >= 80) { // 80ms per frame for smooth fast animation
+        lastTickMs = now;
+        animFrame = (animFrame + 1) % 12;
+        updateDisplay();
       }
-    }
-
-    if (state != STATE_RUNNING) {
+    } else {
       lastTickMs = now;
     }
     xSemaphoreGive(stateMutex);
