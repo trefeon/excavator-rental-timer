@@ -1,0 +1,676 @@
+#pragma once
+
+const char INDEX_HTML[] PROGMEM = R"=====(
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+  <title>Dashboard Wi-Fi - Excavator Rental</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #e2e8f0;
+      --panel: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      
+      --success: #10b981;
+      --success-bg: #d1fae5;
+      --warning: #f59e0b;
+      --warning-bg: #fef3c7;
+      --danger: #ef4444;
+      --danger-bg: #fee2e2;
+      --offline: #94a3b8;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    
+    body {
+      background: var(--bg); color: var(--text-main);
+      display: flex; justify-content: center;
+      min-height: 100vh; margin: 0;
+    }
+
+    .app-container {
+      width: 100%; max-width: 480px; height: 100vh;
+      background: var(--panel); position: relative;
+      overflow: hidden; box-shadow: 0 0 40px rgba(0,0,0,0.1);
+    }
+
+    @media (max-width: 480px) {
+      .app-container { box-shadow: none; }
+      body { background: var(--panel); }
+    }
+
+    .screen {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; background: #f8fafc;
+      transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    }
+    
+    #screen-list { transform: translateX(0); }
+    #screen-detail { transform: translateX(100%); background: #ffffff; }
+
+    /* Header */
+    .header {
+      background: #ffffff; padding: 20px 20px 15px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px; z-index: 10;
+    }
+    .header-text { flex: 1; }
+    .header h1 { font-size: 18px; font-weight: 700; }
+    .header-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    
+    .back-btn {
+      background: none; border: none; padding: 8px; margin-left: -8px;
+      cursor: pointer; color: var(--primary);
+    }
+
+    /* Summary Dashboard */
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 20px; background: #ffffff; border-bottom: 1px solid var(--border); }
+    .summary-box { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .summary-box .label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 4px; }
+    .summary-box .val { font-size: 18px; font-weight: 800; color: var(--primary); }
+    .summary-box .val.money { color: var(--success); }
+
+    /* Scanner Bar */
+    .scanner-bar {
+      background: #eff6ff; border-bottom: 1px solid #bfdbfe;
+      padding: 10px 20px; display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: #1e3a8a; font-weight: 600;
+    }
+    .pulse-dot {
+      width: 10px; height: 10px; background: var(--primary); border-radius: 50%;
+      animation: pulse-ring 1.5s infinite;
+    }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+    }
+
+    /* List View */
+    .list-content {
+      flex: 1; overflow-y: auto; padding: 16px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+
+    .card {
+      background: #ffffff; border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 16px; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .card:active { transform: scale(0.98); background: #f8fafc; }
+    
+    .card-info h3 { font-size: 16px; font-weight: 700; margin-bottom: 2px; display:flex; align-items:center; gap: 8px; }
+    .card-mac { font-size: 11px; color: var(--text-muted); font-family: monospace; margin-bottom: 6px; }
+    .card-time { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; margin-bottom: 4px; }
+    
+    .badge {
+      display: inline-block; padding: 4px 8px; border-radius: 6px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    .badge.running { background: var(--success-bg); color: var(--success); }
+    .badge.paused { background: var(--warning-bg); color: var(--warning); }
+    .badge.locked { background: var(--danger-bg); color: var(--danger); }
+    .badge.offline { background: #e2e8f0; color: var(--offline); }
+
+    .signal-indicator { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .signal-online { background: #10b981; box-shadow: 0 0 6px #10b981; }
+    .signal-weak { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+    .signal-offline { background: #94a3b8; }
+
+    .last-seen { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+
+    /* Detail View */
+    .detail-content { flex: 1; overflow-y: auto; padding: 20px; }
+
+    .hero-timer {
+      background: linear-gradient(135deg, #1e293b, #0f172a); color: white;
+      border-radius: 20px; padding: 30px 20px; text-align: center;
+      margin-bottom: 24px; position: relative; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+    }
+
+    .time-display {
+      font-size: 64px; font-weight: 800; font-variant-numeric: tabular-nums;
+      line-height: 1; margin-bottom: 12px; text-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+    
+    .hero-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.1); padding: 6px 14px; border-radius: 20px;
+      font-size: 13px; font-weight: 600; backdrop-filter: blur(4px);
+    }
+    .hero-status .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .hero-status.running .dot { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .hero-status.paused .dot { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+    .hero-status.locked .dot { background: #f87171; box-shadow: 0 0 8px #f87171; }
+    .hero-status.offline .dot { background: #94a3b8; }
+
+    /* Controls */
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+    #btn-add-time { grid-column: span 2; }
+    button {
+      border: none; border-radius: 12px; padding: 14px; font-size: 14px; font-weight: 600;
+      cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    button:active { transform: scale(0.95); }
+    button:disabled { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
+    
+    .btn-add { background: var(--success-bg); color: #047857; }
+    .btn-pause { background: var(--warning-bg); color: #b45309; }
+    .btn-stop { background: var(--danger-bg); color: #b91c1c; }
+    .btn-start { background: var(--primary); color: white; }
+
+    .section-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; color: var(--text-main); }
+    .info-box { background: #f8fafc; border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 24px; }
+    .metric-row { display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+    .metric-row:last-child { border: none; padding-bottom: 0; margin-bottom: 0; }
+    .metric-label { color: var(--text-muted); font-size: 13px; }
+    .metric-value { font-weight: 700; font-size: 13px; }
+
+    .log-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .log-item:last-child { border: none; padding-bottom: 0; }
+    .log-time { color: var(--text-muted); font-family: monospace; }
+    .log-msg { font-weight: 500; flex: 1; margin: 0 10px; }
+
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- SCREEN 1: LIST -->
+    <div id="screen-list" class="screen">
+      <div class="header">
+        <div class="header-text">
+          <h1>Rental Excavator</h1>
+          <div class="header-sub">Pemantauan Armada (Wi-Fi Master)</div>
+        </div>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-box">
+          <div class="label">Pendapatan Hari Ini</div>
+          <div class="val money" id="global-revenue">Rp 0</div>
+        </div>
+        <div class="summary-box">
+          <div class="label">Total Waktu Main</div>
+          <div class="val" id="global-played">0j 0m</div>
+        </div>
+      </div>
+      <div class="scanner-bar">
+        <div class="pulse-dot"></div>
+        Polling Data Master...
+      </div>
+      <div class="list-content" id="unit-list">
+        <!-- Static DOM elements updated by JS -->
+      </div>
+    </div>
+
+    <!-- SCREEN 2: DETAIL -->
+    <div id="screen-detail" class="screen">
+      <div class="header">
+        <button class="back-btn" onclick="goBack()">
+          <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+        <div class="header-text">
+          <h1 id="detail-title">EXC-00</h1>
+          <div class="header-sub" id="detail-mac">MAC: --</div>
+        </div>
+      </div>
+      
+      <div class="detail-content">
+        <div style="text-align:center; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:16px; display: flex; justify-content: center; align-items: center; gap: 6px;" id="detail-last-seen">
+          Last Update: <span id="dt-seen" style="color:var(--text-main)">0s ago</span>
+          <svg id="global-spinner" style="display:none; animation: spin 1s linear infinite;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+        </div>
+
+        <div class="hero-timer">
+          <div class="time-display" id="hero-time">00:00</div>
+          <div class="hero-status running" id="hero-status">
+            <div class="dot"></div>
+            <span id="hero-status-text">RUNNING</span>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls" id="action-controls">
+          <button class="btn-add" id="btn-add-time" onclick="openTimeModal('add')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+            <div style="line-height:1.2;">
+              <div>Tambah Waktu</div>
+            </div>
+          </button>
+          <button class="btn-pause" id="btn-toggle-pause" onclick="sendCommand('PAUSE')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="icon-pause"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span id="txt-toggle-pause">Pause</span>
+          </button>
+          <button class="btn-stop" id="btn-toggle-power" onclick="sendCommand('STOP')">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="icon-power"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>
+            <span id="txt-toggle-power">Stop</span>
+          </button>
+        </div>
+
+        <h3 class="section-title">Status Wi-Fi</h3>
+        <div class="info-box">
+          <div class="metric-row">
+            <span class="metric-label">Baterai</span>
+            <span class="metric-value" id="hw-batt">OK</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Sinyal (RSSI)</span>
+            <span class="metric-value" style="font-family: monospace;" id="hw-rssi">-0 dBm</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Koneksi Wi-Fi</span>
+            <span class="metric-value" style="color:var(--text-muted)">On-Demand</span>
+          </div>
+        </div>
+
+        <h3 class="section-title">Statistik Mesin</h3>
+        <div class="info-box">
+          <div class="metric-row">
+            <span class="metric-label">Pendapatan Mesin</span>
+            <span class="metric-value" style="color:var(--success)" id="det-rev">Rp 0</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Total Dimainkan</span>
+            <span class="metric-value" id="det-played">0j 0m</span>
+          </div>
+        </div>
+
+        <h3 class="section-title">Local Session Log</h3>
+        <div class="info-box" id="command-log" style="padding: 10px 16px;"></div>
+      </div>
+    </div>
+
+    <!-- Time Adjust Modal -->
+    <div id="modal-time" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:100; flex-direction:column; justify-content:flex-end;">
+      <div style="background:#fff; border-radius:20px 20px 0 0; padding:24px; animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);">
+        <h3 id="modal-time-title" style="margin-bottom:16px; font-size:16px; font-weight:700; color:var(--text-main);">Tambah Waktu</h3>
+        <div id="modal-time-options" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+        </div>
+        <button onclick="closeTimeModal()" style="width:100%; background:#f1f5f9; color:#475569; padding:14px; border-radius:12px; font-weight:700; border:none; font-size:14px; cursor:pointer;">Batal</button>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" style="visibility:hidden; min-width:250px; background-color:#334155; color:#fff; text-align:center; border-radius:30px; padding:12px 24px; position:absolute; z-index:1000; left:50%; bottom:30px; transform:translateX(-50%); font-size:14px; font-weight:500; box-shadow:0 10px 25px rgba(0,0,0,0.2); opacity:0; transition:opacity 0.3s, bottom 0.3s;">
+      Notifikasi
+    </div>
+
+  </div>
+
+  <script>
+    /* 
+      Real Wi-Fi Master API Integration
+      Matches ExcavatorWifiManager.kt logic in Android App
+    */
+
+    const MASTER_IP = "192.168.4.1";
+    const API_SLAVES = `http://${MASTER_IP}/api/slaves`;
+    const API_COMMAND = `http://${MASTER_IP}/api/command`;
+
+    let devices = {};
+    let activeUnitId = null;
+    let logs = {};
+    let isProcessing = false;
+    let localStats = {}; // Local tracking for rev & played time since master doesn't track it
+
+    function formatTime(s) {
+      if (s <= 0) return "00:00";
+      return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
+    }
+
+    function formatRp(val) {
+      return 'Rp ' + val.toLocaleString('id-ID');
+    }
+
+    function formatPlayedTime(s) {
+      if (s === 0) return "0j 0m";
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return `${h}j ${m}m`;
+    }
+
+    let toastTimeout;
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.style.visibility = 'visible';
+      t.style.opacity = '1';
+      t.style.bottom = '50px';
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        t.style.opacity = '0';
+        t.style.bottom = '30px';
+        setTimeout(() => { t.style.visibility = 'hidden'; }, 300);
+      }, 3000);
+    }
+
+    function buildListDOM() {
+      const container = document.getElementById('unit-list');
+      container.innerHTML = '';
+      Object.keys(devices).forEach(id => {
+        const devIdStr = `EXC-${id.toString().padStart(2, '0')}`;
+        container.innerHTML += `
+          <div class="card" onclick="goDetail('${id}')">
+            <div class="card-info">
+              <h3><div class="signal-indicator" id="sig-${id}"></div> ${devIdStr}</h3>
+              <div class="card-mac" id="mac-${id}">${devices[id].mac}</div>
+              <div class="badge" id="badge-${id}">--</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="card-time" id="time-${id}">00:00</div>
+              <div class="last-seen" id="seen-${id}">Connected</div>
+            </div>
+          </div>
+        `;
+      });
+    }
+    
+    function logLocalAction(id, cmd, payload, isSuccess) {
+      if(!logs[id]) logs[id] = [];
+      const d = new Date();
+      const ts = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+      let msg = cmd;
+      if (payload) msg += ` ${payload}`;
+      logs[id].unshift({ ts, msg, res: isSuccess ? 'ACK OK' : 'ACK ERR' });
+      if (logs[id].length > 5) logs[id].pop();
+      if (activeUnitId == id) renderLogs();
+    }
+
+    // Polling Loop (like getAllToysState in ExcavatorWifiManager.kt)
+    async function fetchSlaves() {
+      if (isProcessing) return; // Skip polling if we are waiting for a command response
+      try {
+        const response = await fetch(API_SLAVES);
+        if (!response.ok) throw new Error("Network error");
+        const data = await response.json();
+        
+        let totalRev = 0;
+        let totalPlayed = 0;
+        let needsRebuild = false;
+
+        data.forEach(toy => {
+          if (!devices[toy.id]) {
+            devices[toy.id] = toy;
+            needsRebuild = true;
+          } else {
+            // Update local state
+            const oldTime = devices[toy.id].time_left;
+            devices[toy.id] = toy;
+            
+            // Track local stats (played time and simulated revenue)
+            if (!localStats[toy.id]) localStats[toy.id] = { rev: 0, played: 0 };
+            
+            if (toy.state === "RUNNING" && oldTime > 0 && oldTime > toy.time_left) {
+               localStats[toy.id].played += (oldTime - toy.time_left);
+            }
+          }
+          
+          totalRev += (localStats[toy.id]?.rev || 0);
+          totalPlayed += (localStats[toy.id]?.played || 0);
+        });
+
+        if (needsRebuild) buildListDOM();
+        
+        // Update DOM
+        data.forEach(toy => {
+          const id = toy.id;
+          
+          let signalClass = toy.online ? 'signal-online' : 'signal-offline';
+          let badgeClass = toy.online ? toy.state.toLowerCase() : 'offline';
+          let badgeText = toy.online ? toy.state.toUpperCase() : 'OFFLINE';
+          
+          const sigEl = document.getElementById(`sig-${id}`);
+          if (sigEl) sigEl.className = `signal-indicator ${signalClass}`;
+          
+          const timeEl = document.getElementById(`time-${id}`);
+          if (timeEl) timeEl.innerText = (toy.state === 'LOCKED' && toy.time_left <= 0) ? '--:--' : formatTime(toy.time_left);
+          
+          const badgeNode = document.getElementById(`badge-${id}`);
+          if (badgeNode) {
+             badgeNode.className = `badge ${badgeClass.replace('_', '-')}`;
+             badgeNode.innerText = badgeText;
+          }
+          
+          const seenEl = document.getElementById(`seen-${id}`);
+          if (seenEl) seenEl.innerText = toy.online ? 'Online' : 'Offline';
+
+          // Update Detail View if Active
+          if (activeUnitId == id) {
+            document.getElementById('dt-seen').innerText = toy.online ? 'Connected' : 'Offline';
+            document.getElementById('hw-rssi').innerText = toy.online ? 'OK' : '--';
+            document.getElementById('hw-batt').innerText = toy.battery;
+            document.getElementById('hw-batt').style.color = toy.battery === 'LOW' ? 'var(--danger)' : 'var(--success)';
+            
+            document.getElementById('det-rev').innerText = formatRp(localStats[id]?.rev || 0);
+            document.getElementById('det-played').innerText = formatPlayedTime(localStats[id]?.played || 0);
+            
+            // Disable controls if offline or processing
+            if (!isProcessing) {
+              const controls = document.getElementById('action-controls').querySelectorAll('button');
+              controls.forEach(btn => btn.disabled = !toy.online);
+              updateDetailButtons(toy);
+            }
+            
+            document.getElementById('hero-time').innerText = formatTime(toy.time_left);
+            const heroSt = document.getElementById('hero-status');
+            if (!toy.online) {
+              heroSt.className = `hero-status offline`;
+              document.getElementById('hero-status-text').innerText = 'OFFLINE';
+            } else {
+              heroSt.className = `hero-status ${toy.state.toLowerCase().replace('_','-')}`;
+              document.getElementById('hero-status-text').innerText = toy.state.toUpperCase();
+            }
+          }
+        });
+        
+        document.getElementById('global-revenue').innerText = formatRp(totalRev);
+        document.getElementById('global-played').innerText = formatPlayedTime(totalPlayed);
+        
+      } catch (err) {
+        console.log("Fetch error:", err);
+        // Show master disconnected visually
+        Object.keys(devices).forEach(id => {
+          const sigEl = document.getElementById(`sig-${id}`);
+          if (sigEl) sigEl.className = `signal-indicator signal-offline`;
+          const badgeNode = document.getElementById(`badge-${id}`);
+          if (badgeNode) { badgeNode.className = 'badge offline'; badgeNode.innerText = 'OFFLINE'; }
+        });
+        if (activeUnitId) {
+          document.getElementById('dt-seen').innerText = 'Disconnected';
+          const heroSt = document.getElementById('hero-status');
+          if (heroSt) { heroSt.className = 'hero-status offline'; document.getElementById('hero-status-text').innerText = 'OFFLINE'; }
+          const controls = document.getElementById('action-controls').querySelectorAll('button');
+          controls.forEach(btn => btn.disabled = true);
+        }
+      }
+    }
+
+    setInterval(fetchSlaves, 1000);
+
+    // Navigation
+    function goDetail(id) {
+      activeUnitId = id;
+      const dev = devices[id];
+      if (!dev) return;
+      document.getElementById('detail-title').innerText = `EXC-${id.toString().padStart(2, '0')}`;
+      document.getElementById('detail-mac').innerText = `MAC: ${dev.mac}`;
+      
+      renderLogs();
+      document.getElementById('screen-list').style.transform = 'translateX(-30%)';
+      document.getElementById('screen-detail').style.transform = 'translateX(0)';
+      
+      // Force immediate fetch update to populate UI
+      fetchSlaves();
+    }
+
+    function goBack() {
+      activeUnitId = null;
+      document.getElementById('screen-list').style.transform = 'translateX(0)';
+      document.getElementById('screen-detail').style.transform = 'translateX(100%)';
+    }
+
+    function updateDetailButtons(dev) {
+      const btnPause = document.getElementById('btn-toggle-pause');
+      const txtPause = document.getElementById('txt-toggle-pause');
+      const iconPause = document.getElementById('icon-pause');
+      
+      if (dev.state === 'RUNNING') {
+        txtPause.innerText = 'Pause';
+        btnPause.setAttribute('onclick', "sendCommand('PAUSE')");
+        iconPause.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
+      } else if (dev.state === 'PAUSED') {
+        txtPause.innerText = 'Resume';
+        btnPause.setAttribute('onclick', "sendCommand('RESUME')");
+        iconPause.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
+      } else {
+        txtPause.innerText = 'Pause';
+        btnPause.disabled = true; // Hard disable if locked
+      }
+
+      const btnPower = document.getElementById('btn-toggle-power');
+      const txtPower = document.getElementById('txt-toggle-power');
+      const iconPower = document.getElementById('icon-power');
+      if (dev.state === 'RUNNING' || dev.state === 'PAUSED') {
+        btnPower.className = 'btn-stop'; txtPower.innerText = 'Stop';
+        iconPower.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>';
+      } else {
+        btnPower.className = 'btn-start'; txtPower.innerText = 'Start';
+        iconPower.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>';
+      }
+
+      }
+    }
+
+    // ON-DEMAND COMMAND SENDING (Like ExcavatorWifiManager sendCommand)
+    async function sendCommand(cmd, payload=null) {
+      if (isProcessing) return;
+      const dev = devices[activeUnitId];
+      if (!dev) return;
+
+      if (cmd === 'STOP' && (dev.state === 'RUNNING' || dev.state === 'PAUSED')) {
+        if (!confirm("Peringatan: Menghentikan (Stop) akan me-reset sisa waktu menjadi 00:00. Anda yakin ingin melanjutkan?")) return;
+      }
+
+      if (cmd === 'STOP' && dev.state === 'LOCKED' && dev.time_left <= 0) {
+        showToast("Harap tambah waktu terlebih dahulu sebelum memulai.");
+        openTimeModal('add');
+        return;
+      }
+
+      isProcessing = true;
+
+      // Lock buttons
+      const btns = document.getElementById('action-controls').querySelectorAll('button');
+      btns.forEach(b => b.disabled = true);
+      
+      const spinner = document.getElementById('global-spinner');
+      if (spinner) spinner.style.display = 'inline-block';
+      
+      let payloadSecs = 0;
+      if (cmd === 'ADD_TIME') {
+          payloadSecs = payload * 60;
+      }
+      
+      const reqBody = {
+          id: parseInt(activeUnitId),
+          cmd: cmd,
+          time: payloadSecs
+      };
+
+      try {
+          const res = await fetch(API_COMMAND, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(reqBody)
+          });
+          
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const resData = await res.json();
+          
+          if (resData.ok) {
+              // Local stats simulation 
+              if (cmd === 'ADD_TIME') {
+                  if (!localStats[activeUnitId]) localStats[activeUnitId] = { rev:0, played:0 };
+                  if (payload === 5) localStats[activeUnitId].rev += 10000;
+                  else if (payload === 10) localStats[activeUnitId].rev += 15000;
+                  else localStats[activeUnitId].rev += payload * 1500;
+              }
+              
+              logLocalAction(activeUnitId, cmd, payload, true);
+              // Force immediate update
+              await fetchSlaves();
+          } else {
+              showToast(resData.error || "Gagal mengirim perintah");
+              logLocalAction(activeUnitId, cmd, payload, false);
+          }
+      } catch (err) {
+          console.log("Command error:", err);
+          showToast("Gagal terhubung ke Master");
+          logLocalAction(activeUnitId, cmd, payload, false);
+      } finally {
+          if (spinner) spinner.style.display = 'none';
+          isProcessing = false;
+      }
+    }
+
+    function openTimeModal(type) {
+      if (isProcessing) return;
+      const dev = devices[activeUnitId];
+      if (!dev || !dev.online) return; 
+      
+      const title = document.getElementById('modal-time-title');
+      const opts = document.getElementById('modal-time-options');
+      
+      title.innerText = 'Tambah Waktu';
+      opts.innerHTML = `
+        <button class="btn-add" style="padding:16px;" onclick="doTimeAdjust('ADD_TIME', 5)">
+          <div style="font-size:15px; margin-bottom:4px;">+5 Menit</div><div style="font-size:11px;">Rp 10.000</div>
+        </button>
+        <button class="btn-add" style="padding:16px;" onclick="doTimeAdjust('ADD_TIME', 10)">
+          <div style="font-size:15px; margin-bottom:4px;">+10 Menit</div><div style="font-size:11px;">Rp 15.000</div>
+        </button>
+      `;
+      document.getElementById('modal-time').style.display = 'flex';
+    }
+
+    function closeTimeModal() {
+      document.getElementById('modal-time').style.display = 'none';
+    }
+
+    function doTimeAdjust(cmd, payload) {
+      closeTimeModal();
+      sendCommand(cmd, payload);
+    }
+
+    function renderLogs() {
+      const list = document.getElementById('command-log');
+      const l = logs[activeUnitId] || [];
+      if (l.length === 0) { list.innerHTML = `<div style="font-size:12px; color:var(--text-muted); text-align:center;">Tidak ada riwayat lokal.</div>`; return; }
+      
+      list.innerHTML = l.map(entry => `
+        <div class="log-item">
+          <span class="log-time">${entry.ts}</span>
+          <span class="log-msg">${entry.msg}</span>
+          <span style="font-weight:700; color:var(--success)">${entry.res}</span>
+        </div>
+      `).join('');
+    }
+
+    // Init
+    fetchSlaves(); // trigger initial fetch
+  </script>
+</body>
+</html>
+
+)=====";
