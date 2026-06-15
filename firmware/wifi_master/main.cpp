@@ -26,6 +26,7 @@
 #include "esp_now_protocol.h"
 
 // ===== CONFIG =====
+#define DEMO_MODE 1
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
 
@@ -383,10 +384,14 @@ void handleCommandProxy() {
 
   // Check slave exists
   bool found = false;
+  int slaveIdx = -1;
+  String targetMac = "";
   if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
     for (int i = 0; i < slaveCount; i++) {
       if (slaves[i].id == targetId) {
         found = true;
+        slaveIdx = i;
+        targetMac = slaves[i].mac;
         break;
       }
     }
@@ -398,6 +403,36 @@ void handleCommandProxy() {
     server.send(404, "application/json", "{\"ok\":0,\"error\":\"Slave not found\"}");
     return;
   }
+
+#if DEMO_MODE
+  if (targetMac.startsWith("FF:FF:FF:00:00:")) {
+    if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+      if (cmdEnum == CMD_ADD_TIME) {
+        slaves[slaveIdx].time_left += time;
+        if (slaves[slaveIdx].state == "LOCKED" || slaves[slaveIdx].state == "ENDED") {
+          slaves[slaveIdx].state = "RUNNING";
+        }
+      } else if (cmdEnum == CMD_PAUSE) {
+        slaves[slaveIdx].state = "PAUSED";
+      } else if (cmdEnum == CMD_RESUME) {
+        if (slaves[slaveIdx].time_left > 0) {
+          slaves[slaveIdx].state = "RUNNING";
+        }
+      } else if (cmdEnum == CMD_STOP) {
+        slaves[slaveIdx].state = "ENDED";
+        slaves[slaveIdx].time_left = 0;
+      }
+      slaves[slaveIdx].lastSeen = millis();
+      char resp[128];
+      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
+      server.send(200, "application/json", String(resp));
+      xSemaphoreGive(slavesMutex);
+    } else {
+      server.send(503, "application/json", "{\"ok\":0,\"error\":\"Mutex timeout\"}");
+    }
+    return;
+  }
+#endif
 
   // Build ESP-NOW command packet
   EspNowPacket pkt;
@@ -554,6 +589,31 @@ void handleDeleteSlave() {
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
+// POST /api/reset_registry — Wipes all MAC-to-ID mappings in memory and flash
+void handleResetRegistry() {
+  addCorsHeaders();
+
+  Serial.println("[MANAGE] FACTORY RESET: Wiping slave registry...");
+
+  // Wipe flash
+  preferences.begin("registry", false);
+  preferences.clear();
+  preferences.end();
+
+  preferences.begin("id_map", false);
+  preferences.clear();
+  preferences.end();
+
+  // Wipe memory
+  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+    slaveCount = 0;
+    xSemaphoreGive(slavesMutex);
+  }
+
+  server.send(200, "application/json", "{\"ok\":1,\"message\":\"Registry wiped. Restart Slaves to re-register.\"}");
+  netLedFlash(500); // long flash
+}
+
 // GET /api/register — Kept for backward compatibility with HTTP-based slaves
 void handleRegister() {
   addCorsHeaders();
@@ -679,6 +739,34 @@ void setup() {
 
   Serial.println("[ESPNOW] Initialized successfully");
 
+#if DEMO_MODE
+  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+    uint8_t fakeRaws[3][6] = {
+      {0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01},
+      {0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x02},
+      {0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x03}
+    };
+    String fakeMacs[3] = {"FF:FF:FF:00:00:01", "FF:FF:FF:00:00:02", "FF:FF:FF:00:00:03"};
+    String fakeStates[3] = {"RUNNING", "LOCKED", "PAUSED"};
+    int fakeTimes[3] = {120, 0, 300};
+
+    for (int i = 0; i < 3; i++) {
+      int assignedId = assignIdForMac(fakeMacs[i]);
+      if (assignedId > 0) {
+        upsertSlave(fakeMacs[i], assignedId, fakeRaws[i]);
+        for(int j = 0; j < slaveCount; j++) {
+          if(slaves[j].mac == fakeMacs[i]) {
+            slaves[j].state = fakeStates[i];
+            slaves[j].time_left = fakeTimes[i];
+          }
+        }
+      }
+    }
+    xSemaphoreGive(slavesMutex);
+    Serial.println("[DEMO] Added fake slaves.");
+  }
+#endif
+
   // HTTP endpoints — identical API surface for Android app
   server.on("/", HTTP_GET, []() {
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -697,6 +785,8 @@ void setup() {
   server.on("/api/edit_slave", HTTP_OPTIONS, handleOptions);
   server.on("/api/delete_slave", HTTP_POST, handleDeleteSlave);
   server.on("/api/delete_slave", HTTP_OPTIONS, handleOptions);
+  server.on("/api/reset_registry", HTTP_POST, handleResetRegistry);
+  server.on("/api/reset_registry", HTTP_OPTIONS, handleOptions);
 
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");
@@ -723,6 +813,19 @@ void loop() {
     lastHb = now;
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       Serial.printf("[MASTER-HB] up=%lus slaves=%d\n", now / 1000, slaveCount);
+#if DEMO_MODE
+      for (int i = 0; i < slaveCount; i++) {
+        if (slaves[i].mac.startsWith("FF:FF:FF:00:00:")) {
+          slaves[i].lastSeen = now;
+          if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0) {
+            slaves[i].time_left--;
+            if (slaves[i].time_left <= 0) {
+              slaves[i].state = "ENDED";
+            }
+          }
+        }
+      }
+#endif
       xSemaphoreGive(slavesMutex);
     }
   }
