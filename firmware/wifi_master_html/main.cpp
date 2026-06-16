@@ -14,6 +14,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <SPIFFS.h>
 #include <ArduinoJson.h>
 #include <DNSServer.h>
 #include "index_html.h"
@@ -27,7 +28,7 @@
 #include "esp_now_protocol.h"
 
 // ===== CONFIG =====
-#define DEMO_MODE 1
+#define DEMO_MODE 0
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
 
@@ -89,7 +90,7 @@ portMUX_TYPE cmdResponseMux = portMUX_INITIALIZER_UNLOCKED;
 void addCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-User, X-Admin-Pass");
 }
 
 void handleOptions() {
@@ -319,7 +320,231 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
   }
 }
 
+// ===== SPIFFS HELPERS =====
+JsonDocument loadJsonFile(const char* path) {
+  JsonDocument doc;
+  File file = SPIFFS.open(path, "r");
+  if (!file) return doc;
+  deserializeJson(doc, file);
+  file.close();
+  return doc;
+}
+
+void saveJsonFile(const char* path, const JsonDocument& doc) {
+  File file = SPIFFS.open(path, "w");
+  if (!file) return;
+  serializeJson(doc, file);
+  file.close();
+}
+
+bool authCheck(bool requireSA = false) {
+  String u = server.header("X-Admin-User");
+  String p = server.header("X-Admin-Pass");
+  if (u == "" || p == "") return false;
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  
+  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == p) {
+    return true; // SuperAdmin has access to everything
+  }
+  
+  if (!requireSA) {
+    JsonArray kr = auth["kr"].as<JsonArray>();
+    for (JsonObject k : kr) {
+      if (k["user"] == u && k["pass"] == p) return true;
+    }
+  }
+  
+  return false;
+}
+
 // ===== HTTP HANDLERS =====
+
+// GET /api/auth — check if SA exists
+void handleCheckAuth() {
+  addCorsHeaders();
+  JsonDocument auth = loadJsonFile("/auth.json");
+  bool exists = !auth["sa"]["user"].isNull();
+  server.send(200, "application/json", "{\"exists\":" + String(exists ? "true" : "false") + "}");
+}
+
+// POST /api/auth/register — register SA (only if not exists)
+void handleRegisterSA() {
+  addCorsHeaders();
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String p = doc["password"] | "";
+  if (u == "" || p.length() < 4) { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (!auth["sa"]["user"].isNull()) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"ALREADY_EXISTS\"}"); return;
+  }
+
+  auth["sa"]["user"] = u;
+  auth["sa"]["pass"] = p;
+  if (auth["kr"].isNull()) auth["kr"] = JsonArray();
+  saveJsonFile("/auth.json", auth);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/auth/login — return role
+void handleLogin() {
+  addCorsHeaders();
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String p = doc["password"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == p) {
+    server.send(200, "application/json", "{\"ok\":1,\"role\":\"sa\"}"); return;
+  }
+
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (JsonObject k : kr) {
+    if (k["user"] == u && k["pass"] == p) {
+      server.send(200, "application/json", "{\"ok\":1,\"role\":\"kr\"}"); return;
+    }
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
+// POST /api/auth/change-pass
+void handleChangePass() {
+  addCorsHeaders();
+  if (!authCheck()) { server.send(401); return; }
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String oldP = doc["oldPass"] | "";
+  String newP = doc["newPass"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == oldP) {
+    auth["sa"]["pass"] = newP;
+    saveJsonFile("/auth.json", auth);
+    server.send(200, "application/json", "{\"ok\":1}"); return;
+  }
+
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (JsonObject k : kr) {
+    if (k["user"] == u && k["pass"] == oldP) {
+      k["pass"] = newP;
+      saveJsonFile("/auth.json", auth);
+      server.send(200, "application/json", "{\"ok\":1}"); return;
+    }
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
+// GET /api/karyawan
+void handleGetKaryawan() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  JsonDocument auth = loadJsonFile("/auth.json");
+  JsonDocument res;
+  JsonArray resArr = res["karyawan"].to<JsonArray>();
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (JsonObject k : kr) {
+    resArr.add(k["user"]);
+  }
+  String out; serializeJson(res, out);
+  server.send(200, "application/json", out);
+}
+
+// POST /api/karyawan/add
+void handleAddKaryawan() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String p = doc["password"] | "";
+  if (u == "" || p.length() < 4) { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"] == u) { server.send(400, "application/json", "{\"ok\":0,\"code\":\"ALREADY_EXISTS\"}"); return; }
+  
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  if (!kr) kr = auth["kr"].to<JsonArray>();
+  for (JsonObject k : kr) {
+    if (k["user"] == u) { server.send(400, "application/json", "{\"ok\":0,\"code\":\"ALREADY_EXISTS\"}"); return; }
+  }
+
+  JsonObject newKr = kr.add<JsonObject>();
+  newKr["user"] = u;
+  newKr["pass"] = p;
+  saveJsonFile("/auth.json", auth);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/karyawan/delete
+void handleDeleteKaryawan() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (int i = 0; i < kr.size(); i++) {
+    if (kr[i]["user"] == u) {
+      kr.remove(i);
+      saveJsonFile("/auth.json", auth);
+      server.send(200, "application/json", "{\"ok\":1}"); return;
+    }
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
+// GET /api/stats
+void handleGetStats() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+  JsonDocument stats = loadJsonFile("/stats.json");
+  String out; serializeJson(stats, out);
+  server.send(200, "application/json", out);
+}
+
+// POST /api/stats/add
+void handleAddStats() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String id = doc["id"] | "";
+  int detik = doc["detik"] | 0;
+  if (id == "" || detik <= 0) { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument stats = loadJsonFile("/stats.json");
+  if (stats[id].isNull()) {
+    stats[id]["totalDetik"] = 0;
+    stats[id]["totalSesi"] = 0;
+  }
+  stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
+  stats[id]["totalSesi"] = stats[id]["totalSesi"].as<int>() + 1;
+  saveJsonFile("/stats.json", stats);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/stats/reset
+void handleResetStats() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String id = doc["id"] | "";
+  if (id == "") { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument stats = loadJsonFile("/stats.json");
+  stats[id]["totalDetik"] = 0;
+  stats[id]["totalSesi"] = 0;
+  saveJsonFile("/stats.json", stats);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
 
 // GET /api/slaves — List all slave units (unchanged API)
 void handleSlaves() {
@@ -704,6 +929,12 @@ void setup() {
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n",
                 (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 
+  if (!SPIFFS.begin(true)) {
+    Serial.println("[SYSTEM] SPIFFS Mount Failed");
+  } else {
+    Serial.println("[SYSTEM] SPIFFS Mounted");
+  }
+
   // Wi-Fi: AP+STA mode (AP for Android, STA for ESP-NOW)
   WiFi.mode(WIFI_AP_STA);
 
@@ -779,11 +1010,10 @@ void setup() {
 
 // HTTP endpoints — identical API surface for Android app
   server.on("/", HTTP_GET, []() {
-    server.sendHeader("Content-Encoding", "gzip");
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.sendHeader("Pragma", "no-cache");
     server.sendHeader("Expires", "-1");
-    server.send_P(200, "text/html", (const char*)index_html_gz, sizeof(index_html_gz));
+    server.send(200, "application/json", "{\"status\":\"Excavator Master API Ready\",\"mode\":\"espnow\"}");
   });
 
   server.on("/api/register", HTTP_GET, handleRegister);
@@ -798,6 +1028,54 @@ void setup() {
   server.on("/api/delete_slave", HTTP_OPTIONS, handleOptions);
   server.on("/api/reset_registry", HTTP_POST, handleResetRegistry);
   server.on("/api/reset_registry", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/auth", HTTP_GET, handleCheckAuth);
+  server.on("/api/auth", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/register", HTTP_POST, handleRegisterSA);
+  server.on("/api/auth/register", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/login", HTTP_POST, handleLogin);
+  server.on("/api/auth/login", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/change-pass", HTTP_POST, handleChangePass);
+  server.on("/api/auth/change-pass", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/karyawan", HTTP_GET, handleGetKaryawan);
+  server.on("/api/karyawan", HTTP_OPTIONS, handleOptions);
+  server.on("/api/karyawan/add", HTTP_POST, handleAddKaryawan);
+  server.on("/api/karyawan/add", HTTP_OPTIONS, handleOptions);
+  server.on("/api/karyawan/delete", HTTP_POST, handleDeleteKaryawan);
+  server.on("/api/karyawan/delete", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/stats", HTTP_GET, handleGetStats);
+  server.on("/api/stats", HTTP_OPTIONS, handleOptions);
+  server.on("/api/stats/add", HTTP_POST, handleAddStats);
+  server.on("/api/stats/add", HTTP_OPTIONS, handleOptions);
+  server.on("/api/stats/reset", HTTP_POST, handleResetStats);
+  server.on("/api/stats/reset", HTTP_OPTIONS, handleOptions);
+
+  const char * headerkeys[] = {"X-Admin-User", "X-Admin-Pass"} ;
+  size_t headerkeyssize = sizeof(headerkeys)/sizeof(char*);
+  server.collectHeaders(headerkeys, headerkeyssize);
+
+  server.on("/", HTTP_GET, []() {
+    server.sendHeader("Content-Encoding", "gzip");
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    server.sendHeader("Pragma", "no-cache");
+    server.sendHeader("Expires", "-1");
+    server.send_P(200, "text/html", (const char*)index_html_gz, sizeof(index_html_gz));
+  });
+
+  server.onNotFound([]() {
+    if (server.method() == HTTP_OPTIONS) {
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.sendHeader("Access-Control-Max-Age", "10000");
+      server.sendHeader("Access-Control-Allow-Methods", "PUT,POST,GET,OPTIONS");
+      server.sendHeader("Access-Control-Allow-Headers", "*");
+      server.send(204);
+    } else {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", "Redirecting...");
+    }
+  });
 
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");

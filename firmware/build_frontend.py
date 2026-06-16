@@ -1,7 +1,7 @@
 import gzip
 import os
 
-input_file = '../RCTimer.html' # Change this to your HTML file
+input_file = '../DashboardRCNew.html' # Change this to your HTML file
 output_file = 'wifi_master_html/index_html.h'
 
 print(f"Reading {input_file}...")
