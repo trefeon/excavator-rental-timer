@@ -16,6 +16,7 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <DNSServer.h>
+#include "index_html.h"
 
 #include <esp_idf_version.h>
 #include <freertos/semphr.h>
@@ -26,7 +27,7 @@
 #include "esp_now_protocol.h"
 
 // ===== CONFIG =====
-#define DEMO_MODE 0
+#define DEMO_MODE 1
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
 
@@ -778,10 +779,11 @@ void setup() {
 
 // HTTP endpoints — identical API surface for Android app
   server.on("/", HTTP_GET, []() {
+    server.sendHeader("Content-Encoding", "gzip");
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.sendHeader("Pragma", "no-cache");
     server.sendHeader("Expires", "-1");
-    server.send(200, "application/json", "{\"status\":\"Excavator Master API Ready\",\"mode\":\"espnow\"}");
+    server.send_P(200, "text/html", (const char*)index_html_gz, sizeof(index_html_gz));
   });
 
   server.on("/api/register", HTTP_GET, handleRegister);
