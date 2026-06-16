@@ -1,7 +1,7 @@
 import gzip
 import os
 
-input_file = '../DashboardRCNew.html' # Change this to your HTML file
+input_file = '../frontend/DashboardRCNew.html' # Change this to your HTML file
 output_file = 'wifi_master_esp32_WEBUI/index_html.h'
 
 print(f"Reading {input_file}...")

@@ -5,6 +5,10 @@
 !/firmware/
 !/docs/
 !/scripts/
+!/frontend/
+!/android_app/
+!/release/
+!/release/*.bin
 !.gitignore
 !/platformio.ini
 !/README.md
@@ -43,3 +47,10 @@
 **/*.pyc
 **/node_modules/
 **/.env
+
+# Android App ignores
+/android_app/*.zip
+
+# Override global binary ignore for release files
+!/release/
+!/release/*.bin
