@@ -674,6 +674,9 @@ void handleCommandProxy() {
   cmdResponseReceived = false;
   portEXIT_CRITICAL(&cmdResponseMux);
 
+  // Drain any stale semaphore tokens from late responses
+  while(xSemaphoreTake(cmdResponseSem, 0) == pdTRUE) {}
+
   // Broadcast the command
   esp_err_t result = esp_now_send(ESPNOW_BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
   if (result != ESP_OK) {

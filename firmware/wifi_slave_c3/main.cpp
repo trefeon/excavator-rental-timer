@@ -100,6 +100,7 @@ uint32_t totalPaidSeconds = 0;
 uint8_t seq = 0;
 uint32_t lastTickMs = 0;
 uint32_t lastButtonPressMs = 0;
+uint32_t idleStartMs = 0;
 bool isRegistered = false;
 int pendingBeepMs = 0;
 int pendingBeepCount = 1;
@@ -234,8 +235,13 @@ void saveStateToFlash() {
 
 void changeState(RentalState nextState) {
   if (state != nextState) {
+    if (nextState == STATE_LOCKED || nextState == STATE_ENDED) {
+      idleStartMs = millis();
+    }
     state = nextState;
     seq++;
+  } else if (nextState == STATE_LOCKED || nextState == STATE_ENDED) {
+    idleStartMs = millis();
   }
   lastTickMs = millis();
   colonState = true;
@@ -334,6 +340,16 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
           memcpy(masterMac, mac_addr, 6);
           masterKnown = true;
 
+          // Add Master as a peer so we can send unicast ACKs
+          esp_now_peer_info_t peerInfo;
+          memset(&peerInfo, 0, sizeof(peerInfo));
+          memcpy(peerInfo.peer_addr, masterMac, 6);
+          peerInfo.channel = 0;
+          peerInfo.encrypt = false;
+          if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+            Serial.println("[ESPNOW] Failed to add master peer (might already exist)");
+          }
+
           xSemaphoreGive(stateMutex);
         }
         Serial.printf("[ESPNOW] Registered as %s (ID: %d)\n", TOY_ID.c_str(), newId);
@@ -412,6 +428,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
           case CMD_IDENTIFY: {
             cmdOk = true;
             pendingIdentify = true;
+            idleStartMs = millis();
             break;
           }
           default:
@@ -567,6 +584,7 @@ void setup() {
     Serial.printf("Powerloss Recovery: Restored %lu seconds. State RUNNING.\n", remainingSeconds);
   } else {
     state = STATE_LOCKED;
+    idleStartMs = millis();
     changeState(STATE_LOCKED);
   }
 
@@ -634,6 +652,8 @@ void loop() {
           beep(50, 1);
           changeState(STATE_RUNNING);
           saveStateToFlash();
+        } else if (state == STATE_LOCKED || state == STATE_ENDED) {
+          idleStartMs = now;
         }
       }
     }
@@ -681,10 +701,17 @@ void loop() {
         }
       }
     } else if (state == STATE_LOCKED || state == STATE_ENDED) {
-      if (now - lastTickMs >= 80) { // 80ms per frame for smooth fast animation
-        lastTickMs = now;
-        animFrame = (animFrame + 1) % 12;
-        updateDisplay();
+      if (now - idleStartMs < 60000) {
+        if (now - lastTickMs >= 80) { // 80ms per frame for smooth fast animation
+          lastTickMs = now;
+          animFrame = (animFrame + 1) % 12;
+          updateDisplay();
+        }
+      } else {
+        if (now - lastTickMs >= 1000) {
+          lastTickMs = now;
+          display.clear();
+        }
       }
     } else {
       lastTickMs = now;
