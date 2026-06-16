@@ -28,7 +28,7 @@
 #include "esp_now_protocol.h"
 
 // ===== CONFIG =====
-#define DEMO_MODE 0
+#define DEMO_MODE 1
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
 
@@ -1009,12 +1009,7 @@ void setup() {
 #endif
 
 // HTTP endpoints — identical API surface for Android app
-  server.on("/", HTTP_GET, []() {
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.sendHeader("Pragma", "no-cache");
-    server.sendHeader("Expires", "-1");
-    server.send(200, "application/json", "{\"status\":\"Excavator Master API Ready\",\"mode\":\"espnow\"}");
-  });
+
 
   server.on("/api/register", HTTP_GET, handleRegister);
   server.on("/api/register", HTTP_OPTIONS, handleOptions);
