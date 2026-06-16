@@ -28,7 +28,7 @@
 #include "esp_now_protocol.h"
 
 // ===== CONFIG =====
-#define DEMO_MODE 1
+#define DEMO_MODE 0
 static const char* AP_SSID = "ExcavatorMaster";
 static const char* AP_PASS = "12345678";
 
@@ -39,7 +39,7 @@ SemaphoreHandle_t slavesMutex = NULL;
 // ===== TIMING =====
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
 static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
-static const uint32_t CMD_RESPONSE_TIMEOUT_MS = 500;
+static const uint32_t CMD_RESPONSE_TIMEOUT_MS = 2000;
 
 // ===== DNS =====
 const byte DNS_PORT = 53;
@@ -650,7 +650,7 @@ void handleCommandProxy() {
       }
       slaves[slaveIdx].lastSeen = millis();
       char resp[128];
-      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
+      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"OK\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
       server.send(200, "application/json", String(resp));
       xSemaphoreGive(slavesMutex);
     } else {

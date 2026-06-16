@@ -104,6 +104,7 @@ uint32_t idleStartMs = 0;
 bool isRegistered = false;
 int pendingBeepMs = 0;
 int pendingBeepCount = 1;
+volatile bool pendingSaveFlash = false;  // Deferred NVS write (set in ESP-NOW callback, executed in loop)
 
 // ESP-NOW state
 volatile uint32_t lastMasterContactMs = 0;
@@ -368,6 +369,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 
       uint8_t respCode = RESP_OK;
       bool cmdOk = false;
+      bool needSave = false;
 
       if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
         switch ((CmdType)pkt.cmd) {
@@ -382,7 +384,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
               } else {
                 changeState(state);
               }
-              saveStateToFlash();
+              needSave = true;
               cmdOk = true;
             }
             break;
@@ -390,7 +392,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
           case CMD_PAUSE: {
             if (remainingSeconds > 0 && state == STATE_RUNNING) {
               changeState(STATE_PAUSED);
-              saveStateToFlash();
+              needSave = true;
               cmdOk = true;
             } else {
               respCode = RESP_BAD_STATE;
@@ -402,7 +404,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
               respCode = RESP_BAD_STATE;
             } else {
               changeState(STATE_RUNNING);
-              saveStateToFlash();
+              needSave = true;
               cmdOk = true;
             }
             break;
@@ -411,7 +413,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             remainingSeconds = 0;
             totalPaidSeconds = 0;
             changeState(STATE_LOCKED);
-            saveStateToFlash();
+            needSave = true;
             cmdOk = true;
             break;
           }
@@ -447,8 +449,13 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
                     cmdTypeName(pkt.cmd), respCodeName(respCode),
                     (unsigned long)remainingSeconds, stateName(state));
 
-      // Send response back to Master
+      // Send response back to Master IMMEDIATELY (before NVS write)
       sendCommandResponse(mac_addr, respCode);
+
+      // Defer NVS flash save to loop() — avoids blocking ESP-NOW callback
+      if (needSave) {
+        pendingSaveFlash = true;
+      }
 
       // Beep for command receipt
       pendingBeepMs = 50;
@@ -717,6 +724,15 @@ void loop() {
       lastTickMs = now;
     }
     xSemaphoreGive(stateMutex);
+  }
+
+  // ===== DEFERRED NVS SAVE (outside mutex, outside ESP-NOW callback) =====
+  if (pendingSaveFlash) {
+    pendingSaveFlash = false;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+      saveStateToFlash();
+      xSemaphoreGive(stateMutex);
+    }
   }
 
   // ===== PENDING BEEPS (outside mutex) =====
