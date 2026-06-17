@@ -39,7 +39,7 @@ SemaphoreHandle_t slavesMutex = NULL;
 // ===== TIMING =====
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
 static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
-static const uint32_t CMD_RESPONSE_TIMEOUT_MS = 2000;
+static const uint32_t CMD_RESPONSE_TIMEOUT_MS = 500;
 
 // ===== DNS =====
 const byte DNS_PORT = 53;
@@ -69,12 +69,14 @@ void updateLed() {
 struct SlaveRecord {
   String mac;
   int id;
-  String ip;         // empty for ESP-NOW slaves, kept for API compatibility
+  String ip;           // empty for ESP-NOW slaves, kept for API compatibility
   uint32_t lastSeen;
-  String state;      // "RUNNING", "LOCKED", "PAUSED", "ENDED"
+  String state;        // "RUNNING", "LOCKED", "PAUSED", "ENDED"
+  String prevState;    // state sebelumnya, untuk deteksi transisi ke ENDED
   int time_left;
+  int sessionElapsed;  // detik yang sudah berjalan di sesi ini (untuk auto-save)
   String battery;
-  uint8_t rawMac[6]; // raw MAC bytes for ESP-NOW addressing
+  uint8_t rawMac[6];   // raw MAC bytes for ESP-NOW addressing
 };
 SlaveRecord slaves[50];
 int slaveCount = 0;
@@ -180,12 +182,21 @@ void upsertSlave(const String& mac, int id, const uint8_t* rawMac) {
     slaves[slaveCount].ip = "";  // ESP-NOW slaves don't have IPs
     slaves[slaveCount].lastSeen = millis();
     slaves[slaveCount].state = "LOCKED";
+    slaves[slaveCount].prevState = "LOCKED";
     slaves[slaveCount].time_left = 0;
+    slaves[slaveCount].sessionElapsed = 0;
     slaves[slaveCount].battery = "OK";
     memcpy(slaves[slaveCount].rawMac, rawMac, 6);
     slaveCount++;
   }
 }
+
+// ===== FORWARD DECLARATIONS =====
+// Diperlukan karena fungsi-fungsi ini dipanggil di dalam onEspNowRecv
+// sebelum didefinisikan di bawah.
+JsonDocument loadJsonFile(const char* path);
+void saveJsonFile(const char* path, const JsonDocument& doc);
+void autoSaveStats(int slaveId, int detik);
 
 // ===== ESP-NOW RECEIVE CALLBACK =====
 // Note: ESP32 standard (IDF v4) uses the old callback signature.
@@ -235,10 +246,39 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
         for (int i = 0; i < slaveCount; i++) {
           if (slaves[i].mac == senderMac) {
             found = true;
-            slaves[i].state = pktStateName(pkt.state);
-            slaves[i].time_left = pkt.timeLeft;
-            slaves[i].battery = "OK";
-            slaves[i].lastSeen = millis();
+            String newState = pktStateName(pkt.state);
+
+            // Hitung elapsed: jika sebelumnya RUNNING dan time_left berkurang
+            if (slaves[i].state == "RUNNING" && newState == "RUNNING") {
+              int diff = slaves[i].time_left - (int)pkt.timeLeft;
+              if (diff > 0) slaves[i].sessionElapsed += diff;
+            }
+
+            // Deteksi transisi ke sesi baru: dari ENDED/LOCKED ke RUNNING
+            if ((slaves[i].state == "ENDED" || slaves[i].state == "LOCKED") &&
+                newState == "RUNNING") {
+              slaves[i].sessionElapsed = 0; // reset counter sesi baru
+            }
+
+            // Deteksi transisi ke ENDED → auto-save stats
+            if (slaves[i].state != "ENDED" && newState == "ENDED") {
+              int elapsed = slaves[i].sessionElapsed;
+              int slaveId = slaves[i].id;
+              xSemaphoreGive(slavesMutex);
+              autoSaveStats(slaveId, elapsed); // SPIFFS di luar mutex
+              if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) break;
+              // Cari ulang index karena mutex sempat dilepas
+              for (int k = 0; k < slaveCount; k++) {
+                if (slaves[k].mac == senderMac) { i = k; break; }
+              }
+              slaves[i].sessionElapsed = 0;
+            }
+
+            slaves[i].prevState  = slaves[i].state;
+            slaves[i].state      = newState;
+            slaves[i].time_left  = pkt.timeLeft;
+            slaves[i].battery    = "OK";
+            slaves[i].lastSeen   = millis();
 
             // Check if slave's ID is out of sync (e.g., after edit_slave)
             if (pkt.senderId != (uint8_t)slaves[i].id) {
@@ -318,6 +358,26 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
       Serial.printf("[ESPNOW] Unknown packet type: %d\n", pkt.type);
       break;
   }
+}
+
+// ===== AUTO-SAVE STATS =====
+// Dipanggil di server-side saat sesi RC selesai (time_left habis atau STOP)
+// sehingga total main tersimpan meski browser sedang tutup/offline.
+void autoSaveStats(int slaveId, int detik) {
+  if (detik <= 0) return;
+  JsonDocument stats = loadJsonFile("/stats.json");
+  String id = String(slaveId);
+  if (stats[id].isNull()) {
+    stats[id]["totalDetik"] = 0;
+    stats[id]["totalSesi"]  = 0;
+  }
+  stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
+  stats[id]["totalSesi"]  = stats[id]["totalSesi"].as<int>() + 1;
+  saveJsonFile("/stats.json", stats);
+  Serial.printf("[STATS] Auto-save: RC %d +%ds (total=%ds, sesi=%d)\n",
+                slaveId, detik,
+                stats[id]["totalDetik"].as<int>(),
+                stats[id]["totalSesi"].as<int>());
 }
 
 // ===== SPIFFS HELPERS =====
@@ -515,7 +575,7 @@ void handleAddStats() {
   if (!authCheck(false)) { server.send(401); return; }
   if (!server.hasArg("plain")) { server.send(400); return; }
   JsonDocument doc; deserializeJson(doc, server.arg("plain"));
-  String id = doc["id"] | "";
+  String id = doc["id"].as<String>();
   int detik = doc["detik"] | 0;
   if (id == "" || detik <= 0) { server.send(400, "application/json", "{\"ok\":0}"); return; }
 
@@ -536,13 +596,141 @@ void handleResetStats() {
   if (!authCheck(true)) { server.send(401); return; } // SA only
   if (!server.hasArg("plain")) { server.send(400); return; }
   JsonDocument doc; deserializeJson(doc, server.arg("plain"));
-  String id = doc["id"] | "";
-  if (id == "") { server.send(400, "application/json", "{\"ok\":0}"); return; }
+  String id = doc["id"].as<String>();
+  if (id == "" || id == "null") { server.send(400, "application/json", "{\"ok\":0}"); return; }
 
   JsonDocument stats = loadJsonFile("/stats.json");
   stats[id]["totalDetik"] = 0;
   stats[id]["totalSesi"] = 0;
   saveJsonFile("/stats.json", stats);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+void handleGetTransaksi() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+
+  File file = SPIFFS.open("/transaksi.json", "r");
+  if (!file || file.size() == 0) {
+    if (file) file.close();
+    server.send(200, "application/json", "[]");
+    return;
+  }
+  server.streamFile(file, "application/json");
+  file.close();
+}
+
+// ── POST /api/transaksi/add ────────────────────────────────────────
+// Tambah 1 transaksi, auto-hapus yang lebih dari 3 hari, max 500 record
+void handleAddTransaksi() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+  if (!server.hasArg("plain")) { server.send(400); return; }
+
+  // Cek heap tersedia sebelum alokasi besar
+  if (ESP.getFreeHeap() < 80000) {
+    Serial.printf("[TRX] Low heap (%lu), skip write\n", (unsigned long)ESP.getFreeHeap());
+    server.send(503, "application/json", "{\"ok\":0,\"code\":\"LOW_HEAP\"}");
+    return;
+  }
+
+  JsonDocument reqDoc;
+  if (deserializeJson(reqDoc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+
+  // Validasi field wajib
+  if (reqDoc["rcId"].isNull() || reqDoc["ts"].isNull()) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"MISSING_FIELD\"}");
+    return;
+  }
+
+  // Ambil timestamp transaksi baru (ms, dari browser Date.now())
+  // Gunakan double untuk menampung nilai 13-digit tanpa overflow
+  double newTs = reqDoc["ts"].as<double>();
+
+  // Batas 7 hari ke belakang (dalam ms)
+  double cutoffMs = newTs - (7.0 * 24.0 * 3600.0 * 1000.0);
+
+  // Load transaksi yang ada
+  JsonDocument trxDoc;
+  File fileR = SPIFFS.open("/transaksi.json", "r");
+  if (fileR && fileR.size() > 0) {
+    DeserializationError err = deserializeJson(trxDoc, fileR);
+    fileR.close();
+    if (err || !trxDoc.is<JsonArray>()) {
+      trxDoc.to<JsonArray>(); // reset kalau corrupt
+    }
+  } else {
+    if (fileR) fileR.close();
+    trxDoc.to<JsonArray>();
+  }
+
+  JsonArray arr = trxDoc.as<JsonArray>();
+
+  // ── Hapus transaksi yang lebih tua dari 7 hari ────────────────────
+  // Iterasi dari belakang supaya remove() aman
+  for (int i = (int)arr.size() - 1; i >= 0; i--) {
+    double ts = arr[i]["ts"].as<double>();
+    if (ts < cutoffMs) {
+      arr.remove(i);
+    }
+  }
+
+  // ── Batasi maks 300 record (safety cap untuk 10 RC + retensi 7 hari) ─
+  // Hapus yang paling lama (index 0) kalau melebihi
+  while (arr.size() >= 300) {
+    arr.remove(0);
+  }
+
+  // ── Tambah transaksi baru di akhir ───────────────────────────────
+  // BUGFIX: validate input ranges to prevent SPIFFS corruption and absurd
+  // reports. rcId must be 1..50 (matches registry cap), menit 1..480, harga
+  // 0..10_000_000. rcNama and pelanggan are bounded to 64 chars to keep the
+  // JSON file small (each char is ~1 byte in serialized form).
+  int rcId = reqDoc["rcId"].as<int>();
+  int menit = reqDoc["menit"].as<int>();
+  long harga = reqDoc["harga"].as<long>();
+  if (rcId < 1 || rcId > 50) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_RCID\"}");
+    return;
+  }
+  if (menit < 1 || menit > 480) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_MENIT\"}");
+    return;
+  }
+  if (harga < 0 || harga > 10000000L) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_HARGA\"}");
+    return;
+  }
+  String rcNama = reqDoc["rcNama"].as<String>();
+  String pelanggan = reqDoc["pelanggan"].as<String>();
+  if (rcNama.length() > 64) rcNama = rcNama.substring(0, 64);
+  if (pelanggan.length() > 64) pelanggan = pelanggan.substring(0, 64);
+
+  JsonObject newTrx = arr.add<JsonObject>();
+  newTrx["id"]        = reqDoc["id"];
+  newTrx["rcId"]      = rcId;
+  newTrx["rcNama"]    = rcNama;
+  newTrx["pelanggan"] = pelanggan;
+  newTrx["menit"]     = menit;
+  newTrx["harga"]     = harga;
+  newTrx["paket"]     = reqDoc["paket"].as<String>();
+  newTrx["ts"]        = newTs; // simpan sebagai double
+
+  // Simpan kembali ke SPIFFS
+  File fileW = SPIFFS.open("/transaksi.json", "w");
+  if (!fileW) {
+    server.send(500, "application/json", "{\"ok\":0,\"code\":\"WRITE_FAIL\"}");
+    return;
+  }
+  serializeJson(trxDoc, fileW);
+  fileW.close();
+
+  Serial.printf("[TRX] Saved. Total: %d records. Heap: %lu\n",
+                (int)arr.size(), (unsigned long)ESP.getFreeHeap());
+
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
@@ -576,6 +764,7 @@ void handleSlaves() {
 // POST /api/command — Send command to slave via ESP-NOW (same API contract)
 void handleCommandProxy() {
   addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; } // semua role yang login
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -631,13 +820,15 @@ void handleCommandProxy() {
   }
 
 #if DEMO_MODE
-  if (targetMac.startsWith("FF:FF:FF:00:00:")) {
+  if (targetMac.startsWith("FF:FF:FF:00:00:") || targetMac.startsWith("EE:EE:EE:00:00:")) {
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       if (cmdEnum == CMD_ADD_TIME) {
-        slaves[slaveIdx].time_left += time;
+        // Sesi baru: reset sessionElapsed jika sebelumnya ENDED/LOCKED
         if (slaves[slaveIdx].state == "LOCKED" || slaves[slaveIdx].state == "ENDED") {
+          slaves[slaveIdx].sessionElapsed = 0;
           slaves[slaveIdx].state = "RUNNING";
         }
+        slaves[slaveIdx].time_left += time;
       } else if (cmdEnum == CMD_PAUSE) {
         slaves[slaveIdx].state = "PAUSED";
       } else if (cmdEnum == CMD_RESUME) {
@@ -645,12 +836,22 @@ void handleCommandProxy() {
           slaves[slaveIdx].state = "RUNNING";
         }
       } else if (cmdEnum == CMD_STOP) {
+        // Simpan elapsed sebelum di-reset
+        int elapsed = slaves[slaveIdx].sessionElapsed;
+        int slaveId  = slaves[slaveIdx].id;
         slaves[slaveIdx].state = "ENDED";
         slaves[slaveIdx].time_left = 0;
+        slaves[slaveIdx].sessionElapsed = 0;
+        char resp[128];
+        snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":0,\"state\":\"ENDED\"}");
+        server.send(200, "application/json", String(resp));
+        xSemaphoreGive(slavesMutex);
+        autoSaveStats(slaveId, elapsed); // simpan di luar mutex
+        return;
       }
       slaves[slaveIdx].lastSeen = millis();
       char resp[128];
-      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"OK\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
+      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
       server.send(200, "application/json", String(resp));
       xSemaphoreGive(slavesMutex);
     } else {
@@ -669,13 +870,13 @@ void handleCommandProxy() {
   pkt.cmd = cmdEnum;
   pkt.value = time;
 
+  // Consume any stray semaphore gives
+  xSemaphoreTake(cmdResponseSem, 0);
+
   // Reset response state
   portENTER_CRITICAL(&cmdResponseMux);
   cmdResponseReceived = false;
   portEXIT_CRITICAL(&cmdResponseMux);
-
-  // Drain any stale semaphore tokens from late responses
-  while(xSemaphoreTake(cmdResponseSem, 0) == pdTRUE) {}
 
   // Broadcast the command
   esp_err_t result = esp_now_send(ESPNOW_BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
@@ -694,16 +895,29 @@ void handleCommandProxy() {
   }
 
   if (gotResponse && cmdResponsePkt.senderId == (uint8_t)targetId) {
-    // Build JSON response matching the API spec exactly
-    char resp[128];
+    // Build JSON response matching the API spec exactly.
+    // BUGFIX: the respCode cast was comparing a uint8_t (respCode) against
+    // RespCode enum values via == on a uint8_t variable. RESP_OK=0, RESP_REBOOTING=6
+    // so the existing check worked by luck; relying on the same enum value
+    // representation in the response struct (which is packed) is unsafe if
+    // someone adds a new RespCode. Cast explicitly to RespCode.
+    RespCode actualCode = (RespCode)cmdResponsePkt.respCode;
+    int ok = (actualCode == RESP_OK || actualCode == RESP_REBOOTING) ? 1 : 0;
+    char resp[160];
     snprintf(resp, sizeof(resp),
              "{\"ok\":%d,\"code\":\"%s\",\"time_left\":%lu,\"state\":\"%s\"}",
-             (cmdResponsePkt.respCode == RESP_OK || cmdResponsePkt.respCode == RESP_REBOOTING) ? 1 : 0,
+             ok,
              respCodeName(cmdResponsePkt.respCode),
              (unsigned long)cmdResponsePkt.timeLeft,
              pktStateName(cmdResponsePkt.state));
     Serial.printf("[PROXY] Slave responded: %s\n", resp);
     server.send(200, "application/json", String(resp));
+  } else if (gotResponse && cmdResponsePkt.senderId != (uint8_t)targetId) {
+    // A different slave replied (stale response, or a slave with a wrong
+    // target ID). Don't claim success — the targeted slave didn't ack.
+    Serial.printf("[PROXY] Stale ESP-NOW response: senderId=%d != targetId=%d\n",
+                  cmdResponsePkt.senderId, targetId);
+    server.send(502, "application/json", "{\"ok\":0,\"error\":\"Stale slave response\"}");
   } else {
     Serial.printf("[PROXY] Slave EXC-%02d timeout (no ESP-NOW response)\n", targetId);
     server.send(502, "application/json", "{\"ok\":0,\"error\":\"Slave offline/timeout\"}");
@@ -713,6 +927,7 @@ void handleCommandProxy() {
 // POST /api/edit_slave — Change slave ID (unchanged logic)
 void handleEditSlave() {
   addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -773,6 +988,7 @@ void handleEditSlave() {
 // POST /api/delete_slave — Delete slave from registry (unchanged logic)
 void handleDeleteSlave() {
   addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -821,6 +1037,7 @@ void handleDeleteSlave() {
 // POST /api/reset_registry — Wipes all MAC-to-ID mappings in memory and flash
 void handleResetRegistry() {
   addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
 
   Serial.println("[MANAGE] FACTORY RESET: Wiping slave registry...");
 
@@ -916,17 +1133,7 @@ void setup() {
   slavesMutex = xSemaphoreCreateMutex();
   cmdResponseSem = xSemaphoreCreateBinary();
 
-#if ESP_IDF_VERSION_MAJOR >= 5
-  esp_task_wdt_config_t wdtCfg = {
-    .timeout_ms = 10000,
-    .idle_core_mask = 0,
-    .trigger_panic = true,
-  };
-  esp_task_wdt_init(&wdtCfg);
-#else
-  esp_task_wdt_init(10, true);
-#endif
-  esp_task_wdt_add(NULL);
+
 
   Serial.println("Starting Master Access Point (ESP-NOW Gateway)");
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n",
@@ -1050,6 +1257,11 @@ void setup() {
   server.on("/api/stats/reset", HTTP_POST, handleResetStats);
   server.on("/api/stats/reset", HTTP_OPTIONS, handleOptions);
 
+  server.on("/api/transaksi",     HTTP_GET,  handleGetTransaksi);
+  server.on("/api/transaksi",     HTTP_OPTIONS, handleOptions);
+  server.on("/api/transaksi/add", HTTP_POST, handleAddTransaksi);
+  server.on("/api/transaksi/add", HTTP_OPTIONS, handleOptions);
+
   const char * headerkeys[] = {"X-Admin-User", "X-Admin-Pass"} ;
   size_t headerkeyssize = sizeof(headerkeys)/sizeof(char*);
   server.collectHeaders(headerkeys, headerkeyssize);
@@ -1102,18 +1314,34 @@ void loop() {
       Serial.printf("[MASTER-HB] up=%lus slaves=%d\n", now / 1000, slaveCount);
 #if DEMO_MODE
       for (int i = 0; i < slaveCount; i++) {
-        if (slaves[i].mac.startsWith("FF:FF:FF:00:00:")) {
-          slaves[i].lastSeen = now;
-          if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0) {
-            slaves[i].time_left--;
-            if (slaves[i].time_left <= 0) {
-              slaves[i].state = "ENDED";
-            }
+        bool isFakeOnline = slaves[i].mac.startsWith("FF:FF:FF:00:00:");
+        bool isFakeOffline = slaves[i].mac.startsWith("EE:EE:EE:00:00:");
+        if (!isFakeOnline && !isFakeOffline) continue;
+
+        if (isFakeOnline) {
+          slaves[i].lastSeen = now; // tetap online
+        }
+        // EE biarkan lastSeen = 0 (tampil offline), tapi timer tetap berjalan
+
+        if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0) {
+          slaves[i].time_left--;
+          slaves[i].sessionElapsed++;
+          if (slaves[i].time_left <= 0) {
+            slaves[i].state = "ENDED";
+            int slaveId = slaves[i].id;
+            int elapsed = slaves[i].sessionElapsed;
+            slaves[i].sessionElapsed = 0;
+            // Auto-save harus di luar mutex — simpan dulu, rilis mutex lalu save
+            xSemaphoreGive(slavesMutex);
+            autoSaveStats(slaveId, elapsed);
+            // Tidak perlu ambil mutex lagi, langsung break dari heartbeat interval
+            goto doneHb;
           }
         }
       }
 #endif
       xSemaphoreGive(slavesMutex);
     }
+    doneHb:;
   }
 }

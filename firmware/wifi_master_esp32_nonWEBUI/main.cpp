@@ -14,6 +14,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <SPIFFS.h>
 #include <ArduinoJson.h>
 #include <DNSServer.h>
 
@@ -37,7 +38,7 @@ SemaphoreHandle_t slavesMutex = NULL;
 // ===== TIMING =====
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
 static const uint32_t MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
-static const uint32_t CMD_RESPONSE_TIMEOUT_MS = 2000;
+static const uint32_t CMD_RESPONSE_TIMEOUT_MS = 500;
 
 // ===== DNS =====
 const byte DNS_PORT = 53;
@@ -67,12 +68,14 @@ void updateLed() {
 struct SlaveRecord {
   String mac;
   int id;
-  String ip;         // empty for ESP-NOW slaves, kept for API compatibility
+  String ip;           // empty for ESP-NOW slaves, kept for API compatibility
   uint32_t lastSeen;
-  String state;      // "RUNNING", "LOCKED", "PAUSED", "ENDED"
+  String state;        // "RUNNING", "LOCKED", "PAUSED", "ENDED"
+  String prevState;    // state sebelumnya, untuk deteksi transisi ke ENDED
   int time_left;
+  int sessionElapsed;  // detik yang sudah berjalan di sesi ini (untuk auto-save)
   String battery;
-  uint8_t rawMac[6]; // raw MAC bytes for ESP-NOW addressing
+  uint8_t rawMac[6];   // raw MAC bytes for ESP-NOW addressing
 };
 SlaveRecord slaves[50];
 int slaveCount = 0;
@@ -88,7 +91,7 @@ portMUX_TYPE cmdResponseMux = portMUX_INITIALIZER_UNLOCKED;
 void addCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-User, X-Admin-Pass");
 }
 
 void handleOptions() {
@@ -178,12 +181,21 @@ void upsertSlave(const String& mac, int id, const uint8_t* rawMac) {
     slaves[slaveCount].ip = "";  // ESP-NOW slaves don't have IPs
     slaves[slaveCount].lastSeen = millis();
     slaves[slaveCount].state = "LOCKED";
+    slaves[slaveCount].prevState = "LOCKED";
     slaves[slaveCount].time_left = 0;
+    slaves[slaveCount].sessionElapsed = 0;
     slaves[slaveCount].battery = "OK";
     memcpy(slaves[slaveCount].rawMac, rawMac, 6);
     slaveCount++;
   }
 }
+
+// ===== FORWARD DECLARATIONS =====
+// Diperlukan karena fungsi-fungsi ini dipanggil di dalam onEspNowRecv
+// sebelum didefinisikan di bawah.
+JsonDocument loadJsonFile(const char* path);
+void saveJsonFile(const char* path, const JsonDocument& doc);
+void autoSaveStats(int slaveId, int detik);
 
 // ===== ESP-NOW RECEIVE CALLBACK =====
 // Note: ESP32 standard (IDF v4) uses the old callback signature.
@@ -233,10 +245,39 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
         for (int i = 0; i < slaveCount; i++) {
           if (slaves[i].mac == senderMac) {
             found = true;
-            slaves[i].state = pktStateName(pkt.state);
-            slaves[i].time_left = pkt.timeLeft;
-            slaves[i].battery = "OK";
-            slaves[i].lastSeen = millis();
+            String newState = pktStateName(pkt.state);
+
+            // Hitung elapsed: jika sebelumnya RUNNING dan time_left berkurang
+            if (slaves[i].state == "RUNNING" && newState == "RUNNING") {
+              int diff = slaves[i].time_left - (int)pkt.timeLeft;
+              if (diff > 0) slaves[i].sessionElapsed += diff;
+            }
+
+            // Deteksi transisi ke sesi baru: dari ENDED/LOCKED ke RUNNING
+            if ((slaves[i].state == "ENDED" || slaves[i].state == "LOCKED") &&
+                newState == "RUNNING") {
+              slaves[i].sessionElapsed = 0; // reset counter sesi baru
+            }
+
+            // Deteksi transisi ke ENDED → auto-save stats
+            if (slaves[i].state != "ENDED" && newState == "ENDED") {
+              int elapsed = slaves[i].sessionElapsed;
+              int slaveId = slaves[i].id;
+              xSemaphoreGive(slavesMutex);
+              autoSaveStats(slaveId, elapsed); // SPIFFS di luar mutex
+              if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) break;
+              // Cari ulang index karena mutex sempat dilepas
+              for (int k = 0; k < slaveCount; k++) {
+                if (slaves[k].mac == senderMac) { i = k; break; }
+              }
+              slaves[i].sessionElapsed = 0;
+            }
+
+            slaves[i].prevState  = slaves[i].state;
+            slaves[i].state      = newState;
+            slaves[i].time_left  = pkt.timeLeft;
+            slaves[i].battery    = "OK";
+            slaves[i].lastSeen   = millis();
 
             // Check if slave's ID is out of sync (e.g., after edit_slave)
             if (pkt.senderId != (uint8_t)slaves[i].id) {
@@ -318,7 +359,377 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
   }
 }
 
+// ===== AUTO-SAVE STATS =====
+// Dipanggil di server-side saat sesi RC selesai (time_left habis atau STOP)
+// sehingga total main tersimpan meski browser sedang tutup/offline.
+void autoSaveStats(int slaveId, int detik) {
+  if (detik <= 0) return;
+  JsonDocument stats = loadJsonFile("/stats.json");
+  String id = String(slaveId);
+  if (stats[id].isNull()) {
+    stats[id]["totalDetik"] = 0;
+    stats[id]["totalSesi"]  = 0;
+  }
+  stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
+  stats[id]["totalSesi"]  = stats[id]["totalSesi"].as<int>() + 1;
+  saveJsonFile("/stats.json", stats);
+  Serial.printf("[STATS] Auto-save: RC %d +%ds (total=%ds, sesi=%d)\n",
+                slaveId, detik,
+                stats[id]["totalDetik"].as<int>(),
+                stats[id]["totalSesi"].as<int>());
+}
+
+// ===== SPIFFS HELPERS =====
+JsonDocument loadJsonFile(const char* path) {
+  JsonDocument doc;
+  File file = SPIFFS.open(path, "r");
+  if (!file) return doc;
+  deserializeJson(doc, file);
+  file.close();
+  return doc;
+}
+
+void saveJsonFile(const char* path, const JsonDocument& doc) {
+  File file = SPIFFS.open(path, "w");
+  if (!file) return;
+  serializeJson(doc, file);
+  file.close();
+}
+
+bool authCheck(bool requireSA = false) {
+  String u = server.header("X-Admin-User");
+  String p = server.header("X-Admin-Pass");
+  if (u == "" || p == "") return false;
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  
+  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == p) {
+    return true; // SuperAdmin has access to everything
+  }
+  
+  if (!requireSA) {
+    JsonArray kr = auth["kr"].as<JsonArray>();
+    for (JsonObject k : kr) {
+      if (k["user"] == u && k["pass"] == p) return true;
+    }
+  }
+  
+  return false;
+}
+
 // ===== HTTP HANDLERS =====
+
+// GET /api/auth — check if SA exists
+void handleCheckAuth() {
+  addCorsHeaders();
+  JsonDocument auth = loadJsonFile("/auth.json");
+  bool exists = !auth["sa"]["user"].isNull();
+  server.send(200, "application/json", "{\"exists\":" + String(exists ? "true" : "false") + "}");
+}
+
+// POST /api/auth/register — register SA (only if not exists)
+void handleRegisterSA() {
+  addCorsHeaders();
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String p = doc["password"] | "";
+  if (u == "" || p.length() < 4) { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (!auth["sa"]["user"].isNull()) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"ALREADY_EXISTS\"}"); return;
+  }
+
+  auth["sa"]["user"] = u;
+  auth["sa"]["pass"] = p;
+  if (auth["kr"].isNull()) auth["kr"] = JsonArray();
+  saveJsonFile("/auth.json", auth);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/auth/login — return role
+void handleLogin() {
+  addCorsHeaders();
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String p = doc["password"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == p) {
+    server.send(200, "application/json", "{\"ok\":1,\"role\":\"sa\"}"); return;
+  }
+
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (JsonObject k : kr) {
+    if (k["user"] == u && k["pass"] == p) {
+      server.send(200, "application/json", "{\"ok\":1,\"role\":\"kr\"}"); return;
+    }
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
+// POST /api/auth/change-pass
+void handleChangePass() {
+  addCorsHeaders();
+  if (!authCheck()) { server.send(401); return; }
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String oldP = doc["oldPass"] | "";
+  String newP = doc["newPass"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == oldP) {
+    auth["sa"]["pass"] = newP;
+    saveJsonFile("/auth.json", auth);
+    server.send(200, "application/json", "{\"ok\":1}"); return;
+  }
+
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (JsonObject k : kr) {
+    if (k["user"] == u && k["pass"] == oldP) {
+      k["pass"] = newP;
+      saveJsonFile("/auth.json", auth);
+      server.send(200, "application/json", "{\"ok\":1}"); return;
+    }
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
+// GET /api/karyawan
+void handleGetKaryawan() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  JsonDocument auth = loadJsonFile("/auth.json");
+  JsonDocument res;
+  JsonArray resArr = res["karyawan"].to<JsonArray>();
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (JsonObject k : kr) {
+    resArr.add(k["user"]);
+  }
+  String out; serializeJson(res, out);
+  server.send(200, "application/json", out);
+}
+
+// POST /api/karyawan/add
+void handleAddKaryawan() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+  String p = doc["password"] | "";
+  if (u == "" || p.length() < 4) { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"] == u) { server.send(400, "application/json", "{\"ok\":0,\"code\":\"ALREADY_EXISTS\"}"); return; }
+  
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  if (!kr) kr = auth["kr"].to<JsonArray>();
+  for (JsonObject k : kr) {
+    if (k["user"] == u) { server.send(400, "application/json", "{\"ok\":0,\"code\":\"ALREADY_EXISTS\"}"); return; }
+  }
+
+  JsonObject newKr = kr.add<JsonObject>();
+  newKr["user"] = u;
+  newKr["pass"] = p;
+  saveJsonFile("/auth.json", auth);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/karyawan/delete
+void handleDeleteKaryawan() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String u = doc["username"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  JsonArray kr = auth["kr"].as<JsonArray>();
+  for (int i = 0; i < kr.size(); i++) {
+    if (kr[i]["user"] == u) {
+      kr.remove(i);
+      saveJsonFile("/auth.json", auth);
+      server.send(200, "application/json", "{\"ok\":1}"); return;
+    }
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
+// GET /api/stats
+void handleGetStats() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+  JsonDocument stats = loadJsonFile("/stats.json");
+  String out; serializeJson(stats, out);
+  server.send(200, "application/json", out);
+}
+
+// POST /api/stats/add
+void handleAddStats() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String id = doc["id"].as<String>();
+  int detik = doc["detik"] | 0;
+  if (id == "" || detik <= 0) { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument stats = loadJsonFile("/stats.json");
+  if (stats[id].isNull()) {
+    stats[id]["totalDetik"] = 0;
+    stats[id]["totalSesi"] = 0;
+  }
+  stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
+  stats[id]["totalSesi"] = stats[id]["totalSesi"].as<int>() + 1;
+  saveJsonFile("/stats.json", stats);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/stats/reset
+void handleResetStats() {
+  addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String id = doc["id"].as<String>();
+  if (id == "" || id == "null") { server.send(400, "application/json", "{\"ok\":0}"); return; }
+
+  JsonDocument stats = loadJsonFile("/stats.json");
+  stats[id]["totalDetik"] = 0;
+  stats[id]["totalSesi"] = 0;
+  saveJsonFile("/stats.json", stats);
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+
+void handleGetTransaksi() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+
+  File file = SPIFFS.open("/transaksi.json", "r");
+  if (!file || file.size() == 0) {
+    if (file) file.close();
+    server.send(200, "application/json", "[]");
+    return;
+  }
+  server.streamFile(file, "application/json");
+  file.close();
+}
+
+// ── POST /api/transaksi/add ────────────────────────────────────────
+// Tambah 1 transaksi, auto-hapus yang lebih dari 3 hari, max 500 record
+void handleAddTransaksi() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; }
+  if (!server.hasArg("plain")) { server.send(400); return; }
+
+  // Cek heap tersedia sebelum alokasi besar
+  if (ESP.getFreeHeap() < 80000) {
+    Serial.printf("[TRX] Low heap (%lu), skip write\n", (unsigned long)ESP.getFreeHeap());
+    server.send(503, "application/json", "{\"ok\":0,\"code\":\"LOW_HEAP\"}");
+    return;
+  }
+
+  JsonDocument reqDoc;
+  if (deserializeJson(reqDoc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+
+  // Validasi field wajib
+  if (reqDoc["rcId"].isNull() || reqDoc["ts"].isNull()) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"MISSING_FIELD\"}");
+    return;
+  }
+
+  // Ambil timestamp transaksi baru (ms, dari browser Date.now())
+  // Gunakan double untuk menampung nilai 13-digit tanpa overflow
+  double newTs = reqDoc["ts"].as<double>();
+
+  // Batas 7 hari ke belakang (dalam ms)
+  double cutoffMs = newTs - (7.0 * 24.0 * 3600.0 * 1000.0);
+
+  // Load transaksi yang ada
+  JsonDocument trxDoc;
+  File fileR = SPIFFS.open("/transaksi.json", "r");
+  if (fileR && fileR.size() > 0) {
+    DeserializationError err = deserializeJson(trxDoc, fileR);
+    fileR.close();
+    if (err || !trxDoc.is<JsonArray>()) {
+      trxDoc.set(JsonArray()); // reset kalau corrupt
+    }
+  } else {
+    if (fileR) fileR.close();
+    trxDoc.set(JsonArray());
+  }
+
+  JsonArray arr = trxDoc.as<JsonArray>();
+
+  // ── Hapus transaksi yang lebih tua dari 7 hari ────────────────────
+  // Iterasi dari belakang supaya remove() aman
+  for (int i = (int)arr.size() - 1; i >= 0; i--) {
+    double ts = arr[i]["ts"].as<double>();
+    if (ts < cutoffMs) {
+      arr.remove(i);
+    }
+  }
+
+  // ── Batasi maks 300 record (safety cap untuk 10 RC + retensi 7 hari) ─
+  // Hapus yang paling lama (index 0) kalau melebihi
+  while (arr.size() >= 300) {
+    arr.remove(0);
+  }
+
+  // ── Tambah transaksi baru di akhir ───────────────────────────────
+  // BUGFIX: validate input ranges to prevent SPIFFS corruption and absurd
+  // reports. See matching change in wifi_master_esp32_WEBUI/main.cpp.
+  int rcId = reqDoc["rcId"].as<int>();
+  int menit = reqDoc["menit"].as<int>();
+  long harga = reqDoc["harga"].as<long>();
+  if (rcId < 1 || rcId > 50) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_RCID\"}");
+    return;
+  }
+  if (menit < 1 || menit > 480) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_MENIT\"}");
+    return;
+  }
+  if (harga < 0 || harga > 10000000L) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"BAD_HARGA\"}");
+    return;
+  }
+  String rcNama = reqDoc["rcNama"].as<String>();
+  String pelanggan = reqDoc["pelanggan"].as<String>();
+  if (rcNama.length() > 64) rcNama = rcNama.substring(0, 64);
+  if (pelanggan.length() > 64) pelanggan = pelanggan.substring(0, 64);
+
+  JsonObject newTrx = arr.add<JsonObject>();
+  newTrx["id"]        = reqDoc["id"];
+  newTrx["rcId"]      = rcId;
+  newTrx["rcNama"]    = rcNama;
+  newTrx["pelanggan"] = pelanggan;
+  newTrx["menit"]     = menit;
+  newTrx["harga"]     = harga;
+  newTrx["paket"]     = reqDoc["paket"].as<String>();
+  newTrx["ts"]        = newTs; // simpan sebagai double
+
+  // Simpan kembali ke SPIFFS
+  File fileW = SPIFFS.open("/transaksi.json", "w");
+  if (!fileW) {
+    server.send(500, "application/json", "{\"ok\":0,\"code\":\"WRITE_FAIL\"}");
+    return;
+  }
+  serializeJson(trxDoc, fileW);
+  fileW.close();
+
+  Serial.printf("[TRX] Saved. Total: %d records. Heap: %lu\n",
+                (int)arr.size(), (unsigned long)ESP.getFreeHeap());
+
+  server.send(200, "application/json", "{\"ok\":1}");
+}
 
 // GET /api/slaves — List all slave units (unchanged API)
 void handleSlaves() {
@@ -350,6 +761,7 @@ void handleSlaves() {
 // POST /api/command — Send command to slave via ESP-NOW (same API contract)
 void handleCommandProxy() {
   addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; } // semua role yang login
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -405,13 +817,15 @@ void handleCommandProxy() {
   }
 
 #if DEMO_MODE
-  if (targetMac.startsWith("FF:FF:FF:00:00:")) {
+  if (targetMac.startsWith("FF:FF:FF:00:00:") || targetMac.startsWith("EE:EE:EE:00:00:")) {
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       if (cmdEnum == CMD_ADD_TIME) {
-        slaves[slaveIdx].time_left += time;
+        // Sesi baru: reset sessionElapsed jika sebelumnya ENDED/LOCKED
         if (slaves[slaveIdx].state == "LOCKED" || slaves[slaveIdx].state == "ENDED") {
+          slaves[slaveIdx].sessionElapsed = 0;
           slaves[slaveIdx].state = "RUNNING";
         }
+        slaves[slaveIdx].time_left += time;
       } else if (cmdEnum == CMD_PAUSE) {
         slaves[slaveIdx].state = "PAUSED";
       } else if (cmdEnum == CMD_RESUME) {
@@ -419,12 +833,22 @@ void handleCommandProxy() {
           slaves[slaveIdx].state = "RUNNING";
         }
       } else if (cmdEnum == CMD_STOP) {
+        // Simpan elapsed sebelum di-reset
+        int elapsed = slaves[slaveIdx].sessionElapsed;
+        int slaveId  = slaves[slaveIdx].id;
         slaves[slaveIdx].state = "ENDED";
         slaves[slaveIdx].time_left = 0;
+        slaves[slaveIdx].sessionElapsed = 0;
+        char resp[128];
+        snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":0,\"state\":\"ENDED\"}");
+        server.send(200, "application/json", String(resp));
+        xSemaphoreGive(slavesMutex);
+        autoSaveStats(slaveId, elapsed); // simpan di luar mutex
+        return;
       }
       slaves[slaveIdx].lastSeen = millis();
       char resp[128];
-      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"OK\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
+      snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":%d,\"state\":\"%s\"}", slaves[slaveIdx].time_left, slaves[slaveIdx].state.c_str());
       server.send(200, "application/json", String(resp));
       xSemaphoreGive(slavesMutex);
     } else {
@@ -442,6 +866,9 @@ void handleCommandProxy() {
   pkt.senderId = 0; // Master
   pkt.cmd = cmdEnum;
   pkt.value = time;
+
+  // Consume any stray semaphore gives
+  xSemaphoreTake(cmdResponseSem, 0);
 
   // Reset response state
   portENTER_CRITICAL(&cmdResponseMux);
@@ -465,16 +892,29 @@ void handleCommandProxy() {
   }
 
   if (gotResponse && cmdResponsePkt.senderId == (uint8_t)targetId) {
-    // Build JSON response matching the API spec exactly
-    char resp[128];
+    // Build JSON response matching the API spec exactly.
+    // BUGFIX: the respCode cast was comparing a uint8_t (respCode) against
+    // RespCode enum values via == on a uint8_t variable. RESP_OK=0, RESP_REBOOTING=6
+    // so the existing check worked by luck; relying on the same enum value
+    // representation in the response struct (which is packed) is unsafe if
+    // someone adds a new RespCode. Cast explicitly to RespCode.
+    RespCode actualCode = (RespCode)cmdResponsePkt.respCode;
+    int ok = (actualCode == RESP_OK || actualCode == RESP_REBOOTING) ? 1 : 0;
+    char resp[160];
     snprintf(resp, sizeof(resp),
              "{\"ok\":%d,\"code\":\"%s\",\"time_left\":%lu,\"state\":\"%s\"}",
-             (cmdResponsePkt.respCode == RESP_OK || cmdResponsePkt.respCode == RESP_REBOOTING) ? 1 : 0,
+             ok,
              respCodeName(cmdResponsePkt.respCode),
              (unsigned long)cmdResponsePkt.timeLeft,
              pktStateName(cmdResponsePkt.state));
     Serial.printf("[PROXY] Slave responded: %s\n", resp);
     server.send(200, "application/json", String(resp));
+  } else if (gotResponse && cmdResponsePkt.senderId != (uint8_t)targetId) {
+    // A different slave replied (stale response, or a slave with a wrong
+    // target ID). Don't claim success — the targeted slave didn't ack.
+    Serial.printf("[PROXY] Stale ESP-NOW response: senderId=%d != targetId=%d\n",
+                  cmdResponsePkt.senderId, targetId);
+    server.send(502, "application/json", "{\"ok\":0,\"error\":\"Stale slave response\"}");
   } else {
     Serial.printf("[PROXY] Slave EXC-%02d timeout (no ESP-NOW response)\n", targetId);
     server.send(502, "application/json", "{\"ok\":0,\"error\":\"Slave offline/timeout\"}");
@@ -484,6 +924,7 @@ void handleCommandProxy() {
 // POST /api/edit_slave — Change slave ID (unchanged logic)
 void handleEditSlave() {
   addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -544,6 +985,7 @@ void handleEditSlave() {
 // POST /api/delete_slave — Delete slave from registry (unchanged logic)
 void handleDeleteSlave() {
   addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
   if (!server.hasArg("plain")) {
     server.send(400);
     return;
@@ -592,6 +1034,7 @@ void handleDeleteSlave() {
 // POST /api/reset_registry — Wipes all MAC-to-ID mappings in memory and flash
 void handleResetRegistry() {
   addCorsHeaders();
+  if (!authCheck(true)) { server.send(401); return; } // SA only
 
   Serial.println("[MANAGE] FACTORY RESET: Wiping slave registry...");
 
@@ -703,6 +1146,12 @@ void setup() {
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n",
                 (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 
+  if (!SPIFFS.begin(true)) {
+    Serial.println("[SYSTEM] SPIFFS Mount Failed");
+  } else {
+    Serial.println("[SYSTEM] SPIFFS Mounted");
+  }
+
   // Wi-Fi: AP+STA mode (AP for Android, STA for ESP-NOW)
   WiFi.mode(WIFI_AP_STA);
 
@@ -777,12 +1226,7 @@ void setup() {
 #endif
 
 // HTTP endpoints — identical API surface for Android app
-  server.on("/", HTTP_GET, []() {
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.sendHeader("Pragma", "no-cache");
-    server.sendHeader("Expires", "-1");
-    server.send(200, "application/json", "{\"status\":\"Excavator Master API Ready\",\"mode\":\"espnow\"}");
-  });
+
 
   server.on("/api/register", HTTP_GET, handleRegister);
   server.on("/api/register", HTTP_OPTIONS, handleOptions);
@@ -796,6 +1240,58 @@ void setup() {
   server.on("/api/delete_slave", HTTP_OPTIONS, handleOptions);
   server.on("/api/reset_registry", HTTP_POST, handleResetRegistry);
   server.on("/api/reset_registry", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/auth", HTTP_GET, handleCheckAuth);
+  server.on("/api/auth", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/register", HTTP_POST, handleRegisterSA);
+  server.on("/api/auth/register", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/login", HTTP_POST, handleLogin);
+  server.on("/api/auth/login", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/change-pass", HTTP_POST, handleChangePass);
+  server.on("/api/auth/change-pass", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/karyawan", HTTP_GET, handleGetKaryawan);
+  server.on("/api/karyawan", HTTP_OPTIONS, handleOptions);
+  server.on("/api/karyawan/add", HTTP_POST, handleAddKaryawan);
+  server.on("/api/karyawan/add", HTTP_OPTIONS, handleOptions);
+  server.on("/api/karyawan/delete", HTTP_POST, handleDeleteKaryawan);
+  server.on("/api/karyawan/delete", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/stats", HTTP_GET, handleGetStats);
+  server.on("/api/stats", HTTP_OPTIONS, handleOptions);
+  server.on("/api/stats/add", HTTP_POST, handleAddStats);
+  server.on("/api/stats/add", HTTP_OPTIONS, handleOptions);
+  server.on("/api/stats/reset", HTTP_POST, handleResetStats);
+  server.on("/api/stats/reset", HTTP_OPTIONS, handleOptions);
+
+  server.on("/api/transaksi",     HTTP_GET,  handleGetTransaksi);
+  server.on("/api/transaksi",     HTTP_OPTIONS, handleOptions);
+  server.on("/api/transaksi/add", HTTP_POST, handleAddTransaksi);
+  server.on("/api/transaksi/add", HTTP_OPTIONS, handleOptions);
+
+  const char * headerkeys[] = {"X-Admin-User", "X-Admin-Pass"} ;
+  size_t headerkeyssize = sizeof(headerkeys)/sizeof(char*);
+  server.collectHeaders(headerkeys, headerkeyssize);
+
+  server.on("/", HTTP_GET, []() {
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    server.sendHeader("Pragma", "no-cache");
+    server.sendHeader("Expires", "-1");
+    server.send(200, "application/json", "{\"status\":\"Excavator Master API Ready\",\"mode\":\"espnow\"}");
+  });
+
+  server.onNotFound([]() {
+    if (server.method() == HTTP_OPTIONS) {
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.sendHeader("Access-Control-Max-Age", "10000");
+      server.sendHeader("Access-Control-Allow-Methods", "PUT,POST,GET,OPTIONS");
+      server.sendHeader("Access-Control-Allow-Headers", "*");
+      server.send(204);
+    } else {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", "Redirecting...");
+    }
+  });
 
   server.begin();
   Serial.println("Web Server running at http://192.168.4.1/");
@@ -824,18 +1320,34 @@ void loop() {
       Serial.printf("[MASTER-HB] up=%lus slaves=%d\n", now / 1000, slaveCount);
 #if DEMO_MODE
       for (int i = 0; i < slaveCount; i++) {
-        if (slaves[i].mac.startsWith("FF:FF:FF:00:00:")) {
-          slaves[i].lastSeen = now;
-          if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0) {
-            slaves[i].time_left--;
-            if (slaves[i].time_left <= 0) {
-              slaves[i].state = "ENDED";
-            }
+        bool isFakeOnline = slaves[i].mac.startsWith("FF:FF:FF:00:00:");
+        bool isFakeOffline = slaves[i].mac.startsWith("EE:EE:EE:00:00:");
+        if (!isFakeOnline && !isFakeOffline) continue;
+
+        if (isFakeOnline) {
+          slaves[i].lastSeen = now; // tetap online
+        }
+        // EE biarkan lastSeen = 0 (tampil offline), tapi timer tetap berjalan
+
+        if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0) {
+          slaves[i].time_left--;
+          slaves[i].sessionElapsed++;
+          if (slaves[i].time_left <= 0) {
+            slaves[i].state = "ENDED";
+            int slaveId = slaves[i].id;
+            int elapsed = slaves[i].sessionElapsed;
+            slaves[i].sessionElapsed = 0;
+            // Auto-save harus di luar mutex — simpan dulu, rilis mutex lalu save
+            xSemaphoreGive(slavesMutex);
+            autoSaveStats(slaveId, elapsed);
+            // Tidak perlu ambil mutex lagi, langsung break dari heartbeat interval
+            goto doneHb;
           }
         }
       }
 #endif
       xSemaphoreGive(slavesMutex);
     }
+    doneHb:;
   }
 }

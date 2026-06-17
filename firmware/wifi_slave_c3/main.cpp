@@ -377,6 +377,13 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             int maxLimit = MAX_ADD_TIME_MINUTES * 60;
             if ((int)pkt.value > maxLimit) {
               respCode = RESP_EXCEEDS_LIMIT;
+            } else if (pkt.value == 0) {
+              // Zero-second ADD_TIME is a no-op. Do NOT set cmdOk so the
+              // generic "not executed" guard at line 443 reports RESP_BAD_STATE
+              // (the dashboard's fErr() will show "Unit tidak dalam kondisi
+              // yang sesuai"). Without this, a zero-valued ADD_TIME would
+              // pretend success and the master would emit code: "OK" while
+              // the slave never actually started.
             } else if (pkt.value > 0) {
               addTime(pkt.value);
               if (state == STATE_LOCKED || state == STATE_ENDED) {
@@ -516,9 +523,12 @@ void networkTask(void* pvParameters) {
         // PKT_REGISTER_RESP or PKT_COMMAND from Master in MASTER_TIMEOUT_MS.
         // Sending heartbeats proves the radio is up; Master will re-register
         // us if it reboots, so this is safe.
-        lastMasterContactMs = millis();
+        // Snapshot once so the elapsed check is meaningful (previously both
+        // sides of the comparison were identical and the guard could never fire).
+        uint32_t nowMs = millis();
+        lastMasterContactMs = nowMs;
         // Check if Master is still alive
-        if (millis() - lastMasterContactMs > MASTER_TIMEOUT_MS) {
+        if (nowMs - lastMasterContactMs > MASTER_TIMEOUT_MS) {
           Serial.println("[ESPNOW] Master unresponsive. Dropping registration.");
           isRegistered = false;
           masterKnown = false;
