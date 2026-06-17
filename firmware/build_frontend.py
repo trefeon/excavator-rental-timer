@@ -2,10 +2,9 @@ import gzip
 import os
 import sys
 
-# Default: build from RCDashboard.html (new live dashboard).
-# Fallback to frontend/DashboardRCNew.html if RCDashboard.html is missing.
+# Default: build from frontend/index.html (new live dashboard).
 # Override with CLI arg 1: <input.html>
-candidates = ["../RCDashboard.html", "../frontend/DashboardRCNew.html"]
+candidates = ["../frontend/index.html"]
 if len(sys.argv) > 1 and sys.argv[1]:
     input_file = sys.argv[1]
 else:
