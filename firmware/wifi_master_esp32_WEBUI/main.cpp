@@ -249,7 +249,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             String newState = pktStateName(pkt.state);
 
             // Hitung elapsed: jika sebelumnya RUNNING dan time_left berkurang
-            if (slaves[i].state == "RUNNING" && newState == "RUNNING") {
+            if (slaves[i].state == "RUNNING" && (newState == "RUNNING" || newState == "ENDED" || newState == "PAUSED")) {
               int diff = slaves[i].time_left - (int)pkt.timeLeft;
               if (diff > 0) slaves[i].sessionElapsed += diff;
             }
@@ -869,6 +869,17 @@ void handleCommandProxy() {
   pkt.senderId = 0; // Master
   pkt.cmd = cmdEnum;
   pkt.value = time;
+
+  // Jika manual STOP, hapus sessionElapsed supaya tidak masuk laporan Master (autoSaveStats)
+  if (cmdEnum == CMD_STOP) {
+    if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+      if (slaveIdx >= 0 && slaveIdx < slaveCount) {
+        slaves[slaveIdx].sessionElapsed = 0;
+        slaves[slaveIdx].time_left = 0;
+      }
+      xSemaphoreGive(slavesMutex);
+    }
+  }
 
   // Consume any stray semaphore gives
   xSemaphoreTake(cmdResponseSem, 0);
