@@ -764,7 +764,7 @@ const slp=ms=>new Promise(r=>setTimeout(r,ms));
 const fmtRp=n=>n?'Rp '+parseInt(n).toLocaleString('id-ID'):'Rp 0';
 const fmtTotal=d=>{if(!d||d<=0)return'0m';const h=Math.floor(d/3600),m=Math.floor((d%3600)/60);return h>0?h+'j '+m+'m':m+'m';};
 // Total Main format jam:menit:detik (HH:MM:SS) — jam boleh >99 untuk total besar
-const fmtMMSS=d=>{d=Math.max(0,Math.floor(+d||0));const m=Math.floor(d/60),s=d%60;return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');};
+const fmtMMSS=d=>{d=Math.max(0,Math.floor(+d||0));const h=Math.floor(d/3600),m=Math.floor((d%3600)/60),s=d%60;return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');};
 const getStat=id=>statsCache[String(id)]||{totalDetik:0,totalSesi:0};
 const fmtTime=s=>{if(!s||s<=0)return'--:--';return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');};
 const fmtDur=m=>m<60?m+'m':Math.floor(m/60)+'j'+(m%60?m%60+'m':'');
@@ -1078,7 +1078,13 @@ function gotoTab(name){
     populateFilterSelects();
     renderLaporan(); // tampilkan cache dulu
     loadTrxFromEsp32().then(()=>{ // reload dari SPIFFS di background
-      populateFilterSelects();renderLaporan();
+      populateFilterSelects();
+      // Hanya re-render kalau tidak ada dropdown yang sedang terbuka
+      const rcSel=document.getElementById('filterRC');
+      const pkgSel=document.getElementById('filterPkg');
+      if(document.activeElement!==rcSel&&document.activeElement!==pkgSel){
+        renderLaporan();
+      }
     });
   }
   if(name==='profile'){
@@ -1277,15 +1283,7 @@ function bukaResetTimer(id){
   document.getElementById('drUnit').textContent=getRcName(id);
   openDlg('dlgResetTimer');
 }
-async function konfResetTimer(){
-  closeDlg('dlgResetTimer');
-  if(pResetTimerId!==null){
-    // Cegah masuk laporan transaksi (karena ini manual STOP)
-    if(timers[pResetTimerId]) timers[pResetTimerId].sessionDone=true;
-    clearPending(pResetTimerId);
-    await sendCmd(pResetTimerId,'STOP',0);
-  }
-}
+async function konfResetTimer(){closeDlg('dlgResetTimer');if(pResetTimerId!==null)await sendCmd(pResetTimerId,'STOP',0);}
 
 // ══ RESET TOTAL MAIN (butuh password SA) ═══════════════════════════
 function bukaResetTotal(id){
@@ -1336,6 +1334,21 @@ function loadPend(){try{return JSON.parse(localStorage.getItem(LS_PEND)||'{}');}
 function savePend(p){localStorage.setItem(LS_PEND,JSON.stringify(p));}
 function setPending(rcId,pelanggan,menit,harga){const p=loadPend();p[rcId]={pelanggan,menit,harga,ts:Date.now()};savePend(p);}
 function clearPending(rcId){const p=loadPend();delete p[rcId];savePend(p);}
+
+// ── TFS SNAPSHOT ─────────────────────────────────────────────────────
+// Saat RC sedang berjalan / pause, simpan tfs ke localStorage agar
+// setelah refresh / browser ditutup + dibuka lagi, elapsed tidak hilang.
+// Key: rc_tfs_{id}  Value: {tfs, savedAt, sisa}
+const LS_TFS='rc_tfs_';
+function saveTfsSnapshot(id){
+  if(!timers[id])return;
+  const snap={tfs:timers[id].tfs||0,savedAt:Date.now(),sisa:timers[id].sisa||0};
+  localStorage.setItem(LS_TFS+id,JSON.stringify(snap));
+}
+function loadTfsSnapshot(id){
+  try{return JSON.parse(localStorage.getItem(LS_TFS+id)||'null');}catch{return null;}
+}
+function clearTfsSnapshot(id){localStorage.removeItem(LS_TFS+id);}
 function recordTrx(rcId){
   const p=loadPend();if(!p[rcId])return;
   const item=p[rcId];
@@ -1395,15 +1408,19 @@ function renderHariPicker(){
 }
 function setHariOffset(n){hariOffset=n;renderLaporan();}
 function populateFilterSelects(){
+  // Jangan rebuild saat dropdown sedang terbuka (cegah glitch/auto-close)
   const rcSel=document.getElementById('filterRC');
   const pkgSel=document.getElementById('filterPkg');
+  if(document.activeElement===rcSel||document.activeElement===pkgSel)return;
   const curRc=rcSel.value,curPkg=pkgSel.value;
-  rcSel.innerHTML='<option value="">Semua RC</option>';
-  const names=loadRcNames();
-  slaves.forEach(s=>{const nm=getRcName(s.id);rcSel.innerHTML+=`<option value="${s.id}">${e(nm)}</option>`;});
-  pkgSel.innerHTML='<option value="">Semua Paket</option>';
-  loadPkg().forEach(p=>{pkgSel.innerHTML+=`<option value="${p.menit}">${e(p.label)}</option>`;});
-  rcSel.value=curRc;pkgSel.value=curPkg;
+  // Hitung opsi RC yang diharapkan
+  const wantRc=['<option value="">Semua RC</option>',
+    ...slaves.map(s=>`<option value="${s.id}">${e(getRcName(s.id))}</option>`)].join('');
+  const wantPkg=['<option value="">Semua Paket</option>',
+    ...loadPkg().map(p=>`<option value="${p.menit}">${e(p.label)}</option>`)].join('');
+  // Hanya tulis ulang kalau isinya benar-benar berubah (cegah re-render percuma)
+  if(rcSel.innerHTML!==wantRc){rcSel.innerHTML=wantRc;rcSel.value=curRc;}
+  if(pkgSel.innerHTML!==wantPkg){pkgSel.innerHTML=wantPkg;pkgSel.value=curPkg;}
 }
 function filterTrx(){
   const trx=loadTrx(),now=new Date();
@@ -1523,21 +1540,8 @@ function buildAnalitik7(){
 }
 function renderLaporan(){
   renderHariPicker();
-  const f=filterTrx(),all=loadTrx();
-  const tot=f.reduce((a,t)=>a+(t.harga||0),0);
-  const avg=f.length?Math.round(tot/f.length):0;
-  const grand=all.reduce((a,t)=>a+(t.harga||0),0);
-  let detLbl={'minggu':'Minggu Ini','bulan':'Bulan Ini','semua':'Semua Waktu'}[periodeFilter]||'';
-  if(periodeFilter==='hari')detLbl=HARI_LBL[hariOffset];
+  const f=filterTrx();
   document.getElementById('lpContent').innerHTML=`
-    ${buildAnalitik7()}
-    <div class="sec">Detail — ${e(detLbl)}</div>
-    <div class="lp-cards">
-      <div class="lpc pu"><div class="lpc-v">${e(fmtRp(tot))}</div><div class="lpc-l">Total Pendapatan</div></div>
-      <div class="lpc"><div class="lpc-v">${f.length}</div><div class="lpc-l">Jumlah Sesi</div></div>
-      <div class="lpc gn"><div class="lpc-v">${e(fmtRp(avg))}</div><div class="lpc-l">Rata-rata/Sesi</div></div>
-      <div class="lpc bl"><div class="lpc-v">${e(fmtRp(grand))}</div><div class="lpc-l">Grand Total</div></div>
-    </div>
     <div class="trx-b">
       <div class="trx-hd">
         <span class="trx-tl">🧾 Riwayat Transaksi</span>
@@ -1559,7 +1563,8 @@ function renderLaporan(){
         <span class="td td-rp">${e(fmtRp(t.harga))}</span>
       </div></div>`).join('')}`
       :'<div class="trx-empty">📭 Belum ada transaksi untuk filter ini</div>'}
-    </div>`;
+    </div>
+    <div style="margin-top:16px;">${buildAnalitik7()}</div>`;
 }
 
 function exportPDF(){
@@ -1658,8 +1663,14 @@ function applySlaves(data){
     if(st==='running'){
       const t=timers[s.id];
       if(!t||t.sessionDone){
-        // SESI BARU: tidak ada timer, atau sesi sebelumnya sudah selesai
+        // SESI BARU atau setelah refresh: coba restore snapshot tfs dari localStorage
         startTmr(s.id,s.time_left,true);
+        const snap=loadTfsSnapshot(s.id);
+        if(snap&&snap.tfs>0&&timers[s.id]){
+          // Snapshot masih relevan (sesi belum berganti) — restore tfs
+          timers[s.id].tfs=snap.tfs;
+          timers[s.id]._tfsAtStart=snap.tfs;
+        }
       }else if(!t.running){
         // RESUME dari pause: pertahankan tfs yang sudah terkumpul
         startTmr(s.id,s.time_left,false);
@@ -1675,22 +1686,26 @@ function applySlaves(data){
       updateStatEl(s.id);
     }else{
       // State: PAUSED, LOCKED, atau ENDED
+      // Setelah refresh: kalau paused dan belum ada timer, restore snapshot
+      if(s.state==='PAUSED'&&(!timers[s.id]||timers[s.id].sessionDone)){
+        const snap=loadTfsSnapshot(s.id);
+        if(snap&&snap.tfs>0){
+          timers[s.id]={sisa:s.time_left,running:false,tfs:snap.tfs,iv:null,sessionDone:false,
+            _startedAt:Date.now(),_sisaAtStart:s.time_left,_tfsAtStart:snap.tfs};
+        }
+      }
       if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
         // RC selesai secara alami (waktu habis)
-        // Ambil info paket agar hitungan total akurat dan genap (misal 60 detik, bukan 59 detik karena polling)
-        const pend=loadPend();const info=pend[s.id];
-        const elapsed=info ? (info.menit*60) : (timers[s.id].tfs||0);
+        const elapsed=timers[s.id].tfs||0;
         if(elapsed>0){
-          if(!statsCache[s.id])statsCache[s.id]={totalDetik:0,totalSesi:0};
-          statsCache[s.id].totalDetik+=elapsed;
-          statsCache[s.id].totalSesi+=1;
-          updateStatEl(s.id);
+          // Simpan ke SPIFFS via addSesiEsp32 (cache RAM + /api/stats/add)
+          // supaya Total Main tetap benar setelah refresh
+          addSesiEsp32(String(s.id),elapsed);
         }
-        recordTrx(s.id); // catat ke laporan
+        clearTfsSnapshot(s.id); // hapus snapshot karena sesi sudah selesai
+        recordTrx(s.id); // catat ke laporan (hanya jika pending ada)
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
-        // Panggil stats dari ESP32 untuk akurasi penuh
-        setTimeout(loadStatsFromEsp32, 1000);
       }
       stopTmr(s.id);
       if(timers[s.id])timers[s.id].sisa=s.time_left;
@@ -1706,26 +1721,45 @@ function applySlaves(data){
 // ══ TIMERS ═════════════════════════════════════════════════════════
 function startTmr(id,sisa,isNew=false){
   // isNew=true → sesi baru, reset tfs (elapsed sesi ini)
-  // isNew=false → resume dari pause, pertahankan tfs
+  // isNew=false → resume dari pause, pertahankan tfs yang sudah terkumpul
+  //
+  // PENTING: gunakan Date.now() sebagai anchor supaya timer tetap akurat
+  // walaupun layar HP mati atau tab di-background (setInterval dithrottle browser).
   if(timers[id]&&timers[id].iv){clearInterval(timers[id].iv);timers[id].iv=null;}
+  const now=Date.now();
   if(!timers[id]||isNew){
-    timers[id]={sisa,running:true,tfs:0,iv:null,sessionDone:false};
+    timers[id]={sisa,running:true,tfs:0,iv:null,sessionDone:false,
+      _startedAt:now,   // timestamp saat sesi / resume dimulai
+      _sisaAtStart:sisa // sisa detik saat sesi / resume dimulai
+    };
   }else{
     timers[id].sisa=sisa;
     timers[id].running=true;
+    timers[id]._startedAt=now;
+    timers[id]._sisaAtStart=sisa;
+    // tfs tetap dipertahankan (resume)
   }
   timers[id].iv=setInterval(()=>{
-    if(!timers[id]||timers[id].sisa<=0){
-      stopTmr(id);
-      updateStatEl(id); // update tampilan saat waktu habis
-      return;
-    }
-    timers[id].sisa--;
-    timers[id].tfs++; // hitung detik yang sudah berjalan di sesi ini
+    if(!timers[id])return;
+    const t=timers[id];
+    // Hitung sisa & elapsed dari wall-clock, bukan dari counter
+    const wallElapsed=Math.floor((Date.now()-t._startedAt)/1000);
+    const newSisa=Math.max(0,t._sisaAtStart-wallElapsed);
+    const newTfs=(isNew?0:t._tfsAtStart||0)+wallElapsed; // tfs total sesi ini
+    t.sisa=newSisa;
+    t.tfs=newTfs;
     const el=document.getElementById('tmr-'+id);
-    if(el)el.textContent=fmtTime(timers[id].sisa);
-    updateStatEl(id); // update total main secara live setiap detik
+    if(el)el.textContent=fmtTime(newSisa);
+    updateStatEl(id);
+    // Simpan snapshot setiap 10 detik agar tidak hilang kalau browser ditutup tiba-tiba
+    if(newTfs%10===0&&newTfs>0) saveTfsSnapshot(id);
+    if(newSisa<=0){
+      stopTmr(id);
+      updateStatEl(id);
+    }
   },1000);
+  // Simpan baseline tfs saat resume agar bisa diakumulasikan
+  timers[id]._tfsAtStart=timers[id].tfs;
 }
 function stopTmr(id){
   if(timers[id]&&timers[id].iv){
@@ -1841,13 +1875,22 @@ async function sendCmd(id,cmd,time,retry=1){
         if(s) { s.state = data.state || 'PAUSED'; s.time_left = data.time_left || 0; }
         stopTmr(id);
         if(timers[id])timers[id].sisa=data.time_left||0;
+        saveTfsSnapshot(id); // simpan elapsed ke localStorage agar tidak hilang saat refresh
         updateStatEl(id); // tampilkan total yang sudah terkumpul (tidak bergerak)
         toast('⏸ Timer dijeda');
       }
       else if(cmd==='STOP'){
         // Operator menghentikan sesi secara manual
-        // → clear pending DULU agar applySlaves tidak mencatat ke laporan
-        //   ketika nanti state ENDED terdeteksi dari polling
+        // ① Akumulasi elapsed ke statsCache RAM + simpan ke ESP32 SPIFFS
+        //   supaya Total Main tidak kembali ke nilai awal setelah refresh/browser ditutup
+        if(timers[id]){
+          const elapsed=timers[id].tfs||0;
+          if(elapsed>0){
+            // addSesiEsp32 update cache RAM + kirim ke /api/stats/add (SPIFFS)
+            addSesiEsp32(String(id),elapsed);
+          }
+        }
+        clearTfsSnapshot(id); // hapus snapshot localStorage sesi ini
         clearPending(id);
         if(s) { s.state = data.state || 'LOCKED'; s.time_left = 0; }
         if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=true;}

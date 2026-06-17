@@ -1,5 +1,5 @@
 import sys
-with open('../../frontend/master-app.html', 'r', encoding='utf-8') as f:
+with open('../../frontend/index.html', 'r', encoding='utf-8') as f:
     html = f.read()
 with open('index_html.h', 'w', encoding='utf-8') as f:
     f.write('#pragma once\n\n')
