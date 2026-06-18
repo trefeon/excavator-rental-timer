@@ -997,6 +997,21 @@ void handleCommandProxy() {
     // someone adds a new RespCode. Cast explicitly to RespCode.
     RespCode actualCode = (RespCode)cmdResponsePkt.respCode;
     int ok = (actualCode == RESP_OK || actualCode == RESP_REBOOTING) ? 1 : 0;
+
+    // Jika STOP berhasil, tandai stoppedManually agar heartbeat berikutnya
+    // tidak memanggil autoSaveStats (mencegah double-increment totalDetik & totalSesi)
+    if (ok && cmdEnum == CMD_STOP) {
+      if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+        for (int i = 0; i < slaveCount; i++) {
+          if (slaves[i].id == targetId) {
+            slaves[i].stoppedManually = true;
+            break;
+          }
+        }
+        xSemaphoreGive(slavesMutex);
+      }
+    }
+
     char resp[160];
     snprintf(resp, sizeof(resp),
              "{\"ok\":%d,\"code\":\"%s\",\"time_left\":%lu,\"state\":\"%s\"}",
