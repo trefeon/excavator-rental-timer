@@ -35,6 +35,14 @@ static const char* AP_PASS = "12345678";
 WebServer server(80);
 Preferences preferences;
 SemaphoreHandle_t slavesMutex = NULL;
+// Mutex khusus untuk melindungi baca-tulis /stats.json di SPIFFS.
+// Tanpa ini, autoSaveStats/saveElapsedOnly (dipanggil dari loop ESP-NOW)
+// bisa berbarengan dengan handleAddStats/handleResetStats (dipanggil dari
+// HTTP handler) saling timpa file karena pola read-modify-write-nya tidak atomik.
+// Akibatnya: reset salah satu RC bisa "menimpa balik" stats RC lain dengan
+// data basi (stale), termasuk mengembalikan/menambah totalSesi RC lain.
+SemaphoreHandle_t statsMutex = NULL;
+static const uint32_t STATS_MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(500);
 
 // ===== TIMING =====
 static const uint32_t ONLINE_THRESHOLD_MS = 30000;
@@ -373,6 +381,10 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 // sehingga total main tersimpan meski browser sedang tutup/offline.
 void autoSaveStats(int slaveId, int detik) {
   if (detik <= 0) return;
+  if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+    Serial.println("[STATS] autoSaveStats: gagal ambil statsMutex, skip");
+    return;
+  }
   JsonDocument stats = loadJsonFile("/stats.json");
   String id = String(slaveId);
   if (stats[id].isNull()) {
@@ -386,12 +398,17 @@ void autoSaveStats(int slaveId, int detik) {
                 slaveId, detik,
                 stats[id]["totalDetik"].as<int>(),
                 stats[id]["totalSesi"].as<int>());
+  xSemaphoreGive(statsMutex);
 }
 
 // Dipanggil saat STOP manual — hanya simpan totalDetik, TIDAK increment totalSesi
 // karena sesi belum selesai secara alami (timer belum habis)
 void saveElapsedOnly(int slaveId, int detik) {
   if (detik <= 0) return;
+  if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+    Serial.println("[STATS] saveElapsedOnly: gagal ambil statsMutex, skip");
+    return;
+  }
   JsonDocument stats = loadJsonFile("/stats.json");
   String id = String(slaveId);
   if (stats[id].isNull()) {
@@ -405,6 +422,7 @@ void saveElapsedOnly(int slaveId, int detik) {
                 slaveId, detik,
                 stats[id]["totalDetik"].as<int>(),
                 stats[id]["totalSesi"].as<int>());
+  xSemaphoreGive(statsMutex);
 }
 
 // ===== SPIFFS HELPERS =====
@@ -497,6 +515,33 @@ void handleLogin() {
   }
   server.send(400, "application/json", "{\"ok\":0}");
 }
+
+// POST /api/auth/verify-sa — cek HANYA password SuperAdmin (tanpa perlu username)
+// Dipakai saat karyawan ingin melakukan aksi yang butuh otorisasi SA (contoh:
+// reset total main) tapi sedang login sebagai karyawan. Karena hanya ada satu
+// akun SA per device, cukup cocokkan password terhadap auth["sa"]["pass"].
+// Endpoint ini sengaja TIDAK memerlukan header X-Admin-User/X-Admin-Pass agar
+// karyawan yang sedang login tetap bisa memverifikasi password SA.
+void handleVerifySA() {
+  addCorsHeaders();
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc; deserializeJson(doc, server.arg("plain"));
+  String p = doc["password"] | "";
+
+  JsonDocument auth = loadJsonFile("/auth.json");
+  if (auth["sa"]["user"].isNull()) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"NO_SA\"}"); return;
+  }
+  if (auth["sa"]["pass"] == p) {
+    // Kembalikan juga username SA agar frontend bisa memakainya sebagai
+    // kredensial X-Admin-User pada request berikutnya (mis. reset total main).
+    String saUser = auth["sa"]["user"].as<String>();
+    String out = "{\"ok\":1,\"saUser\":\"" + saUser + "\"}";
+    server.send(200, "application/json", out); return;
+  }
+  server.send(400, "application/json", "{\"ok\":0}");
+}
+
 
 // POST /api/auth/change-pass
 void handleChangePass() {
@@ -591,8 +636,12 @@ void handleDeleteKaryawan() {
 void handleGetStats() {
   addCorsHeaders();
   if (!authCheck(false)) { server.send(401); return; }
+  if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+    server.send(503, "application/json", "{\"ok\":0,\"err\":\"busy\"}"); return;
+  }
   JsonDocument stats = loadJsonFile("/stats.json");
   String out; serializeJson(stats, out);
+  xSemaphoreGive(statsMutex);
   server.send(200, "application/json", out);
 }
 
@@ -611,6 +660,9 @@ void handleAddStats() {
   int sesi    = doc["sesi"] | 1;
   if (id == "" || detik <= 0) { server.send(400, "application/json", "{\"ok\":0}"); return; }
 
+  if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+    server.send(503, "application/json", "{\"ok\":0,\"err\":\"busy\"}"); return;
+  }
   JsonDocument stats = loadJsonFile("/stats.json");
   if (stats[id].isNull()) {
     stats[id]["totalDetik"] = 0;
@@ -622,6 +674,7 @@ void handleAddStats() {
     stats[id]["totalSesi"] = stats[id]["totalSesi"].as<int>() + 1;
   }
   saveJsonFile("/stats.json", stats);
+  xSemaphoreGive(statsMutex);
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
@@ -634,10 +687,14 @@ void handleResetStats() {
   String id = doc["id"].as<String>();
   if (id == "" || id == "null") { server.send(400, "application/json", "{\"ok\":0}"); return; }
 
+  if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+    server.send(503, "application/json", "{\"ok\":0,\"err\":\"busy\"}"); return;
+  }
   JsonDocument stats = loadJsonFile("/stats.json");
   stats[id]["totalDetik"] = 0;
   stats[id]["totalSesi"] = 0;
   saveJsonFile("/stats.json", stats);
+  xSemaphoreGive(statsMutex);
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
@@ -1168,6 +1225,7 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 
   slavesMutex = xSemaphoreCreateMutex();
+  statsMutex = xSemaphoreCreateMutex();
   cmdResponseSem = xSemaphoreCreateBinary();
 
 
@@ -1277,6 +1335,8 @@ void setup() {
   server.on("/api/auth/register", HTTP_OPTIONS, handleOptions);
   server.on("/api/auth/login", HTTP_POST, handleLogin);
   server.on("/api/auth/login", HTTP_OPTIONS, handleOptions);
+  server.on("/api/auth/verify-sa", HTTP_POST, handleVerifySA);
+  server.on("/api/auth/verify-sa", HTTP_OPTIONS, handleOptions);
   server.on("/api/auth/change-pass", HTTP_POST, handleChangePass);
   server.on("/api/auth/change-pass", HTTP_OPTIONS, handleOptions);
 
