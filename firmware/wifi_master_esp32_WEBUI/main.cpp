@@ -691,8 +691,13 @@ void handleResetStats() {
     server.send(503, "application/json", "{\"ok\":0,\"err\":\"busy\"}"); return;
   }
   JsonDocument stats = loadJsonFile("/stats.json");
-  stats[id]["totalDetik"] = 0;
-  stats[id]["totalSesi"] = 0;
+  if (stats[id].isNull()) {
+    stats[id]["totalDetik"] = 0;
+    stats[id]["totalSesi"]  = 0;
+  } else {
+    stats[id]["totalDetik"] = 0;
+    // totalSesi TIDAK direset — hanya total main (waktu) yang di-reset
+  }
   saveJsonFile("/stats.json", stats);
   xSemaphoreGive(statsMutex);
   server.send(200, "application/json", "{\"ok\":1}");
@@ -1424,6 +1429,24 @@ void loop() {
     lastHb = now;
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       Serial.printf("[MASTER-HB] up=%lus slaves=%d\n", now / 1000, slaveCount);
+
+      // Periodic save totalDetik ke SPIFFS setiap detik untuk slave real yang RUNNING
+      // Supaya kalau ESP32 reboot/browser ditutup, total main tidak hilang
+      for (int i = 0; i < slaveCount; i++) {
+#if DEMO_MODE
+        // Demo slave sudah ditangani di blok DEMO_MODE di bawah, skip di sini
+        if (slaves[i].mac.startsWith("FF:FF:FF:00:00:") || slaves[i].mac.startsWith("EE:EE:EE:00:00:")) continue;
+#endif
+        if (slaves[i].state == "RUNNING" && slaves[i].sessionElapsed > 0 && !slaves[i].stoppedManually) {
+          int slaveId = slaves[i].id;
+          int elapsed = slaves[i].sessionElapsed;
+          slaves[i].sessionElapsed = 0; // reset counter setelah disimpan
+          xSemaphoreGive(slavesMutex);
+          saveElapsedOnly(slaveId, elapsed); // simpan ke SPIFFS, tidak increment sesi
+          if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) goto doneHb;
+        }
+      }
+
 #if DEMO_MODE
       for (int i = 0; i < slaveCount; i++) {
         bool isFakeOnline = slaves[i].mac.startsWith("FF:FF:FF:00:00:");

@@ -279,6 +279,20 @@ button{cursor:pointer;}
 .btn-ed{background:none;border:1px solid var(--bd);border-radius:5px;
   padding:4px 9px;font-size:10px;font-weight:600;color:var(--t2);}
 .btn-ed:hover{border-color:var(--ac);color:var(--ac);}
+/* Tarif grid card */
+.tarif-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;padding:12px;}
+.tarif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:10px 14px 14px;}
+.tarif-card{background:var(--s2);border:1.5px solid var(--bd);border-radius:14px;
+  padding:14px 8px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;
+  position:relative;overflow:hidden;}
+.tarif-card::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--ac),var(--a2));border-radius:14px 14px 0 0;}
+.tarif-card-dur{font-size:26px;font-weight:900;color:var(--tx);line-height:1;letter-spacing:-1px;}
+.tarif-card-unit{font-size:9px;font-weight:700;color:var(--t2);letter-spacing:.3px;text-transform:uppercase;}
+.tarif-card-div{width:28px;height:1.5px;background:var(--bd);border-radius:2px;}
+.tarif-card-rp{font-size:13px;font-weight:800;color:var(--gn);}
+.tarif-edit-hdr{padding:12px 14px;display:flex;align-items:center;
+  justify-content:space-between;border-bottom:1px solid var(--bd);}
 .rc-name-row{display:flex;align-items:center;padding:9px 13px;border-bottom:1px solid var(--bd);gap:8px;}
 .rc-name-row:last-child{border-bottom:none;}
 .rc-id-badge{font-size:10px;font-weight:700;color:var(--ac);background:rgba(245,166,35,.1);
@@ -515,11 +529,11 @@ button{cursor:pointer;}
     <div class="st-card" id="rcNameList"></div>
     <div class="sec">Tarif Bermain</div>
     <div class="st-card" id="tarifList">
-      <div style="padding:10px 13px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd);">
-        <span style="font-size:12px;font-weight:700;">Daftar Paket</span>
-        <button class="btn-ed" onclick="bukaEditTarif()">✏️ Edit</button>
+      <div class="tarif-edit-hdr">
+        <span style="font-size:13px;font-weight:700;">Daftar Paket</span>
+        <button class="btn-ed" onclick="bukaEditTarif()">✏️ Edit Paket</button>
       </div>
-      <div id="tarifViewList"></div>
+      <div class="tarif-grid" id="tarifViewList"></div>
     </div>
     <div class="sec" id="secChgPass" style="display:none;">Ganti Password</div>
     <div class="st-card" id="cardChgPass" style="display:none;padding:13px;">
@@ -874,10 +888,18 @@ function enterApp(){
   if(document.getElementById('cardChgPass'))document.getElementById('cardChgPass').style.display=isSA?'':'none';
   if(document.getElementById('secKaryawan'))document.getElementById('secKaryawan').style.display=isSA?'':'none';
   if(document.getElementById('cardKaryawan'))document.getElementById('cardKaryawan').style.display=isSA?'':'none';
-  renderSetting();renderQPanel();renderLaporan();updateProfile();poll();
+  renderSetting();renderQPanel();updateProfile();poll();
   loadStatsFromEsp32(); // muat total main dari ESP32 SPIFFS
-  loadTrxFromEsp32();   // muat riwayat transaksi 3 hari dari ESP32 SPIFFS
-  if(isSA)loadKaryawanList();
+  // Muat transaksi dulu, baru render laporan & restore tab agar data tidak hilang saat refresh
+  loadTrxFromEsp32().then(()=>{
+    renderLaporan();
+    // Restore tab terakhir sebelum refresh
+    const lastTab=localStorage.getItem('rc_last_tab');
+    if(lastTab&&['dashboard','laporan','profile','setting'].includes(lastTab)){
+      gotoTab(lastTab);
+    }
+    if(isSA)loadKaryawanList();
+  });
 }
 
 function isLoggedIn(){return!!authGet(SS_USER);}
@@ -902,27 +924,51 @@ async function loadStatsFromEsp32(){
 }
 
 async function addSesiEsp32(id,detik){
-  // Update cache lokal dulu (UI responsif)
+  // Dipakai saat sesi SELESAI ALAMI (ENDED) — update RAM cache saja.
+  // ESP32 backend sudah otomatis increment totalSesi via autoSaveStats()
+  // saat mendeteksi transisi ke ENDED dari heartbeat. Kalau browser juga
+  // kirim ke /api/stats/add, totalSesi akan double-increment.
+  // Setelah refresh, loadStatsFromEsp32() akan fetch data terbaru yang benar.
   if(!statsCache[id])statsCache[id]={totalDetik:0,totalSesi:0};
   statsCache[id].totalDetik+=detik;
   statsCache[id].totalSesi+=1;
   updateStatEl(id);
-  // Simpan ke SPIFFS ESP32
+}
+
+async function addElapsedOnly(id,detik){
+  // Dipakai saat STOP manual — hanya tambah totalDetik, TIDAK tambah sesi
+  // karena sesi belum benar-benar selesai
+  if(!statsCache[id])statsCache[id]={totalDetik:0,totalSesi:0};
+  statsCache[id].totalDetik+=detik;
+  updateStatEl(id);
   try{
+    // Kirim flag sesi:false agar firmware tidak increment totalSesi
     await fetch(BASE+'/api/stats/add',{method:'POST',headers:authHdr(),
-      body:JSON.stringify({id,detik})});
+      body:JSON.stringify({id,detik,sesi:0})});
   }catch{}
 }
 
-async function resetStatEsp32(id){
-  // Update cache lokal
-  statsCache[String(id)]={totalDetik:0,totalSesi:0};
-  updateStatEl(id);
-  // Simpan ke SPIFFS ESP32
+async function resetStatEsp32(id,saCreds){
+  // saCreds opsional: {user,pass} kredensial SuperAdmin hasil verifikasi.
+  // Diperlukan karena endpoint /api/stats/reset hanya menerima request
+  // dengan otorisasi SuperAdmin (authCheck(true) di firmware) — kredensial
+  // akun yang sedang login (karyawan) TIDAK cukup walau password yang
+  // diketik di dialog sudah benar.
+  const headers=saCreds
+    ? {'Content-Type':'application/json','X-Admin-User':saCreds.user,'X-Admin-Pass':saCreds.pass}
+    : authHdr();
   try{
-    await fetch(BASE+'/api/stats/reset',{method:'POST',headers:authHdr(),
+    const res=await fetch(BASE+'/api/stats/reset',{method:'POST',headers,
       body:JSON.stringify({id})});
-  }catch{}
+    if(!res.ok){toast('❌ Gagal reset total main: server menolak otorisasi');return;}
+    const d=await res.json().catch(()=>({ok:0}));
+    if(d.ok!==1){toast('❌ Gagal reset total main');return;}
+  }catch{toast('❌ Gagal reset: tidak terhubung ke ESP32');return;}
+  // Update cache lokal HANYA setelah backend konfirmasi sukses,
+  // supaya UI tidak menampilkan 0 padahal di server gagal/belum tersimpan.
+  if(!statsCache[String(id)])statsCache[String(id)]={totalDetik:0,totalSesi:0};
+  statsCache[String(id)].totalDetik=0;
+  updateStatEl(id);
   toast('🗑 Total main '+getRcName(id)+' direset');
 }
 
@@ -1074,6 +1120,7 @@ function gotoTab(name){
   document.getElementById('tab-'+name).classList.add('a');
   document.getElementById('nb-'+name).classList.add('a');
   curTab=name;
+  localStorage.setItem('rc_last_tab',name); // simpan agar restore setelah refresh
   if(name==='laporan'){
     populateFilterSelects();
     renderLaporan(); // tampilkan cache dulu
@@ -1109,10 +1156,14 @@ function buildPkgGrid(cid,onSel){
 }
 
 function renderTarifView(){
+  const cardNum=m=>m<60?m:Math.floor(m/60)+(m%60?'.'+m%60:'');
+  const cardUnit=m=>m<60?'MENIT':'JAM';
   document.getElementById('tarifViewList').innerHTML=loadPkg().map(p=>`
-    <div class="tarif-row">
-      <div><div class="tarif-l">${e(p.label)}</div><div class="tarif-d">${fmtDur(p.menit)}</div></div>
-      <div class="tarif-p">${e(fmtRp(p.harga))}</div>
+    <div class="tarif-card">
+      <div class="tarif-card-dur">${cardNum(p.menit)}</div>
+      <div class="tarif-card-unit">${cardUnit(p.menit)}</div>
+      <div class="tarif-card-div"></div>
+      <div class="tarif-card-rp">${e(fmtRp(p.harga))}</div>
     </div>`).join('');
 }
 
@@ -1295,20 +1346,28 @@ function bukaResetTotal(id){
   setTimeout(()=>document.getElementById('inpSaPass').focus(),250);
 }
 async function konfResetTotal(){
-  // Verifikasi password SA ke ESP32
+  // Verifikasi password SA ke ESP32.
+  // PENTING: tidak mengirim username akun yang sedang login (bisa jadi
+  // karyawan) — endpoint /api/auth/verify-sa hanya cek password terhadap
+  // satu-satunya akun SA yang tersimpan di device, jadi berlaku untuk
+  // siapapun yang sedang login (SA maupun karyawan).
   const pass=document.getElementById('inpSaPass').value;
   const err=document.getElementById('errSaPass');
   err.classList.remove('s');
   if(!pass){err.textContent='Masukkan password SuperAdmin.';err.classList.add('s');return;}
+  let saUser=null;
   try{
-    const res=await fetch(BASE+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({username:getUser(),password:pass})});
+    const res=await fetch(BASE+'/api/auth/verify-sa',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({password:pass})});
     const d=await res.json();
     if(d.ok!==1){err.textContent='Password SuperAdmin salah.';err.classList.add('s');return;}
+    saUser=d.saUser;
   }catch{err.textContent='Gagal verifikasi ke ESP32.';err.classList.add('s');return;}
-  // Password benar → reset ke ESP32 SPIFFS
+  // Password benar → reset ke ESP32 SPIFFS menggunakan kredensial SA yang
+  // baru diverifikasi (bukan kredensial akun yang sedang login), karena
+  // /api/stats/reset di firmware mensyaratkan otorisasi SA.
   closeDlg('dlgResetTotal');
-  await resetStatEsp32(pResetTotalId);
+  await resetStatEsp32(pResetTotalId,{user:saUser,pass});
 }
 
 // ══ TRANSAKSI (ESP32 SPIFFS — 3 hari terakhir) ═════════════════════
@@ -1886,8 +1945,8 @@ async function sendCmd(id,cmd,time,retry=1){
         if(timers[id]){
           const elapsed=timers[id].tfs||0;
           if(elapsed>0){
-            // addSesiEsp32 update cache RAM + kirim ke /api/stats/add (SPIFFS)
-            addSesiEsp32(String(id),elapsed);
+            // addElapsedOnly: tambah totalDetik TANPA increment sesi (sesi belum selesai)
+            addElapsedOnly(String(id),elapsed);
           }
         }
         clearTfsSnapshot(id); // hapus snapshot localStorage sesi ini
