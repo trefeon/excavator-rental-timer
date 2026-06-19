@@ -1003,16 +1003,23 @@ async function loadStatsFromEsp32(prevTotals, _retry){
       }
     }
     statsCache=data||{};
-    // Catat tfs yang sudah masuk ke statsCache.totalDetik saat ini.
-    // Ini untuk mencegah overcount di updateStatEl saat sesi RUNNING:
-    // sesElap = tfs - tfsAlreadyInBase, sehingga base + sesElap tidak double-count
-    // periodic save yang sudah tersimpan di SPIFFS.
+    // tfsAlreadyInBase = berapa detik dari sesi ini yang sudah masuk ke base.totalDetik.
+    // Dengan periodik save di firmware, master menulis elapsed setiap ~30s selama
+    // RUNNING, jadi base bisa sudah berisi sebagian dari sesi aktif. Agar
+    // refresh browser di tengah sesi tidak membuat Total Main kembali ke 00:00,
+    // kita catat baseline base.totalDetik saat sesi DIMULAI dan hitung ulang
+    // tfsAlreadyInBase sebagai (baseSekarang - baseSaatMulai). Untuk sesi yang
+    // sudah selesai (sessionDone), tidak ada kontribusi sesi aktif — 0.
     slaves.forEach(s=>{
-      if(timers[s.id]&&!timers[s.id].sessionDone){
-        tfsAlreadyInBase[String(s.id)]=timers[s.id].tfs||0;
+      if(timers[s.id] && !timers[s.id].sessionDone){
+        const baseAtStartKey = 'rc_base_at_session_start_' + s.id;
+        const baseAtStart = parseInt(localStorage.getItem(baseAtStartKey) || '0') || 0;
+        const baseNow    = (statsCache[String(s.id)] || {}).totalDetik || 0;
+        tfsAlreadyInBase[String(s.id)] = Math.max(0, baseNow - baseAtStart);
       } else {
-        // Session is done — sesElap must be 0 so next session starts clean
-        tfsAlreadyInBase[String(s.id)]=0;
+        // Session done / no timer — bersihkan baseline agar tidak bocor ke sesi berikut
+        try { localStorage.removeItem('rc_base_at_session_start_' + s.id); } catch(e){}
+        tfsAlreadyInBase[String(s.id)] = 0;
       }
     });
     renderAllStatEls();
@@ -1898,6 +1905,8 @@ function applySlaves(data){
           timers[s.id].tfs=0;
           tfsAlreadyInBase[String(s.id)]=0;
         }
+        // Bersihkan baseline agar tidak bocor ke sesi berikut
+        try { localStorage.removeItem('rc_base_at_session_start_' + s.id); } catch(e){}
         const prevTotal=(getStat(s.id).totalDetik||0);
         loadStatsFromEsp32({[String(s.id)]:prevTotal});
       }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
@@ -1912,6 +1921,8 @@ function applySlaves(data){
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
         tfsAlreadyInBase[String(s.id)]=0; // reset agar sesElap=0 saat ENDED
+        // Bersihkan baseline agar tidak bocor ke sesi berikut
+        try { localStorage.removeItem('rc_base_at_session_start_' + s.id); } catch(e){}
         const prevTotal2=(getStat(s.id).totalDetik||0);
         loadStatsFromEsp32({[String(s.id)]:prevTotal2}); // confirm/overwrite dari SPIFFS
       }
@@ -2066,16 +2077,20 @@ async function sendCmd(id,cmd,time,retry=1){
       toast('❌ HTTP error: '+res.status);setLoading(id,false);return;
     }
     const data=await res.json();setLoading(id,false);
-    if(data.ok===1){
-      const s = slaves.find(x => x.id === id);
-      if(cmd==='ADD_TIME'){
-        // Sesi baru: reset tfs dan sessionDone
-        if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
-        startTmr(id,data.time_left||time,true);
-        if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=false;}
-        tfsAlreadyInBase[String(id)]=0; // sesi baru: base sudah di-load sebelumnya, tfs mulai dari 0
-        toast('✅ Timer dimulai');
-      }
+      if(data.ok===1){
+        const s = slaves.find(x => x.id === id);
+        if(cmd==='ADD_TIME'){
+          // Sesi baru: reset tfs dan sessionDone
+          if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
+          startTmr(id,data.time_left||time,true);
+          if(timers[id]){ timers[id].tfs=0; timers[id].sessionDone=false; }
+          tfsAlreadyInBase[String(id)]=0; // sesi baru: base sudah di-load sebelumnya, tfs mulai dari 0
+          // Catat baseline totalDetik saat ini — digunakan oleh loadStatsFromEsp32()
+          // untuk menghitung berapa detik dari sesi ini yang sudah masuk ke base.
+          // Penting untuk refresh-survival Total Main selama sesi berjalan.
+          try { localStorage.setItem('rc_base_at_session_start_' + id, String(getStat(id).totalDetik || 0)); } catch(e){}
+          toast('✅ Timer dimulai');
+        }
       else if(cmd==='RESUME'){
         // Lanjut dari pause: pertahankan tfs yang sudah terkumpul
         if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
@@ -2110,6 +2125,8 @@ else if(cmd==='STOP'){
         stopTmr(id);
         if(timers[id]) timers[id].sisa = 0;
         tfsAlreadyInBase[String(id)] = 0;
+        // Bersihkan baseline sesi agar tidak bocor ke sesi berikut
+        try { localStorage.removeItem('rc_base_at_session_start_' + id); } catch(e){}
         const prevTotalStop = (getStat(id).totalDetik || 0);
         loadStatsFromEsp32({[String(id)]: prevTotalStop});
         toast('⏹ Timer direset');

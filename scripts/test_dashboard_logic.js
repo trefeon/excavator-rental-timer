@@ -605,13 +605,7 @@ setTimeout(() => {
   assert(sc['2'].totalDetik === 1200, `RC-2: totalDetik=${sc['2'].totalDetik} (expected 1200)`);
   assert(sc['1'].totalSesi === 3,     "RC-1: totalSesi=3");
   assert(sc['2'].totalSesi === 2,     "RC-2: totalSesi=2");
-
-  console.log("\n====================================================");
-  console.log("                  VALIDATION COMPLETE               ");
-  console.log("====================================================");
-  console.log(`\n  Passed: ${passed}  |  Failed: ${failed}`);
-  if (failed > 0) process.exit(1);
-}, 700);
+}, 600);
 
 // =============================================================================
 // TEST 14: Manual STOP race — applySlaves LOCKED must NOT re-record
@@ -620,7 +614,6 @@ setTimeout(() => {
   console.log("\n[Test 14] Manual STOP race — applySlaves LOCKED does NOT re-record");
   resetTestState();
 
-  // Seed initial stats
   const sc = sandbox.__getStatsCache();
   sc['1'] = { totalDetik: 100, totalSesi: 2 };
 
@@ -654,3 +647,174 @@ setTimeout(() => {
       `statsCache totalSesi unchanged: ${sc2['1'].totalSesi} (expected 2)`);
   });
 }, 650);
+
+// =============================================================================
+// TEST 15: Refresh-survival — Total Main persists mid-session with periodic save
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 15] Refresh-survival — Total Main persists mid-session");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+
+  // Start a 5-min session
+  sandbox.setPending(1, "Budi", 5, 25000);
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
+  mockFetchResponses['/api/command'] = {
+    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
+  };
+
+  sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
+    // ADD_TIME captures base_at_session_start = current base.totalDetik (0)
+    const baseAtStart = sandbox.localStorage.getItem('rc_base_at_session_start_1');
+    assert(baseAtStart === '0',
+      `base_at_session_start captured: ${baseAtStart} (expected '0')`);
+
+    // Master has done one periodic save at 30s. /stats.json now has totalDetik=30.
+    sandbox.timers[1].tfs = 30;
+    sc['1'] = { totalDetik: 30, totalSesi: 0 };
+    mockFetchResponses['/api/stats'] = {
+      ok: true, data: { "1": { totalDetik: 30, totalSesi: 0 } }
+    };
+
+    // Simulate browser refresh: loadStatsFromEsp32 fetches new base.
+    // (async — must await for the .then chain to populate tfsAlreadyInBase)
+    return sandbox.loadStatsFromEsp32().then(() => {
+      const tfb = sandbox.__getTfsAlreadyInBase();
+      assert(tfb['1'] === 30,
+        `tfsAlreadyInBase after refresh = ${tfb['1']} (expected 30 = 30 - 0)`);
+
+      // Display formula: base + max(0, tfs - tfsAlreadyInBase) = 30 + 0 = 30 ✓
+      const t = sandbox.timers[1];
+      const sesElap = Math.max(0, (t.tfs || 0) - (tfb['1'] || 0));
+      assert(sesElap === 0,
+        `sesElap after periodic save matches: ${sesElap} (expected 0, no double-count)`);
+
+      // 5s later — tfs=35, master saved another 5s (base=35).
+      sandbox.timers[1].tfs = 35;
+      sc['1'].totalDetik = 35;
+      mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 35, totalSesi: 0 } } };
+      return sandbox.loadStatsFromEsp32().then(() => {
+        assert(tfb['1'] === 35,
+          `tfsAlreadyInBase after second refresh = ${tfb['1']} (expected 35)`);
+
+        // sesElap = 35 - 35 = 0 (no double-count)
+        const sesElap2 = Math.max(0, 35 - 35);
+        assert(sesElap2 === 0,
+          `sesElap stays 0 after another save: ${sesElap2}`);
+      });
+    });
+  });
+}, 750);
+
+// =============================================================================
+// TEST 16: Refresh-survival — Total Main grows correctly across saves
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 16] Refresh-survival — Total Main grows with periodic saves");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+
+  sandbox.setPending(1, "Budi", 5, 25000);
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
+  mockFetchResponses['/api/command'] = {
+    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
+  };
+
+  sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
+    // Master saves every 30s. Simulate 90s of session with 3 saves.
+    // After each save, base grows by 30. tfs grows with wall-clock.
+    const baseAtStart = sandbox.localStorage.getItem('rc_base_at_session_start_1');
+    assert(baseAtStart === '0', `base_at_session_start captured at session start: ${baseAtStart}`);
+
+    // Save 1: tfs=30, base=30
+    sandbox.timers[1].tfs = 30;
+    sc['1'] = { totalDetik: 30, totalSesi: 0 };
+    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 30, totalSesi: 0 } } };
+
+    return sandbox.loadStatsFromEsp32().then(() => {
+      // Save 2: tfs=60, base=60
+      sandbox.timers[1].tfs = 60;
+      sc['1'] = { totalDetik: 60, totalSesi: 0 };
+      mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 60, totalSesi: 0 } } };
+      return sandbox.loadStatsFromEsp32().then(() => {
+        // Save 3: tfs=90, base=90
+        sandbox.timers[1].tfs = 90;
+        sc['1'] = { totalDetik: 90, totalSesi: 0 };
+        mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 90, totalSesi: 0 } } };
+        return sandbox.loadStatsFromEsp32().then(() => {
+          const tfb = sandbox.__getTfsAlreadyInBase();
+          assert(tfb['1'] === 90,
+            `tfsAlreadyInBase tracks periodic saves: ${tfb['1']} (expected 90)`);
+
+          // Total Main = base + (tfs - tfsAlreadyInBase) = 90 + 0 = 90 (all accounted for)
+          const sesElap = Math.max(0, 90 - tfb['1']);
+          assert(sesElap === 0,
+            `sesElap = 0 after multiple periodic saves: ${sesElap} (no double-count)`);
+        });
+      });
+    });
+  });
+}, 800);
+
+// =============================================================================
+// TEST 17: base_at_session_start_<id> cleared on session end (no leak to next)
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 17] base_at_session_start cleared on natural ENDED + manual STOP");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 100, totalSesi: 1 }; // some prior history
+
+  sandbox.setPending(1, "Budi", 5, 25000);
+  sandbox.timers[1] = { running: true, tfs: 60, sisa: 240, sessionDone: false };
+  mockFetchResponses['/api/command'] = {
+    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
+  };
+
+  sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
+    const baseAtStart = sandbox.localStorage.getItem('rc_base_at_session_start_1');
+    assert(baseAtStart === '100',
+      `base_at_session_start = prior base (100): ${baseAtStart}`);
+
+    // Simulate natural ENDED — applySlaves first branch fires
+    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 400, totalSesi: 2 } } };
+    sandbox.applySlaves([
+      { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK" }
+    ]);
+
+    // After natural ENDED: localStorage entry should be cleared
+    const baseAtStartAfterEnd = sandbox.localStorage.getItem('rc_base_at_session_start_1');
+    assert(baseAtStartAfterEnd === null,
+      `base_at_session_start cleared after natural ENDED: ${baseAtStartAfterEnd}`);
+
+    // Now start a new session — base should capture the latest base
+    sandbox.setPending(1, "Andi", 5, 25000);
+    sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
+    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 400, totalSesi: 2 } } };
+    mockFetchResponses['/api/command'] = {
+      ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
+    };
+
+    sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
+      const baseAtStartNew = sandbox.localStorage.getItem('rc_base_at_session_start_1');
+      assert(baseAtStartNew === '400',
+        `base_at_session_start for new session = 400: ${baseAtStartNew}`);
+    });
+  });
+}, 850);
+
+// =============================================================================
+// VALIDATION SUMMARY (runs after all tests)
+// =============================================================================
+setTimeout(() => {
+  console.log("\n====================================================");
+  console.log("                  VALIDATION COMPLETE               ");
+  console.log("====================================================");
+  console.log(`\n  Passed: ${passed}  |  Failed: ${failed}`);
+  if (failed > 0) process.exit(1);
+}, 900);

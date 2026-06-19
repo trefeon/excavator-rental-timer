@@ -14,7 +14,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <DNSServer.h>
 
@@ -74,6 +74,8 @@ struct SlaveRecord {
   String prevState;    // state sebelumnya, untuk deteksi transisi ke ENDED
   int time_left;
   int sessionElapsed;  // detik yang sudah berjalan di sesi ini (untuk auto-save)
+  int sessionSavedElapsed; // berapa detik dari sessionElapsed yang sudah ditulis ke /stats.json
+  unsigned long lastStatsSaveMs; // millis() saat terakhir kali periodik save di-enqueue
   String battery;
   uint8_t rawMac[6];   // raw MAC bytes for ESP-NOW addressing
 };
@@ -195,7 +197,7 @@ void upsertSlave(const String& mac, int id, const uint8_t* rawMac) {
 // sebelum didefinisikan di bawah.
 JsonDocument loadJsonFile(const char* path);
 void saveJsonFile(const char* path, const JsonDocument& doc);
-void autoSaveStats(int slaveId, int detik);
+void autoSaveStats(int slaveId, int detik, bool incrementSesi);
 
 // ===== ESP-NOW RECEIVE CALLBACK =====
 // Note: ESP32 standard (IDF v4) uses the old callback signature.
@@ -256,21 +258,48 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             // Deteksi transisi ke sesi baru: dari ENDED/LOCKED ke RUNNING
             if ((slaves[i].state == "ENDED" || slaves[i].state == "LOCKED") &&
                 newState == "RUNNING") {
-              slaves[i].sessionElapsed = 0; // reset counter sesi baru
+              slaves[i].sessionElapsed     = 0; // reset counter sesi baru
+              slaves[i].sessionSavedElapsed = 0; // belum ada yang disimpan untuk sesi baru
+              slaves[i].lastStatsSaveMs     = millis(); // timer periodik save mulai dari sekarang
+            }
+
+            // ── Periodik save selama RUNNING ──────────────────────────────
+            // Setiap ~30 detik, simpan delta = (sessionElapsed - sessionSavedElapsed)
+            // ke /stats.json. Supaya refresh browser di tengah sesi tidak
+            // membuat Total Main kembali ke 00:00.
+            if (slaves[i].state == "RUNNING" && newState == "RUNNING") {
+              const unsigned long PERIODIC_SAVE_MS = 30000UL;
+              unsigned long nowMs = millis();
+              if (slaves[i].lastStatsSaveMs == 0 || (nowMs - slaves[i].lastStatsSaveMs) >= PERIODIC_SAVE_MS) {
+                int delta = slaves[i].sessionElapsed - slaves[i].sessionSavedElapsed;
+                if (delta > 0) {
+                  int slaveId = slaves[i].id;
+                  xSemaphoreGive(slavesMutex);
+                  autoSaveStats(slaveId, delta, false); // incrementSesi=false
+                  if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) break;
+                  // Cari ulang index karena mutex sempat dilepas
+                  for (int k = 0; k < slaveCount; k++) {
+                    if (slaves[k].mac == senderMac) { i = k; break; }
+                  }
+                  slaves[i].sessionSavedElapsed = slaves[i].sessionElapsed;
+                  slaves[i].lastStatsSaveMs     = nowMs;
+                }
+              }
             }
 
             // Deteksi transisi ke ENDED → auto-save stats
             if (slaves[i].state != "ENDED" && newState == "ENDED") {
-              int elapsed = slaves[i].sessionElapsed;
+              int delta = slaves[i].sessionElapsed - slaves[i].sessionSavedElapsed;
               int slaveId = slaves[i].id;
               xSemaphoreGive(slavesMutex);
-              autoSaveStats(slaveId, elapsed); // SPIFFS di luar mutex
+              autoSaveStats(slaveId, delta, true); // sesi selesai alami → increment sesi
               if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) break;
               // Cari ulang index karena mutex sempat dilepas
               for (int k = 0; k < slaveCount; k++) {
                 if (slaves[k].mac == senderMac) { i = k; break; }
               }
-              slaves[i].sessionElapsed = 0;
+              slaves[i].sessionElapsed     = 0;
+              slaves[i].sessionSavedElapsed = 0;
             }
 
             slaves[i].prevState  = slaves[i].state;
@@ -360,29 +389,38 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 }
 
 // ===== AUTO-SAVE STATS =====
-// Dipanggil di server-side saat sesi RC selesai (time_left habis atau STOP)
-// sehingga total main tersimpan meski browser sedang tutup/offline.
-void autoSaveStats(int slaveId, int detik) {
-  if (detik <= 0) return;
+// Dipanggil saat sesi RC selesai (time_left habis) atau periodik setiap ~30s
+// selama sesi berjalan, sehingga /stats.json selalu up-to-date. Incremental:
+// detik adalah DELTA dari save terakhir, bukan elapsed total.
+//
+// incrementSesi=true  → sesi selesai alami (totalDetik += detik, totalSesi += 1)
+// incrementSesi=false → periodik save / STOP path (hanya totalDetik)
+void autoSaveStats(int slaveId, int detik, bool incrementSesi) {
+  if (detik == 0 && !incrementSesi) return; // tidak ada yang perlu disimpan
   JsonDocument stats = loadJsonFile("/stats.json");
   String id = String(slaveId);
   if (stats[id].isNull()) {
     stats[id]["totalDetik"] = 0;
     stats[id]["totalSesi"]  = 0;
   }
-  stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
-  stats[id]["totalSesi"]  = stats[id]["totalSesi"].as<int>() + 1;
+  if (detik != 0) {
+    stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
+    if (stats[id]["totalDetik"].as<int>() < 0) stats[id]["totalDetik"] = 0; // clamp (rollback)
+  }
+  if (incrementSesi) {
+    stats[id]["totalSesi"]  = stats[id]["totalSesi"].as<int>() + 1;
+  }
   saveJsonFile("/stats.json", stats);
-  Serial.printf("[STATS] Auto-save: RC %d +%ds (total=%ds, sesi=%d)\n",
-                slaveId, detik,
+  Serial.printf("[STATS] Save: RC %d %+ds incSesi=%d (total=%ds, sesi=%d)\n",
+                slaveId, detik, incrementSesi,
                 stats[id]["totalDetik"].as<int>(),
                 stats[id]["totalSesi"].as<int>());
 }
 
-// ===== SPIFFS HELPERS =====
+// ===== LittleFS HELPERS =====
 JsonDocument loadJsonFile(const char* path) {
   JsonDocument doc;
-  File file = SPIFFS.open(path, "r");
+  File file = LittleFS.open(path, "r");
   if (!file) return doc;
   deserializeJson(doc, file);
   file.close();
@@ -390,7 +428,7 @@ JsonDocument loadJsonFile(const char* path) {
 }
 
 void saveJsonFile(const char* path, const JsonDocument& doc) {
-  File file = SPIFFS.open(path, "w");
+  File file = LittleFS.open(path, "w");
   if (!file) return;
   serializeJson(doc, file);
   file.close();
@@ -609,7 +647,7 @@ void handleGetTransaksi() {
   addCorsHeaders();
   if (!authCheck(false)) { server.send(401); return; }
 
-  File file = SPIFFS.open("/transaksi.json", "r");
+  File file = LittleFS.open("/transaksi.json", "r");
   if (!file || file.size() == 0) {
     if (file) file.close();
     server.send(200, "application/json", "[]");
@@ -654,7 +692,7 @@ void handleAddTransaksi() {
 
   // Load transaksi yang ada
   JsonDocument trxDoc;
-  File fileR = SPIFFS.open("/transaksi.json", "r");
+  File fileR = LittleFS.open("/transaksi.json", "r");
   if (fileR && fileR.size() > 0) {
     DeserializationError err = deserializeJson(trxDoc, fileR);
     fileR.close();
@@ -717,7 +755,7 @@ void handleAddTransaksi() {
   newTrx["ts"]        = newTs; // simpan sebagai double
 
   // Simpan kembali ke SPIFFS
-  File fileW = SPIFFS.open("/transaksi.json", "w");
+  File fileW = LittleFS.open("/transaksi.json", "w");
   if (!fileW) {
     server.send(500, "application/json", "{\"ok\":0,\"code\":\"WRITE_FAIL\"}");
     return;
@@ -843,7 +881,7 @@ void handleCommandProxy() {
         snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":0,\"state\":\"ENDED\"}");
         server.send(200, "application/json", String(resp));
         xSemaphoreGive(slavesMutex);
-        autoSaveStats(slaveId, elapsed); // simpan di luar mutex
+        autoSaveStats(slaveId, elapsed, true); // simpan di luar mutex (DEMO_MODE natural END)
         return;
       }
       slaves[slaveIdx].lastSeen = millis();
@@ -1157,10 +1195,10 @@ void setup() {
   Serial.printf("[BOOT] Free heap: %lu bytes, Min free ever: %lu bytes\n",
                 (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 
-  if (!SPIFFS.begin(true)) {
-    Serial.println("[SYSTEM] SPIFFS Mount Failed");
+  if (!LittleFS.begin(true)) {
+    Serial.println("[SYSTEM] LittleFS Mount Failed");
   } else {
-    Serial.println("[SYSTEM] SPIFFS Mounted");
+    Serial.println("[SYSTEM] LittleFS Mounted");
   }
 
   // Wi-Fi: AP+STA mode (AP for Android, STA for ESP-NOW)
@@ -1350,7 +1388,7 @@ void loop() {
             slaves[i].sessionElapsed = 0;
             // Auto-save harus di luar mutex — simpan dulu, rilis mutex lalu save
             xSemaphoreGive(slavesMutex);
-            autoSaveStats(slaveId, elapsed);
+            autoSaveStats(slaveId, elapsed, true);
             // Tidak perlu ambil mutex lagi, langsung break dari heartbeat interval
             goto doneHb;
           }

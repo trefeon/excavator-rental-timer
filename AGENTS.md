@@ -162,8 +162,9 @@ All non-`/api/auth` routes require `X-Admin-User` + `X-Admin-Pass` headers. CORS
 ### NVS / SPIFFS keys (master)
 - namespace `registry`: MAC-without-colons (12 chars, fits 15-char NVS limit) → uint ID, plus `"lastDate"` key.
 - namespace `id_map`: string `"1"`.."50" → MAC (reverse lookup for ID swap).
-- SPIFFS files: `/auth.json`, `/stats.json`, `/transaksi.json`.
+- LittleFS files: `/auth.json`, `/stats.json`, `/transaksi.json`. (formerly SPIFFS, migrated in v1.2.5+ for wear-levelling + atomic writes — see §8.)
 - Heap guard on transaksi: if free heap `< 80000` → 503 `LOW_HEAP`.
+- Periodic stats save during `RUNNING` session: every **30 s**, enqueue `StatsJob{sessionElapsed - sessionSavedElapsed, false}`. Tracked per slave via `sessionSavedElapsed` and `lastStatsSaveMs` fields. Wear-budget check: 9 slaves × 30 s × 8 h ≈ 8 600 erases/day across the wear-levelled partition = ~30 year lifetime with LittleFS.
 
 ---
 
@@ -276,6 +277,11 @@ Offsets are ESP32: `0x1000/0x8000/0xe000/0x10000`; ESP32-C3: `0x0000/0x8000/0xe0
 
 Distilled from `docs/AUDIT.md` and current code:
 
+- **Total Main must survive web refresh.** `dashboard/index.html` Total Main and Sesi are persisted to SPIFFS/LittleFS `/stats.json`. Without periodic save during a session, refreshing the browser mid-session would show `00:00:00` / `0` because `/stats.json` only got written at session-end. Two pieces:
+  - **Firmware** (both masters): every 30 s during `RUNNING`, enqueue a `StatsJob{id, sessionElapsed - sessionSavedElapsed, /*incrementSesi*/false}` to `statsQueue`. Track `sessionSavedElapsed` per slave so saves are incremental (no double-count across multiple saves). On natural `ENDED` transition, the delta between `sessionPackageTime` and `sessionSavedElapsed` is enqueued with `incrementSesi=true`.
+  - **Frontend** `loadStatsFromEsp32`: when computing `tfsAlreadyInBase` for a live session, read `localStorage['rc_base_at_session_start_' + id]` (captured at `ADD_TIME` start) and use `base.totalDetik - base_at_start` instead of the old buggy `timers[id].tfs` assumption. Clear the entry on STOP / natural ENDED so it doesn't leak to the next session.
+  - Tests 15–17 assert: capture-at-start, tfsAlreadyInBase tracks periodic saves without double-count, and the entry is cleared on session end so a follow-up session captures a fresh baseline.
+- **SPIFFS → LittleFS migration.** Both masters now use `LittleFS.begin(true)` (Arduino-ESP32 3.x exposes `LittleFS` not `LITTLEFS`). `/auth.json`, `/stats.json`, `/transaksi.json` live on the same partition as before but get wear-levelling + atomic writes via the LittleFS library. JSON format unchanged — only the `FS` instance name changed. `index_html.h` (gzipped dashboard) is compiled in as `PROGMEM`, no FS involvement. **Data is not forward-compatible: erasing the master wipes LittleFS; re-registering slaves keeps their IDs from the slave-side NVS.**
 - **Stats double-count is the #1 historical bug.** The fix: master WEBUI never increments `totalSesi` on its own — slave's heartbeat transition to ENDED enqueues a `StatsJob`, drained in `loop()` while holding `statsMutex`. Frontend never writes elapsed. Only `applyPackageToStats` (immediate, optimistic) for instant UI; followed by `loadStatsFromEsp32` (authoritative, from SPIFFS).
 - **Manual ⏹ Reset Timer must NOT count** (laporan keuangan or stats). Invariant: only clean natural ENDED (slave timer hits 0) increments `totalDetik`/`totalSesi` and creates a transaksi entry. Two enforcement points:
   - **Frontend** `sendCmd` STOP path: skip `applyPackageToStats` + `recordTrx`, call `clearPending(id)` so the applySlaves LOCKED-with-pending branch doesn't re-record the next poll.
