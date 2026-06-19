@@ -1,9 +1,7 @@
-import os
 import sys
 import json
 import time
 import threading
-import gzip
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = 8080
