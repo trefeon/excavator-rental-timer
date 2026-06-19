@@ -947,6 +947,12 @@ void handleSlaves() {
       obj["state"] = slaves[i].state;
       obj["time_left"] = slaves[i].time_left;
       obj["battery"] = slaves[i].battery;
+      // Live sessionElapsed (master accumulator, 2s heartbeat cadence).
+      // Defensive clamp: master can briefly go negative if a heartbeat reports
+      // a larger timeLeft than last seen (slave NVS restored from old value).
+      int safeElapsed = slaves[i].sessionElapsed < 0 ? 0 : slaves[i].sessionElapsed;
+      obj["sessionElapsed"]     = safeElapsed;
+      obj["sessionPackageTime"] = slaves[i].sessionPackageTime; // full package, set on ADD_TIME
     }
     xSemaphoreGive(slavesMutex);
   }

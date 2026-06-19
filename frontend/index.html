@@ -811,8 +811,10 @@ const DEF_PKG=[
 
 // ══ STATE ══════════════════════════════════════════════════════════
 let slaves=[],timers={},errCount=0,pollTmr=null,curTab='dashboard';
-let statsCache={}; // {rcId: {totalDetik, totalSesi}} — dari ESP32 SPIFFS
-let tfsAlreadyInBase={}; // {rcId: tfs} — tfs yang sudah masuk ke statsCache.totalDetik saat load
+let statsCache={}; // {rcId: {totalDetik, totalSesi}} — dari ESP32 SPIFFS (cumulative across sessions)
+// Note: there is NO `tfsAlreadyInBase` anymore. Total Main is computed as
+// `base.totalDetik + mfs` where mfs is master's live `sessionElapsed` (2s heartbeat).
+// Single source of truth = the master. See AGENTS.md §8.
 let trxCache=[];   // array transaksi — dari ESP32 SPIFFS (3 hari terakhir)
 let trxLoading=false; // cegah load ganda
 let pMulaiId=null,pMulaiQIdx=null,pMulaiPkg=null;
@@ -877,7 +879,6 @@ async function bootApp(){
       localStorage.clear();
       timers={};
       statsCache={};
-      tfsAlreadyInBase={};
       toast('⚠️ Master direset: Semua cache lokal dibersihkan');
       showForm('fRegister');
     }else{
@@ -1003,25 +1004,8 @@ async function loadStatsFromEsp32(prevTotals, _retry){
       }
     }
     statsCache=data||{};
-    // tfsAlreadyInBase = berapa detik dari sesi ini yang sudah masuk ke base.totalDetik.
-    // Dengan periodik save di firmware, master menulis elapsed setiap ~30s selama
-    // RUNNING, jadi base bisa sudah berisi sebagian dari sesi aktif. Agar
-    // refresh browser di tengah sesi tidak membuat Total Main kembali ke 00:00,
-    // kita catat baseline base.totalDetik saat sesi DIMULAI dan hitung ulang
-    // tfsAlreadyInBase sebagai (baseSekarang - baseSaatMulai). Untuk sesi yang
-    // sudah selesai (sessionDone), tidak ada kontribusi sesi aktif — 0.
-    slaves.forEach(s=>{
-      if(timers[s.id] && !timers[s.id].sessionDone){
-        const baseAtStartKey = 'rc_base_at_session_start_' + s.id;
-        const baseAtStart = parseInt(localStorage.getItem(baseAtStartKey) || '0') || 0;
-        const baseNow    = (statsCache[String(s.id)] || {}).totalDetik || 0;
-        tfsAlreadyInBase[String(s.id)] = Math.max(0, baseNow - baseAtStart);
-      } else {
-        // Session done / no timer — bersihkan baseline agar tidak bocor ke sesi berikut
-        try { localStorage.removeItem('rc_base_at_session_start_' + s.id); } catch(e){}
-        tfsAlreadyInBase[String(s.id)] = 0;
-      }
-    });
+    // Total Main is now driven by master's live sessionElapsed (set in applySlaves).
+    // This function only needs to refresh statsCache (used for Sesi display).
     renderAllStatEls();
   }catch{
     statsCache={};
@@ -1075,6 +1059,10 @@ async function resetStatEsp32(id,saCreds){
   // supaya UI tidak menampilkan 0 padahal di server gagal/belum tersimpan.
   if(!statsCache[String(id)])statsCache[String(id)]={totalDetik:0,totalSesi:0};
   statsCache[String(id)].totalDetik=0;
+  statsCache[String(id)].totalSesi=0;
+  // Reset live mfs juga — kalau ada sesi aktif, mfs harus di-nol-kan
+  // supaya Total Main = base (0) + mfs (0) = 0 setelah reset.
+  if(timers[String(id)]) timers[String(id)].mfs = 0;
   updateStatEl(id);
   toast('🗑 Total main '+getRcName(id)+' direset');
 }
@@ -1084,14 +1072,20 @@ function renderAllStatEls(){slaves.forEach(s=>updateStatEl(s.id));}
 function updateStatEl(id){
   const el=document.getElementById('stats-'+id);
   if(!el)return;
-  const base=getStat(id);
-  // sesElap = detik yang berjalan SEJAK statsCache terakhir di-load dari SPIFFS.
-  // Kurangi tfsAlreadyInBase agar tidak double-count periodic save yang sudah masuk base.
-  const rawTfs=(timers[id]&&!timers[id].sessionDone)?(timers[id].tfs||0):0;
-  const alreadyInBase=tfsAlreadyInBase[String(id)]||0;
-  const sesElap=Math.max(0,rawTfs-alreadyInBase);
-  el.querySelector('.rs-total').textContent=fmtMMSS(base.totalDetik+sesElap);
-  el.querySelector('.rs-sesi').textContent=base.totalSesi;
+  const base=getStat(id) || {totalDetik:0, totalSesi:0};
+  // mfs = live sessionElapsed yang dikirim master di /api/slaves.
+  // Single source of truth: master accumulator via heartbeat (2s cadence).
+  // Defensive: clamp ke 0 kalau undefined / negatif / bukan number.
+  let mfs = 0;
+  if (timers[id] && !timers[id].sessionDone) {
+    const rawMfs = timers[id].mfs;
+    if (typeof rawMfs === 'number' && rawMfs >= 0) mfs = rawMfs;
+  }
+  // Total Main = cumulative (dari /stats.json) + live current-session (dari master).
+  // Tidak ada math tfsAlreadyInBase lagi. Tidak ada double-count risk.
+  const total = Math.max(0, (base.totalDetik || 0) + mfs);
+  el.querySelector('.rs-total').textContent=fmtMMSS(total);
+  el.querySelector('.rs-sesi').textContent = base.totalSesi || 0;
 }
 
 // ══ MANAJEMEN KARYAWAN ══════════════════════════════════════════════
@@ -1855,6 +1849,18 @@ function setConn(s){
 function applySlaves(data){
   data.forEach(s=>{
     const st=slaveState(s);
+    // ── Real-time sync: master tells us current sessionElapsed ───────────
+    // mfs = master-from-slave (live, 2s heartbeat cadence via /api/slaves).
+    // Defensive: kalau undefined / negatif, jangan overwrite mfs.
+    // Reboot detection: kalau master value drop >5s di bawah last known,
+    // anggap master reboot — terima value baru (mulai dari 0 di master).
+    if (timers[s.id] && typeof s.sessionElapsed === 'number' && s.sessionElapsed >= 0) {
+      const newMfs = s.sessionElapsed;
+      const oldMfs = timers[s.id].mfs;
+      if (typeof oldMfs !== 'number' || newMfs >= oldMfs || (oldMfs - newMfs) > 5) {
+        timers[s.id].mfs = newMfs;
+      }
+    }
     if(st==='running'){
       const t=timers[s.id];
       if(!t||t.sessionDone){
@@ -1863,11 +1869,10 @@ function applySlaves(data){
         const hasSnap=snap&&snap.tfs>0;
         startTmr(s.id,s.time_left,!hasSnap);
         if(hasSnap&&timers[s.id]){
-          // Snapshot masih relevan (sesi belum berganti) — restore tfs
+          // Snapshot masih relevan (sesi belum berganti) — restore tfs untuk timer display
+          // (sisa countdown). Total Main TIDAK pakai tfs — pakai mfs dari master.
           timers[s.id].tfs=snap.tfs;
           timers[s.id]._tfsAtStart=snap.tfs;
-          // Refresh-safe: snap.tfs ini SUDAH ikut tersimpan ke SPIFFS totalDetik
-          tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }else if(!t.running){
         // RESUME dari pause: pertahankan tfs yang sudah terkumpul
@@ -1890,8 +1895,6 @@ function applySlaves(data){
         if(snap&&snap.tfs>0){
           timers[s.id]={sisa:s.time_left,running:false,tfs:snap.tfs,iv:null,sessionDone:false,
             _startedAt:Date.now(),_sisaAtStart:s.time_left,_tfsAtStart:snap.tfs};
-          // Refresh-safe (sama seperti cabang running): snap.tfs sudah masuk base.
-          tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }
       const pendingObj = loadPend();
@@ -1903,26 +1906,24 @@ function applySlaves(data){
         if(timers[s.id]){
           timers[s.id].sessionDone=true;
           timers[s.id].tfs=0;
-          tfsAlreadyInBase[String(s.id)]=0;
+          // Sesi selesai — master akan kirim final save, mfs jadi tidak relevan.
+          // Set ke 0 supaya display hanya menampilkan base (yang sudah berisi final).
+          timers[s.id].mfs = 0;
         }
-        // Bersihkan baseline agar tidak bocor ke sesi berikut
-        try { localStorage.removeItem('rc_base_at_session_start_' + s.id); } catch(e){}
         const prevTotal=(getStat(s.id).totalDetik||0);
         loadStatsFromEsp32({[String(s.id)]:prevTotal});
       }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
         // RC selesai secara alami (waktu habis).
-        // Firmware sudah otomatis simpan via autoSaveStats (totalDetik + totalSesi)
-        // dan periodic save sudah jalan setiap detik — TIDAK perlu push dari browser.
-        // Cukup re-sync statsCache dari SPIFFS agar tampilan akurat.
+        // Master heartbeat transition ke ENDED sudah auto-save full package + incSesi.
+        // Master juga lapor sessionElapsed = sessionPackageTime. Tidak perlu push dari browser.
+        // Cukup re-sync statsCache dari SPIFFS agar Sesi akurat.
         clearTfsSnapshot(s.id); // hapus snapshot karena sesi sudah selesai
         // Optimistic: show exact package time immediately before async fetch
         applyPackageToStats(s.id);
         recordTrx(s.id); // catat ke laporan (hanya jika pending ada)
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
-        tfsAlreadyInBase[String(s.id)]=0; // reset agar sesElap=0 saat ENDED
-        // Bersihkan baseline agar tidak bocor ke sesi berikut
-        try { localStorage.removeItem('rc_base_at_session_start_' + s.id); } catch(e){}
+        timers[s.id].mfs = 0; // sesi selesai — Total Main = base only
         const prevTotal2=(getStat(s.id).totalDetik||0);
         loadStatsFromEsp32({[String(s.id)]:prevTotal2}); // confirm/overwrite dari SPIFFS
       }
@@ -2084,11 +2085,8 @@ async function sendCmd(id,cmd,time,retry=1){
           if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
           startTmr(id,data.time_left||time,true);
           if(timers[id]){ timers[id].tfs=0; timers[id].sessionDone=false; }
-          tfsAlreadyInBase[String(id)]=0; // sesi baru: base sudah di-load sebelumnya, tfs mulai dari 0
-          // Catat baseline totalDetik saat ini — digunakan oleh loadStatsFromEsp32()
-          // untuk menghitung berapa detik dari sesi ini yang sudah masuk ke base.
-          // Penting untuk refresh-survival Total Main selama sesi berjalan.
-          try { localStorage.setItem('rc_base_at_session_start_' + id, String(getStat(id).totalDetik || 0)); } catch(e){}
+          // mfs=0 sampai master heartbeat pertama (≤2s) overwrite dengan nilai live.
+          if(timers[id]) timers[id].mfs = 0;
           toast('✅ Timer dimulai');
         }
       else if(cmd==='RESUME'){
@@ -2122,11 +2120,11 @@ else if(cmd==='STOP'){
         clearPending(id);
         if(s) { s.state = data.state || 'LOCKED'; s.time_left = 0; }
         if(timers[id]){ timers[id].tfs = 0; timers[id].sessionDone = true; }
+        // Manual STOP — display = base only (no current-session contribution).
+        // mfs=0 ensures Total Main drops to whatever's saved, not the live mfs.
+        if(timers[id]) timers[id].mfs = 0;
         stopTmr(id);
         if(timers[id]) timers[id].sisa = 0;
-        tfsAlreadyInBase[String(id)] = 0;
-        // Bersihkan baseline sesi agar tidak bocor ke sesi berikut
-        try { localStorage.removeItem('rc_base_at_session_start_' + id); } catch(e){}
         const prevTotalStop = (getStat(id).totalDetik || 0);
         loadStatsFromEsp32({[String(id)]: prevTotalStop});
         toast('⏹ Timer direset');

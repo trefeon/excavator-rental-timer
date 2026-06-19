@@ -75,6 +75,8 @@ struct SlaveRecord {
   int time_left;
   int sessionElapsed;  // detik yang sudah berjalan di sesi ini (untuk auto-save)
   int sessionSavedElapsed; // berapa detik dari sessionElapsed yang sudah ditulis ke /stats.json
+  int sessionPackageTime; // full package time used in this session (seconds)
+  bool stoppedManually; // true = di-STOP manual, heartbeat ENDED tidak autoSaveStats
   unsigned long lastStatsSaveMs; // millis() saat terakhir kali periodik save di-enqueue
   String battery;
   uint8_t rawMac[6];   // raw MAC bytes for ESP-NOW addressing
@@ -288,7 +290,9 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             }
 
             // Deteksi transisi ke ENDED → auto-save stats
-            if (slaves[i].state != "ENDED" && newState == "ENDED") {
+            // Skip kalau sudah di-STOP manual (race protection: heartbeat ENDED
+            // bisa sampai setelah STOP command set stoppedManually=true).
+            if (slaves[i].state != "ENDED" && newState == "ENDED" && !slaves[i].stoppedManually) {
               int delta = slaves[i].sessionElapsed - slaves[i].sessionSavedElapsed;
               int slaveId = slaves[i].id;
               xSemaphoreGive(slavesMutex);
@@ -300,7 +304,9 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
               }
               slaves[i].sessionElapsed     = 0;
               slaves[i].sessionSavedElapsed = 0;
+              slaves[i].sessionPackageTime = 0;
             }
+            slaves[i].stoppedManually = false; // reset after ENDED processed (or no ENDED)
 
             slaves[i].prevState  = slaves[i].state;
             slaves[i].state      = newState;
@@ -787,6 +793,10 @@ void handleSlaves() {
       obj["state"] = slaves[i].state;
       obj["time_left"] = slaves[i].time_left;
       obj["battery"] = slaves[i].battery;
+      // Live sessionElapsed (master accumulator, 2s heartbeat cadence).
+      int safeElapsed = slaves[i].sessionElapsed < 0 ? 0 : slaves[i].sessionElapsed;
+      obj["sessionElapsed"]     = safeElapsed;
+      obj["sessionPackageTime"] = slaves[i].sessionPackageTime;
     }
     xSemaphoreGive(slavesMutex);
   }
@@ -949,6 +959,41 @@ void handleCommandProxy() {
     // someone adds a new RespCode. Cast explicitly to RespCode.
     RespCode actualCode = (RespCode)cmdResponsePkt.respCode;
     int ok = (actualCode == RESP_OK || actualCode == RESP_REBOOTING) ? 1 : 0;
+
+    // For ADD_TIME: track sessionPackageTime + reset sessionSavedElapsed for new session
+    if (ok && cmdEnum == CMD_ADD_TIME) {
+      if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+        for (int i = 0; i < slaveCount; i++) {
+          if (slaves[i].id == targetId) {
+            if (slaves[i].state == "LOCKED" || slaves[i].state == "ENDED") {
+              slaves[i].sessionPackageTime = time;
+              slaves[i].sessionSavedElapsed = 0;
+              slaves[i].stoppedManually = false;
+            } else {
+              slaves[i].sessionPackageTime += time;
+            }
+            break;
+          }
+        }
+        xSemaphoreGive(slavesMutex);
+      }
+    }
+
+    // For manual STOP: clear sessionPackageTime + set stoppedManually (prevents heartbeat ENDED auto-save)
+    if (ok && cmdEnum == CMD_STOP) {
+      if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+        for (int i = 0; i < slaveCount; i++) {
+          if (slaves[i].id == targetId) {
+            slaves[i].sessionPackageTime = 0;
+            slaves[i].sessionSavedElapsed = 0;
+            slaves[i].stoppedManually = true;
+            break;
+          }
+        }
+        xSemaphoreGive(slavesMutex);
+      }
+    }
+
     char resp[160];
     snprintf(resp, sizeof(resp),
              "{\"ok\":%d,\"code\":\"%s\",\"time_left\":%lu,\"state\":\"%s\"}",

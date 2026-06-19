@@ -13,23 +13,21 @@ if (!scriptMatch) {
 }
 const dashboardScript = scriptMatch[1] + `
 // ── Test harness exports ────────────────────────────────────────────────────
-// timers, slaves, statsCache, tfsAlreadyInBase, trxCache are NOT auto-globals
-// in the sandbox (they're declared with let/const). Tests that reassign these
-// would decouple sandbox.X from the internal variable, so we expose both
-// objects via accessor functions. Tests should always read/write through
-// these accessors — never reassign sandbox.timers / sandbox.slaves directly.
+// timers, slaves, statsCache, trxCache are NOT auto-globals in the sandbox
+// (they're declared with let/const). Tests that reassign these would decouple
+// sandbox.X from the internal variable, so we expose accessor functions. Tests
+// should always read/write through these accessors — never reassign
+// sandbox.timers / sandbox.slaves directly.
 window.timers  = timers;  globalThis.timers  = timers;
 window.slaves  = slaves;  globalThis.slaves  = slaves;
 
-globalThis.__getTimers  = () => timers;
-globalThis.__setTimers  = (v) => { timers  = v; };
-globalThis.__getSlaves  = () => slaves;
-globalThis.__setSlaves  = (v) => { slaves  = v; };
+globalThis.__getTimers       = () => timers;
+globalThis.__setTimers       = (v) => { timers  = v; };
+globalThis.__getSlaves       = () => slaves;
+globalThis.__setSlaves       = (v) => { slaves  = v; };
 
 globalThis.__getStatsCache       = () => statsCache;
 globalThis.__setStatsCache       = (v) => { statsCache = v; };
-globalThis.__getTfsAlreadyInBase = () => tfsAlreadyInBase;
-globalThis.__setTfsAlreadyInBase = (v) => { tfsAlreadyInBase = v; };
 globalThis.__getTrxCache         = () => trxCache;
 `;
 
@@ -218,8 +216,6 @@ function resetTestState() {
   for (let k in timers) delete timers[k];
   const sc = sandbox.__getStatsCache();
   for (let k in sc) delete sc[k];
-  const tfb = sandbox.__getTfsAlreadyInBase();
-  for (let k in tfb) delete tfb[k];
   const tc = sandbox.__getTrxCache();
   tc.length = 0;
   fetchHistory = [];
@@ -325,13 +321,13 @@ setTimeout(() => {
     assert(!pend['1'],
       "Pending cleared after manual STOP");
 
-    // Timer state: session marked done, tfs reset, tfsAlreadyInBase zeroed
+    // Timer state: session marked done, tfs reset, mfs reset (Total Main = base only)
     assert(sandbox.timers[1] && sandbox.timers[1].sessionDone === true,
       "timers[1].sessionDone=true after manual STOP");
     assert(sandbox.timers[1].tfs === 0,
       "timers[1].tfs=0 after manual STOP");
-    assert(sandbox.__getTfsAlreadyInBase()['1'] === 0,
-      "tfsAlreadyInBase['1']=0 after manual STOP");
+    assert(sandbox.timers[1].mfs === 0,
+      "timers[1].mfs=0 after manual STOP (Total Main = base only)");
   });
 }, 100);
 
@@ -457,59 +453,55 @@ setTimeout(() => {
 }, 350);
 
 // =============================================================================
-// TEST 9: tfsAlreadyInBase cleared after session done
+// TEST 9: mfs reset to 0 after natural ENDED — Total Main = base only
 // =============================================================================
 setTimeout(() => {
-  console.log("\n[Test 9] tfsAlreadyInBase — cleared to 0 after session ends");
+  console.log("\n[Test 9] Natural ENDED — mfs=0, sessionDone=true, Total Main = base");
   resetTestState();
 
-  const sc  = sandbox.__getStatsCache();
-  const tfb = sandbox.__getTfsAlreadyInBase();
+  const sc = sandbox.__getStatsCache();
 
-  // Pre-load state: RC-1 has an ongoing session with tfs=120
+  // Pre-load state: RC-1 has an ongoing session with mfs=120 (live from master)
   sc['1'] = { totalDetik: 300, totalSesi: 2 };
-  tfb['1'] = 120;
-  sandbox.timers[1] = { running: true, tfs: 120, sisa: 0, sessionDone: false };
+  sandbox.timers[1] = { running: true, tfs: 120, sisa: 0, sessionDone: false, mfs: 120 };
 
   // Write pending directly (key must be string to survive JSON round-trip)
   sandbox.localStorage.setItem('rc_pending', JSON.stringify(
     { '1': { pelanggan: 'Test', menit: 5, harga: 25000, ts: Date.now() } }
   ));
 
+  // Master has saved the full package to /stats.json (600s)
   mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 600, totalSesi: 3 } } };
 
   sandbox.applySlaves([
-    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK" }
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK", sessionElapsed: 600 }
   ]);
 
-  // tfsAlreadyInBase['1'] and timers[1].sessionDone are set synchronously in applySlaves
-  // (before the async loadStatsFromEsp32 fetch). Check immediately.
-  assert(tfb['1'] === 0,
-    `tfsAlreadyInBase reset to 0 after ENDED: got ${tfb['1']}`);
+  // After ENDED: sessionDone=true, mfs=0 (display = base only = 600)
   assert(sandbox.timers[1] && sandbox.timers[1].sessionDone === true,
     `timers[1].sessionDone=true after ENDED: got ${sandbox.timers[1] && sandbox.timers[1].sessionDone}`);
+  assert(sandbox.timers[1].mfs === 0,
+    `timers[1].mfs=0 after ENDED: got ${sandbox.timers[1].mfs}`);
 }, 400);
 
 // =============================================================================
-// TEST 10: sesElap is zero when session is done (no phantom count-up)
+// TEST 10: mfs=0 when session is done — no phantom count-up
 // =============================================================================
 setTimeout(() => {
   console.log("\n[Test 10] sesElap = 0 after session done (no phantom time added to display)");
   resetTestState();
 
-  const sc  = sandbox.__getStatsCache();
-  const tfb = sandbox.__getTfsAlreadyInBase();
+  const sc = sandbox.__getStatsCache();
   sc['1']  = { totalDetik: 600, totalSesi: 3 };
-  sandbox.timers[1] = { running: false, tfs: 0, sisa: 0, sessionDone: true };
-  tfb['1'] = 0;
+  sandbox.timers[1] = { running: false, tfs: 0, sisa: 0, sessionDone: true, mfs: 0 };
 
-  // Mirror updateStatEl logic: rawTfs=0 because sessionDone=true
+  // Mirror updateStatEl logic: mfs=0 because sessionDone=true
   const t = sandbox.timers[1];
-  const rawTfs  = (t && !t.sessionDone) ? (t.tfs || 0) : 0;
-  const sesElap = Math.max(0, rawTfs - (tfb['1'] || 0));
+  const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+  const total = Math.max(0, (sc['1'].totalDetik || 0) + mfs);
 
-  assert(sesElap === 0,
-    `sesElap=${sesElap} when sessionDone=true (expected 0, no phantom time)`);
+  assert(total === 600,
+    `display total=${total} when sessionDone=true (expected 600 = base only)`);
 }, 450);
 
 // =============================================================================
@@ -649,164 +641,394 @@ setTimeout(() => {
 }, 650);
 
 // =============================================================================
-// TEST 15: Refresh-survival — Total Main persists mid-session with periodic save
+// TEST 15: Real-time sync — Total Main updates from master's sessionElapsed
 // =============================================================================
 setTimeout(() => {
-  console.log("\n[Test 15] Refresh-survival — Total Main persists mid-session");
+  console.log("\n[Test 15] Real-time sync — Total Main = base + mfs from master");
   resetTestState();
 
   const sc = sandbox.__getStatsCache();
   sc['1'] = { totalDetik: 0, totalSesi: 0 };
 
-  // Start a 5-min session
-  sandbox.setPending(1, "Budi", 5, 25000);
+  // No pending; just simulate a running session (master reports mfs via heartbeat)
   sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
-  mockFetchResponses['/api/command'] = {
-    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
-  };
 
-  sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
-    // ADD_TIME captures base_at_session_start = current base.totalDetik (0)
-    const baseAtStart = sandbox.localStorage.getItem('rc_base_at_session_start_1');
-    assert(baseAtStart === '0',
-      `base_at_session_start captured: ${baseAtStart} (expected '0')`);
+  // First poll: master reports sessionElapsed=4
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 296, battery: "OK", sessionElapsed: 4, sessionPackageTime: 300 }
+  ]);
 
-    // Master has done one periodic save at 30s. /stats.json now has totalDetik=30.
-    sandbox.timers[1].tfs = 30;
-    sc['1'] = { totalDetik: 30, totalSesi: 0 };
-    mockFetchResponses['/api/stats'] = {
-      ok: true, data: { "1": { totalDetik: 30, totalSesi: 0 } }
-    };
+  // mfs=4 captured. display = 0 + 4 = "00:00:04"
+  assert(sandbox.timers[1].mfs === 4,
+    `mfs=4 after first poll: got ${sandbox.timers[1].mfs}`);
 
-    // Simulate browser refresh: loadStatsFromEsp32 fetches new base.
-    // (async — must await for the .then chain to populate tfsAlreadyInBase)
-    return sandbox.loadStatsFromEsp32().then(() => {
-      const tfb = sandbox.__getTfsAlreadyInBase();
-      assert(tfb['1'] === 30,
-        `tfsAlreadyInBase after refresh = ${tfb['1']} (expected 30 = 30 - 0)`);
+  // Second poll: master reports sessionElapsed=10
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 290, battery: "OK", sessionElapsed: 10, sessionPackageTime: 300 }
+  ]);
 
-      // Display formula: base + max(0, tfs - tfsAlreadyInBase) = 30 + 0 = 30 ✓
-      const t = sandbox.timers[1];
-      const sesElap = Math.max(0, (t.tfs || 0) - (tfb['1'] || 0));
-      assert(sesElap === 0,
-        `sesElap after periodic save matches: ${sesElap} (expected 0, no double-count)`);
+  assert(sandbox.timers[1].mfs === 10,
+    `mfs=10 after second poll: got ${sandbox.timers[1].mfs}`);
 
-      // 5s later — tfs=35, master saved another 5s (base=35).
-      sandbox.timers[1].tfs = 35;
-      sc['1'].totalDetik = 35;
-      mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 35, totalSesi: 0 } } };
-      return sandbox.loadStatsFromEsp32().then(() => {
-        assert(tfb['1'] === 35,
-          `tfsAlreadyInBase after second refresh = ${tfb['1']} (expected 35)`);
+  // Third poll: 60s elapsed, master has periodic-saved to /stats.json
+  sc['1'] = { totalDetik: 60, totalSesi: 0 };
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 240, battery: "OK", sessionElapsed: 60, sessionPackageTime: 300 }
+  ]);
 
-        // sesElap = 35 - 35 = 0 (no double-count)
-        const sesElap2 = Math.max(0, 35 - 35);
-        assert(sesElap2 === 0,
-          `sesElap stays 0 after another save: ${sesElap2}`);
-      });
-    });
-  });
+  assert(sandbox.timers[1].mfs === 60,
+    `mfs=60 after 60s poll: got ${sandbox.timers[1].mfs}`);
+
+  // Compute display: base.totalDetik (60) + mfs (60) = 120
+  const t = sandbox.timers[1];
+  const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+  const total = (sc['1'].totalDetik || 0) + mfs;
+  assert(total === 120,
+    `display total = base(60) + mfs(60) = ${total} (expected 120)`);
 }, 750);
 
 // =============================================================================
-// TEST 16: Refresh-survival — Total Main grows correctly across saves
+// TEST 16: Real-time sync — refresh mid-session picks up master's value
 // =============================================================================
 setTimeout(() => {
-  console.log("\n[Test 16] Refresh-survival — Total Main grows with periodic saves");
+  console.log("\n[Test 16] Real-time sync — refresh mid-session, no localStorage trickery");
   resetTestState();
 
   const sc = sandbox.__getStatsCache();
   sc['1'] = { totalDetik: 0, totalSesi: 0 };
-
-  sandbox.setPending(1, "Budi", 5, 25000);
   sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
-  mockFetchResponses['/api/command'] = {
-    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
-  };
 
-  sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
-    // Master saves every 30s. Simulate 90s of session with 3 saves.
-    // After each save, base grows by 30. tfs grows with wall-clock.
-    const baseAtStart = sandbox.localStorage.getItem('rc_base_at_session_start_1');
-    assert(baseAtStart === '0', `base_at_session_start captured at session start: ${baseAtStart}`);
+  // First poll: sessionElapsed=30
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 270, battery: "OK", sessionElapsed: 30, sessionPackageTime: 300 }
+  ]);
+  assert(sandbox.timers[1].mfs === 30,
+    `mfs=30 after first poll: got ${sandbox.timers[1].mfs}`);
 
-    // Save 1: tfs=30, base=30
-    sandbox.timers[1].tfs = 30;
-    sc['1'] = { totalDetik: 30, totalSesi: 0 };
-    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 30, totalSesi: 0 } } };
+  // "Refresh" (no localStorage manipulation): applySlaves again with new value
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 269, battery: "OK", sessionElapsed: 31, sessionPackageTime: 300 }
+  ]);
+  assert(sandbox.timers[1].mfs === 31,
+    `mfs=31 after refresh: got ${sandbox.timers[1].mfs}`);
 
-    return sandbox.loadStatsFromEsp32().then(() => {
-      // Save 2: tfs=60, base=60
-      sandbox.timers[1].tfs = 60;
-      sc['1'] = { totalDetik: 60, totalSesi: 0 };
-      mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 60, totalSesi: 0 } } };
-      return sandbox.loadStatsFromEsp32().then(() => {
-        // Save 3: tfs=90, base=90
-        sandbox.timers[1].tfs = 90;
-        sc['1'] = { totalDetik: 90, totalSesi: 0 };
-        mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 90, totalSesi: 0 } } };
-        return sandbox.loadStatsFromEsp32().then(() => {
-          const tfb = sandbox.__getTfsAlreadyInBase();
-          assert(tfb['1'] === 90,
-            `tfsAlreadyInBase tracks periodic saves: ${tfb['1']} (expected 90)`);
-
-          // Total Main = base + (tfs - tfsAlreadyInBase) = 90 + 0 = 90 (all accounted for)
-          const sesElap = Math.max(0, 90 - tfb['1']);
-          assert(sesElap === 0,
-            `sesElap = 0 after multiple periodic saves: ${sesElap} (no double-count)`);
-        });
-      });
-    });
-  });
+  // After 5 more seconds
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 264, battery: "OK", sessionElapsed: 36, sessionPackageTime: 300 }
+  ]);
+  assert(sandbox.timers[1].mfs === 36,
+    `mfs=36 after 5s: got ${sandbox.timers[1].mfs}`);
 }, 800);
 
 // =============================================================================
-// TEST 17: base_at_session_start_<id> cleared on session end (no leak to next)
+// TEST 17: Real-time sync — natural ENDED finalizes display, increments Sesi
 // =============================================================================
 setTimeout(() => {
-  console.log("\n[Test 17] base_at_session_start cleared on natural ENDED + manual STOP");
+  console.log("\n[Test 17] Real-time sync — natural ENDED finalizes Total Main and Sesi");
   resetTestState();
 
   const sc = sandbox.__getStatsCache();
-  sc['1'] = { totalDetik: 100, totalSesi: 1 }; // some prior history
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 0, sessionDone: false, mfs: 295 };
+  sandbox.setPending(1, "Andi", 5, 25000);
 
-  sandbox.setPending(1, "Budi", 5, 25000);
-  sandbox.timers[1] = { running: true, tfs: 60, sisa: 240, sessionDone: false };
+  // Master has saved the full package (incremented Sesi too)
+  mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 300, totalSesi: 1 } } };
+
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK", sessionElapsed: 300, sessionPackageTime: 300 }
+  ]);
+
+  // After natural ENDED: sessionDone=true, mfs=0, display = base only
+  assert(sandbox.timers[1].sessionDone === true,
+    "sessionDone=true after natural ENDED");
+  assert(sandbox.timers[1].mfs === 0,
+    `mfs=0 after ENDED: got ${sandbox.timers[1].mfs}`);
+
+  // Compute display: base.totalDetik (300) + mfs (0) = 300
+  const t = sandbox.timers[1];
+  const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+  const total = (sc['1'].totalDetik || 0) + mfs;
+  assert(total === 300,
+    `display = base(300) + mfs(0) = ${total} (expected 300)`);
+}, 850);
+
+// =============================================================================
+// TEST 18: Master returns negative sessionElapsed — defensive clamp to 0
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 18] Defensive — negative sessionElapsed clamps to 0");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 100, totalSesi: 1 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false, mfs: 50 };
+
+  // Master should never send negative, but if it does, firmware clamps to 0
+  // AND dashboard should also be defensive.
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 200, battery: "OK", sessionElapsed: -5, sessionPackageTime: 300 }
+  ]);
+
+  // mfs unchanged (was 50). Negative not accepted.
+  assert(sandbox.timers[1].mfs === 50,
+    `mfs unchanged on negative: got ${sandbox.timers[1].mfs}`);
+
+  // Even if mfs became -5, display would clamp to 0
+  const t = sandbox.timers[1];
+  const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+  assert(mfs === 50, `mfs=50 (negative rejected): got ${mfs}`);
+}, 900);
+
+// =============================================================================
+// TEST 19: Master returns undefined sessionElapsed — mfs stays at last value
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 19] Defensive — undefined sessionElapsed keeps last mfs");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 50, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false, mfs: 30 };
+
+  // First poll sets mfs=30
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 270, battery: "OK", sessionElapsed: 30 }
+  ]);
+  assert(sandbox.timers[1].mfs === 30, `mfs=30: got ${sandbox.timers[1].mfs}`);
+
+  // Second poll: master omits sessionElapsed (briefly unavailable)
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 265, battery: "OK" }
+  ]);
+  assert(sandbox.timers[1].mfs === 30,
+    `mfs unchanged when sessionElapsed undefined: got ${sandbox.timers[1].mfs}`);
+}, 950);
+
+// =============================================================================
+// TEST 20: Master reboot recovery — mfs drops >5s detected as reboot
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 20] Master reboot recovery — mfs drop >5s accepted as new start");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 600, totalSesi: 3 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 0, sessionDone: false, mfs: 580 };
+
+  // Master rebooted, new accumulator starts from 0
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 295, battery: "OK", sessionElapsed: 2, sessionPackageTime: 300 }
+  ]);
+
+  // mfs reset to 2 (reboot detected, new value accepted because drop > 5s)
+  assert(sandbox.timers[1].mfs === 2,
+    `mfs reset to 2 after master reboot: got ${sandbox.timers[1].mfs}`);
+}, 1000);
+
+// =============================================================================
+// TEST 21: Tiny mfs fluctuation — within 5s tolerance, keep last value
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 21] Tiny mfs fluctuation — within 5s, keep last value");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 50, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false, mfs: 100 };
+
+  // Heartbeat reports 98 (slight fluctuation — slave NVS restored old value, master's diff went negative)
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 200, battery: "OK", sessionElapsed: 98 }
+  ]);
+
+  // 100 - 98 = 2s drop, within 5s tolerance, keep mfs=100
+  assert(sandbox.timers[1].mfs === 100,
+    `mfs kept at 100 (2s drop within tolerance): got ${sandbox.timers[1].mfs}`);
+}, 1050);
+
+// =============================================================================
+// TEST 22: Reset Total Main (🗑) zeroes mfs locally
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 22] Reset Total Main — mfs=0 after reset");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 100, totalSesi: 1 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false, mfs: 50 };
+
+  mockFetchResponses['/api/stats/reset'] = { ok: true, data: { ok: 1 } };
+
+  // Call the helper that the 🗑 button uses
+  sandbox.resetStatEsp32(1, { user: 'admin', pass: 'admin' }).then(() => {
+    // After reset: statsCache zeroed, mfs=0
+    const sc2 = sandbox.__getStatsCache();
+    assert(sc2['1'].totalDetik === 0,
+      `totalDetik=0 after reset: got ${sc2['1'].totalDetik}`);
+    assert(sc2['1'].totalSesi === 0,
+      `totalSesi=0 after reset: got ${sc2['1'].totalSesi}`);
+    assert(sandbox.timers[1].mfs === 0,
+      `mfs=0 after reset: got ${sandbox.timers[1].mfs}`);
+
+    // Display = 0 + 0 = 0
+    const t = sandbox.timers[1];
+    const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+    const total = (sc2['1'].totalDetik || 0) + mfs;
+    assert(total === 0, `display total=0 after reset: got ${total}`);
+  });
+}, 1100);
+
+// =============================================================================
+// TEST 23: Manual STOP zeroes mfs locally (no double-count on display)
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 23] Manual STOP — mfs=0, display = base only");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 200, totalSesi: 2 };
+  sandbox.setPending(1, "Andi", 5, 25000);
+  sandbox.timers[1] = { running: true, tfs: 60, sisa: 240, sessionDone: false, mfs: 60 };
+
   mockFetchResponses['/api/command'] = {
-    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
+    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 0, state: "LOCKED" }
   };
 
-  sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
-    const baseAtStart = sandbox.localStorage.getItem('rc_base_at_session_start_1');
-    assert(baseAtStart === '100',
-      `base_at_session_start = prior base (100): ${baseAtStart}`);
+  sandbox.sendCmd(1, 'STOP', 0).then(() => {
+    // mfs=0 after manual STOP
+    assert(sandbox.timers[1].mfs === 0,
+      `mfs=0 after manual STOP: got ${sandbox.timers[1].mfs}`);
 
-    // Simulate natural ENDED — applySlaves first branch fires
-    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 400, totalSesi: 2 } } };
-    sandbox.applySlaves([
-      { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK" }
-    ]);
-
-    // After natural ENDED: localStorage entry should be cleared
-    const baseAtStartAfterEnd = sandbox.localStorage.getItem('rc_base_at_session_start_1');
-    assert(baseAtStartAfterEnd === null,
-      `base_at_session_start cleared after natural ENDED: ${baseAtStartAfterEnd}`);
-
-    // Now start a new session — base should capture the latest base
-    sandbox.setPending(1, "Andi", 5, 25000);
-    sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
-    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 400, totalSesi: 2 } } };
-    mockFetchResponses['/api/command'] = {
-      ok: true, data: { ok: 1, code: "SUCCESS", time_left: 300, state: "RUNNING" }
-    };
-
-    sandbox.sendCmd(1, 'ADD_TIME', 300).then(() => {
-      const baseAtStartNew = sandbox.localStorage.getItem('rc_base_at_session_start_1');
-      assert(baseAtStartNew === '400',
-        `base_at_session_start for new session = 400: ${baseAtStartNew}`);
-    });
+    // Display = 200 + 0 = 200 (base only, no current-session contribution)
+    const t = sandbox.timers[1];
+    const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+    const total = (sc['1'].totalDetik || 0) + mfs;
+    assert(total === 200, `display = base(200) + mfs(0) = ${total} (expected 200)`);
   });
-}, 850);
+}, 1150);
+
+// =============================================================================
+// TEST 24: Multiple RCs synced independently
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 24] Multiple RCs — each card has independent mfs");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+  sc['2'] = { totalDetik: 0, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
+  sandbox.timers[2] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
+
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 290, battery: "OK", sessionElapsed: 10, sessionPackageTime: 300 },
+    { id: 2, mac: "AA:BB:CC:DD:EE:02", online: true, state: "RUNNING", time_left: 250, battery: "OK", sessionElapsed: 50, sessionPackageTime: 300 }
+  ]);
+
+  assert(sandbox.timers[1].mfs === 10, `RC-1 mfs=10: got ${sandbox.timers[1].mfs}`);
+  assert(sandbox.timers[2].mfs === 50, `RC-2 mfs=50: got ${sandbox.timers[2].mfs}`);
+
+  // Each card's display independent
+  const total1 = sc['1'].totalDetik + sandbox.timers[1].mfs;
+  const total2 = sc['2'].totalDetik + sandbox.timers[2].mfs;
+  assert(total1 === 10, `RC-1 total = ${total1} (expected 10)`);
+  assert(total2 === 50, `RC-2 total = ${total2} (expected 50)`);
+}, 1200);
+
+// =============================================================================
+// TEST 25: Slave offline (no entry in /api/slaves) — mfs frozen
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 25] Slave offline — mfs frozen, no error");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 50, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false, mfs: 25 };
+
+  // Master returns no slaves (offline)
+  sandbox.applySlaves([]);
+
+  // mfs unchanged
+  assert(sandbox.timers[1].mfs === 25,
+    `mfs unchanged when slave offline: got ${sandbox.timers[1].mfs}`);
+
+  // display = 50 + 25 = 75 (frozen)
+  const t = sandbox.timers[1];
+  const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+  const total = (sc['1'].totalDetik || 0) + mfs;
+  assert(total === 75, `display frozen at 75 when slave offline: got ${total}`);
+}, 1250);
+
+// =============================================================================
+// TEST 26: Top-up ADD_TIME — mfs keeps growing, total increments
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 26] Top-up ADD_TIME — mfs continues from same session");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 60, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false, mfs: 60 };
+
+  // Mid-session top-up: master reports sessionElapsed=60 (still 60s elapsed)
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 240, battery: "OK", sessionElapsed: 60, sessionPackageTime: 300 }
+  ]);
+
+  // mfs=60 (no regression). Now top-up happens.
+  assert(sandbox.timers[1].mfs === 60, `mfs=60 before top-up: got ${sandbox.timers[1].mfs}`);
+
+  // After top-up, mfs continues from 60 and grows
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 295, battery: "OK", sessionElapsed: 65, sessionPackageTime: 600 }
+  ]);
+
+  assert(sandbox.timers[1].mfs === 65, `mfs=65 after top-up: got ${sandbox.timers[1].mfs}`);
+
+  // Total = 60 (base) + 65 (mfs) = 125
+  const t = sandbox.timers[1];
+  const mfs = (t && !t.sessionDone && typeof t.mfs === 'number' && t.mfs >= 0) ? t.mfs : 0;
+  const total = (sc['1'].totalDetik || 0) + mfs;
+  assert(total === 125, `display = base(60) + mfs(65) = ${total} (expected 125)`);
+}, 1300);
+
+// =============================================================================
+// TEST 27: Pause → Resume — mfs doesn't accumulate during pause
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 27] PAUSE → RESUME — mfs stops growing during pause");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 200, sessionDone: false };
+
+  // Running: mfs=30
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 170, battery: "OK", sessionElapsed: 30, sessionPackageTime: 200 }
+  ]);
+  assert(sandbox.timers[1].mfs === 30, `mfs=30 while running: got ${sandbox.timers[1].mfs}`);
+
+  // Paused: mfs frozen (master's diff doesn't grow during pause)
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "PAUSED", time_left: 170, battery: "OK", sessionElapsed: 30, sessionPackageTime: 200 }
+  ]);
+  assert(sandbox.timers[1].mfs === 30, `mfs=30 during pause (frozen): got ${sandbox.timers[1].mfs}`);
+
+  // After 60s pause: still 30
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "PAUSED", time_left: 170, battery: "OK", sessionElapsed: 30, sessionPackageTime: 200 }
+  ]);
+  assert(sandbox.timers[1].mfs === 30, `mfs=30 after 60s pause: got ${sandbox.timers[1].mfs}`);
+
+  // Resumed: mfs=35 (5s after resume)
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 165, battery: "OK", sessionElapsed: 35, sessionPackageTime: 200 }
+  ]);
+  assert(sandbox.timers[1].mfs === 35, `mfs=35 after resume: got ${sandbox.timers[1].mfs}`);
+}, 1350);
 
 // =============================================================================
 // VALIDATION SUMMARY (runs after all tests)
@@ -817,4 +1039,4 @@ setTimeout(() => {
   console.log("====================================================");
   console.log(`\n  Passed: ${passed}  |  Failed: ${failed}`);
   if (failed > 0) process.exit(1);
-}, 900);
+}, 1400);

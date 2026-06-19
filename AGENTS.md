@@ -133,6 +133,25 @@ Commands: `ADD_TIME=1, PAUSE=2, RESUME=3, STOP=4, REBOOT=5, IDENTIFY=6`.
 Response codes: `OK=0, BAD_STATE=1, EXCEEDS_LIMIT=2, UNKNOWN_COMMAND=3, REBOOTING=6`.
 States: `LOCKED=0, RUNNING=1, PAUSED=2, ENDED=4, FAULT=5` (gap at 3 is intentional).
 
+### Master HTTP API (full live surface)
+```
+GET   /api/slaves                  fleet status — includes sessionElapsed, sessionPackageTime
+POST  /api/command                 body {id, cmd, time}
+... (see below)
+```
+**`/api/slaves` per-element fields** (live, updated every 2 s via heartbeat):
+```json
+{
+  "id": 1, "ip": "", "mac": "AA:BB:CC:DD:EE:01",
+  "online": true,
+  "state": "RUNNING" | "PAUSED" | "LOCKED" | "ENDED",
+  "time_left": 596, "battery": "OK",
+  "sessionElapsed": 4,          ← live accumulator, 2s heartbeat cadence
+  "sessionPackageTime": 600      ← full package set on ADD_TIME
+}
+```
+Dashboard uses `sessionElapsed` directly for live `Total Main` display (no math, no slave NVS).
+
 ### Master HTTP API (full live surface — `openapi.yaml` is stale, only documents 4 legacy endpoints)
 ```
 GET   /                            serves gzipped dashboard
@@ -277,17 +296,14 @@ Offsets are ESP32: `0x1000/0x8000/0xe000/0x10000`; ESP32-C3: `0x0000/0x8000/0xe0
 
 Distilled from `docs/AUDIT.md` and current code:
 
-- **Total Main must survive web refresh.** `dashboard/index.html` Total Main and Sesi are persisted to SPIFFS/LittleFS `/stats.json`. Without periodic save during a session, refreshing the browser mid-session would show `00:00:00` / `0` because `/stats.json` only got written at session-end. Two pieces:
-  - **Firmware** (both masters): every 30 s during `RUNNING`, enqueue a `StatsJob{id, sessionElapsed - sessionSavedElapsed, /*incrementSesi*/false}` to `statsQueue`. Track `sessionSavedElapsed` per slave so saves are incremental (no double-count across multiple saves). On natural `ENDED` transition, the delta between `sessionPackageTime` and `sessionSavedElapsed` is enqueued with `incrementSesi=true`.
-  - **Frontend** `loadStatsFromEsp32`: when computing `tfsAlreadyInBase` for a live session, read `localStorage['rc_base_at_session_start_' + id]` (captured at `ADD_TIME` start) and use `base.totalDetik - base_at_start` instead of the old buggy `timers[id].tfs` assumption. Clear the entry on STOP / natural ENDED so it doesn't leak to the next session.
-  - Tests 15–17 assert: capture-at-start, tfsAlreadyInBase tracks periodic saves without double-count, and the entry is cleared on session end so a follow-up session captures a fresh baseline.
-- **SPIFFS → LittleFS migration.** Both masters now use `LittleFS.begin(true)` (Arduino-ESP32 3.x exposes `LittleFS` not `LITTLEFS`). `/auth.json`, `/stats.json`, `/transaksi.json` live on the same partition as before but get wear-levelling + atomic writes via the LittleFS library. JSON format unchanged — only the `FS` instance name changed. `index_html.h` (gzipped dashboard) is compiled in as `PROGMEM`, no FS involvement. **Data is not forward-compatible: erasing the master wipes LittleFS; re-registering slaves keeps their IDs from the slave-side NVS.**
-- **Stats double-count is the #1 historical bug.** The fix: master WEBUI never increments `totalSesi` on its own — slave's heartbeat transition to ENDED enqueues a `StatsJob`, drained in `loop()` while holding `statsMutex`. Frontend never writes elapsed. Only `applyPackageToStats` (immediate, optimistic) for instant UI; followed by `loadStatsFromEsp32` (authoritative, from SPIFFS).
+- **Total Main is master-driven, real-time.** The master's heartbeat handler accumulates `sessionElapsed` per slave (already in `SlaveRecord` from v1.2.6). The `/api/slaves` response exposes two new fields: `sessionElapsed` (live, 2s cadence) and `sessionPackageTime` (full package set on `ADD_TIME`). The dashboard reads `sessionElapsed` on every 3 s `poll`, stores it in `timers[id].mfs`, and `updateStatEl` displays `Math.max(0, (base.totalDetik || 0) + mfs)`. **No `tfs` subtraction, no `tfsAlreadyInBase`, no `rc_base_at_session_start_<id>`, no `rc_tfs_<id>` for Total Main.** Single source of truth: the master. Refresh just waits for the next poll (≤3 s lag). Test 15-17 cover the live sync; tests 18-27 cover defensive cases (negative, undefined, master reboot, manual STOP, reset, offline, top-up, pause/resume).
+- **Master reboot recovery.** When master's `sessionElapsed` drops >5 s below last known, the dashboard accepts the new value (reboot detected — accumulator reset). Within 5 s drift, the dashboard keeps the last value (handles slave NVS race). See test 20.
 - **Manual ⏹ Reset Timer must NOT count** (laporan keuangan or stats). Invariant: only clean natural ENDED (slave timer hits 0) increments `totalDetik`/`totalSesi` and creates a transaksi entry. Two enforcement points:
-  - **Frontend** `sendCmd` STOP path: skip `applyPackageToStats` + `recordTrx`, call `clearPending(id)` so the applySlaves LOCKED-with-pending branch doesn't re-record the next poll.
+  - **Frontend** `sendCmd` STOP path: skip `applyPackageToStats` + `recordTrx`, call `clearPending(id)` so the applySlaves LOCKED-with-pending branch doesn't re-record the next poll. Set `timers[id].mfs = 0` so display drops to base only.
   - **Firmware** (`wifi_master_esp32_WEBUI/main.cpp`): the `CMD_STOP` handler must NOT call `autoSaveStats(sid, packageTime)`. Master must still set `stoppedManually = true` so the heartbeat handler skips any late-arriving ENDED transition (race protection).
-  - **Firmware** nonWEBUI achieves the same effect differently: line ~871 zeros `sessionElapsed` before broadcasting STOP, so when the heartbeat ENDED transition fires, `autoSaveStats(0)` is a no-op.
-  - Test 3 asserts NO POST to `/api/transaksi/add`, statsCache unchanged, pending cleared. Test 14 asserts the LOCKED-after-STOP race doesn't re-record.
+  - **Firmware** nonWEBUI achieves the same effect differently: line ~871 zeros `sessionElapsed` before broadcasting STOP, so when the heartbeat ENDED transition fires, `autoSaveStats(0)` is a no-op. The nonWEBUI `gotResponse` block sets `sessionPackageTime = 0` + `stoppedManually = true` and the heartbeat handler checks `!stoppedManually` before saving.
+  - **Reset Total Main** (🗑 button) sets `timers[id].mfs = 0` so display = base (zeroed) + 0 = 0.
+  - Test 3 asserts NO POST to `/api/transaksi/add`, statsCache unchanged, pending cleared, mfs=0. Test 14 asserts the LOCKED-after-STOP race doesn't re-record. Test 22 (🗑) and Test 23 (manual STOP) verify display drops to base.
 - **Slave `lastMasterContactMs` guard is intentionally a no-op** (assigns `nowMs` then immediately compares). Documented in `docs/AUDIT.md`. Recovery is via ESP-NOW re-register on heartbeat.
 - **Powerloss recovery auto-RESUMES** a paid rental (not PAUSED) — intentional design. 3 warning beeps give staff time to move hands away. Change at slave `main.cpp` if you want paused.
 - **`cmdFromString` is case-sensitive in C** (`ADD_TIME` etc.) — Python mirror `cmd_from_string` is case-insensitive. Tests reflect Python semantics.
