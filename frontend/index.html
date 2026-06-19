@@ -1496,6 +1496,22 @@ function savePend(p){localStorage.setItem(LS_PEND,JSON.stringify(p));}
 function setPending(rcId,pelanggan,menit,harga,paket){const p=loadPend();p[rcId]={pelanggan,menit,harga,paket,ts:Date.now()};savePend(p);}
 function clearPending(rcId){const p=loadPend();delete p[rcId];savePend(p);}
 
+// Optimistic immediate update: add exact package seconds to statsCache so
+// Total Main shows the correct value (e.g. exactly 2:00) instantly at session
+// end, without waiting for the async SPIFFS fetch to return.
+// loadStatsFromEsp32() will then confirm/overwrite with the authoritative value.
+function applyPackageToStats(id){
+  const p=loadPend();
+  const item=p[id];
+  if(!item)return;
+  const pkgSec=Math.round((item.menit||0)*60);
+  if(pkgSec<=0)return;
+  if(!statsCache[String(id)])statsCache[String(id)]={totalDetik:0,totalSesi:0};
+  statsCache[String(id)].totalDetik=(statsCache[String(id)].totalDetik||0)+pkgSec;
+  statsCache[String(id)].totalSesi=(statsCache[String(id)].totalSesi||0)+1;
+  updateStatEl(id);
+}
+
 // ── TFS SNAPSHOT ─────────────────────────────────────────────────────
 // Saat RC sedang berjalan / pause, simpan tfs ke localStorage agar
 // setelah refresh / browser ditutup + dibuka lagi, elapsed tidak hilang.
@@ -1874,6 +1890,8 @@ function applySlaves(data){
       const pendingObj = loadPend();
       if((s.state==='ENDED'||s.state==='LOCKED') && pendingObj[s.id]){
         clearTfsSnapshot(s.id);
+        // Optimistic: show exact package time immediately before async fetch
+        applyPackageToStats(s.id);
         recordTrx(s.id);
         if(timers[s.id]){
           timers[s.id].sessionDone=true;
@@ -1881,19 +1899,21 @@ function applySlaves(data){
           tfsAlreadyInBase[String(s.id)]=0;
         }
         const prevTotal=(getStat(s.id).totalDetik||0);
-        loadStatsFromEsp32({[String(s.id)]:prevTotal+1});
+        loadStatsFromEsp32({[String(s.id)]:prevTotal});
       }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
         // RC selesai secara alami (waktu habis).
         // Firmware sudah otomatis simpan via autoSaveStats (totalDetik + totalSesi)
         // dan periodic save sudah jalan setiap detik — TIDAK perlu push dari browser.
         // Cukup re-sync statsCache dari SPIFFS agar tampilan akurat.
         clearTfsSnapshot(s.id); // hapus snapshot karena sesi sudah selesai
+        // Optimistic: show exact package time immediately before async fetch
+        applyPackageToStats(s.id);
         recordTrx(s.id); // catat ke laporan (hanya jika pending ada)
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
         tfsAlreadyInBase[String(s.id)]=0; // reset agar sesElap=0 saat ENDED
         const prevTotal2=(getStat(s.id).totalDetik||0);
-        loadStatsFromEsp32({[String(s.id)]:prevTotal2+1}); // re-sync totalDetik + totalSesi dari SPIFFS
+        loadStatsFromEsp32({[String(s.id)]:prevTotal2}); // confirm/overwrite dari SPIFFS
       }
       stopTmr(s.id);
       if(timers[s.id])timers[s.id].sisa=s.time_left;
@@ -2078,6 +2098,8 @@ async function sendCmd(id,cmd,time,retry=1){
         // boleh menulis elapsed lagi (dulu memakai addElapsedOnly → dobel).
         // Cukup re-sync nilai otoritatif dari SPIFFS.
         clearTfsSnapshot(id); // hapus snapshot localStorage sesi ini
+        // Optimistic: show exact package time immediately before async fetch
+        applyPackageToStats(id);
         recordTrx(id);
         if(s) { s.state = data.state || 'LOCKED'; s.time_left = 0; }
         if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=true;}
@@ -2085,7 +2107,7 @@ async function sendCmd(id,cmd,time,retry=1){
         if(timers[id])timers[id].sisa=0;
         tfsAlreadyInBase[String(id)]=0;
         const prevTotalStop=(getStat(id).totalDetik||0);
-        loadStatsFromEsp32({[String(id)]:prevTotalStop+1}); // ambil totalDetik final dari firmware (anti dobel)
+        loadStatsFromEsp32({[String(id)]:prevTotalStop}); // confirm/overwrite dari SPIFFS (anti dobel)
         toast('⏹ Timer direset');
       }
       renderGrid(); // update UI secara instan!
