@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const HTML_PATH = path.join(__dirname, '..', 'RCDashboard (1).html');
+const HTML_PATH = path.join(__dirname, '..', 'frontend', 'index.html');
 
 // Read the HTML and extract the script contents
 const html = fs.readFileSync(HTML_PATH, 'utf-8');
