@@ -384,7 +384,7 @@ button{cursor:pointer;}
       <div style="font-size:28px;margin-bottom:8px;">⚠️</div>
       <div style="font-size:13px;font-weight:700;margin-bottom:5px;">ESP32 Tidak Terjangkau</div>
       <div style="font-size:11px;color:var(--t2);margin-bottom:14px;">Sambungkan HP ke WiFi <b>ExcavatorMaster</b> lalu coba lagi.</div>
-      <button class="auth-btn" onclick="initAuth()">🔄 Coba Lagi</button>
+      <button class="auth-btn" onclick="bootApp()">🔄 Coba Lagi</button>
     </div>
   </div>
 
@@ -756,6 +756,22 @@ button{cursor:pointer;}
       <button class="btn b-resume" onclick="simDevDateTrigger()" style="flex:1;">Trigger Reset</button>
     </div>
 
+    <label class="lbl">Simulasi Sesi Cepat (Harga Rp 99)</label>
+    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px; background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:10px;">
+      <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+        <span style="font-size:10px; color:var(--t2); flex:1;">Pilih RC:</span>
+        <select id="simDevRcSel" style="flex:2; background:var(--s3); border:1px solid var(--bd); border-radius:5px; color:var(--tx); font-size:10px; padding:4px; outline:none;"></select>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:5px;">
+        <button class="btn b-start" onclick="simDevStartQuickSession(5)" style="font-size:8px; padding:6px 2px; min-height:24px;">5 Detik</button>
+        <button class="btn b-start" onclick="simDevStartQuickSession(10)" style="font-size:8px; padding:6px 2px; min-height:24px;">10 Detik</button>
+        <button class="btn b-start" onclick="simDevStartQuickSession(15)" style="font-size:8px; padding:6px 2px; min-height:24px;">15 Detik</button>
+        <button class="btn b-start" onclick="simDevStartQuickSession(20)" style="font-size:8px; padding:6px 2px; min-height:24px;">20 Detik</button>
+        <button class="btn b-start" onclick="simDevStartQuickSession(25)" style="font-size:8px; padding:6px 2px; min-height:24px;">25 Detik</button>
+        <button class="btn b-start" onclick="simDevStartQuickSession(30)" style="font-size:8px; padding:6px 2px; min-height:24px;">30 Detik</button>
+      </div>
+    </div>
+
     <label class="lbl">Inspeksi State LocalStorage</label>
     <div style="background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:8px; margin-bottom:10px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:10px; white-space:pre-wrap;" id="dbgLocalState"></div>
 
@@ -849,15 +865,27 @@ function showForm(id){
   });
 }
 
-async function initAuth(){
+async function bootApp(){
   showForm('fChecking');
   try{
     const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),6000);
     const res=await fetch(BASE+'/api/auth',{signal:ctrl.signal});
     if(!res.ok)throw new Error();
     const d=await res.json();
-    d.exists?showForm('fLogin'):showForm('fRegister');
-  }catch{showForm('fOffline');}
+    if(!d.exists){
+      // Master is freshly reset! Clean everything
+      localStorage.clear();
+      timers={};
+      statsCache={};
+      tfsAlreadyInBase={};
+      toast('⚠️ Master direset: Semua cache lokal dibersihkan');
+      showForm('fRegister');
+    }else{
+      isLoggedIn()?enterApp():showForm('fLogin');
+    }
+  }catch{
+    isLoggedIn()?enterApp():showForm('fOffline');
+  }
 }
 
 function setBusy(prefix,on){
@@ -1153,7 +1181,7 @@ function doLogout(){
   document.getElementById('screenAuth').classList.remove('h');
   document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';
   document.getElementById('errLogin').classList.remove('s');
-  initAuth();
+  bootApp();
 }
 
 async function gantiPassword(){
@@ -2114,6 +2142,26 @@ function updateDbgPanel(){
   }
   document.getElementById('dbgTimerState').textContent = JSON.stringify(timersState, null, 2);
   document.getElementById('simDevDate').value = lastSyncedDateStr || new Date().toLocaleDateString('sv');
+  
+  const rcSel = document.getElementById('simDevRcSel');
+  if (rcSel) {
+    const curVal = rcSel.value;
+    rcSel.innerHTML = slaves.map(s => `<option value="${s.id}">${getRcName(s.id)} (ID:${s.id})</option>`).join('');
+    if (curVal) rcSel.value = curVal;
+  }
+}
+
+async function simDevStartQuickSession(seconds) {
+  const rcSel = document.getElementById('simDevRcSel');
+  if (!rcSel) return;
+  const rcId = parseInt(rcSel.value);
+  if (!rcId) { toast('❌ Pilih RC terlebih dahulu'); return; }
+  
+  toast(`⏳ Memulai sesi test ${seconds}s pada ${getRcName(rcId)}...`);
+  closeDlg('dlgDebug');
+  
+  setPending(rcId, `Test ${seconds}s`, 1, 99);
+  await sendCmd(rcId, 'ADD_TIME', seconds);
 }
 
 function simDevConn(s){
@@ -2157,12 +2205,7 @@ async function simDevDateTrigger(){
 }
 
 // ══ BOOT ═══════════════════════════════════════════════════════════
-// Cek session dulu — kalau sudah login, langsung masuk app tanpa ke halaman login
-if(isLoggedIn()){
-  enterApp();
-}else{
-  initAuth();
-}
+bootApp();
 </script>
 <!-- FLOATING DEV DEBUGGER BUTTON -->
 <button id="devDebugBtn" style="display:none; position:fixed; right:16px; top:76px; z-index:1000; width:44px; height:44px; border-radius:50%; background:var(--sf); border:1px solid var(--ac); color:var(--ac); font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 12px rgba(245,166,35,0.3); cursor:pointer;" onclick="openDlg('dlgDebug')">🪲</button>
