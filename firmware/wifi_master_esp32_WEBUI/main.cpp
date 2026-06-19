@@ -436,10 +436,20 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 }
 
 // ===== AUTO-SAVE STATS =====
-// Dipanggil di server-side saat sesi RC selesai (time_left habis atau STOP)
-// sehingga total main tersimpan meski browser sedang tutup/offline.
-// incrementSesi=true  → sesi selesai alami (totalDetik += detik, totalSesi += 1)
-// incrementSesi=false → hanya update totalDetik (untuk periodik save / STOP path)
+// autoSaveStats: dipanggil dari heartbeat handler (loop context, bukan ESP-NOW
+// callback) untuk menyimpan statistik per-RC ke /stats.json (LittleFS, atomic).
+//
+// Setiap RC (1, 2, 3, ...) punya entry sendiri di /stats.json. Key = slaveId.
+//   - incrementSesi=true:  sesi selesai alami (timer habis) → totalDetik += detik
+//                                                  DAN totalSesi += 1.
+//                                                  TIDAK dipanggil saat ⏹ STOP manual.
+//   - incrementSesi=false: periodik save selama RUNNING (tiap 30 detik), atau
+//                          STOP manual. Hanya update totalDetik (no totalSesi).
+//
+// Invariant: totalSesi HANYA increment pada natural ENDED. Manual ⏹ STOP
+// tidak menambah totalSesi (lihat AGENTS.md §8 "Manual Reset Timer must NOT count").
+// resetStatEsp32() (🗑 Reset Total Main) reset stats[id] = 0,0 — hanya untuk RC
+// yang di-request. RC lain tidak terpengaruh.
 bool autoSaveStats(int slaveId, int detik, bool incrementSesi) {
   if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
     Serial.println("[STATS] autoSaveStats: gagal ambil statsMutex, skip");

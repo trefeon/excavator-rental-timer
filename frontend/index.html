@@ -812,9 +812,12 @@ const DEF_PKG=[
 // ══ STATE ══════════════════════════════════════════════════════════
 let slaves=[],timers={},errCount=0,pollTmr=null,curTab='dashboard';
 let statsCache={}; // {rcId: {totalDetik, totalSesi}} — dari ESP32 SPIFFS (cumulative across sessions)
-// Note: there is NO `tfsAlreadyInBase` anymore. Total Main is computed as
-// `base.totalDetik + mfs` where mfs is master's live `sessionElapsed` (2s heartbeat).
-// Single source of truth = the master. See AGENTS.md §8.
+//
+// Total Main = (base.totalDetik) + (mfs). mfs = live sessionElapsed yang dikirim
+// master di /api/slaves (2s heartbeat cadence). Dashboard smooth-increment mfs
+// setiap detik secara lokal (1fps) supaya display halus, tapi MASTER tetap
+// satu-satunya source of truth — poll berikutnya akan overwrite mfs dengan
+// nilai master. Saat refresh, mfs di-restore dari localStorage (rc_mfs_<id>).
 let trxCache=[];   // array transaksi — dari ESP32 SPIFFS (3 hari terakhir)
 let trxLoading=false; // cegah load ganda
 let pMulaiId=null,pMulaiQIdx=null,pMulaiPkg=null;
@@ -838,6 +841,29 @@ const fmtAgo=ts=>{const s=Math.floor((Date.now()-ts)/1000);if(s<60)return s+'d';
 function toast(msg){
   const d=document.createElement('div');d.className='toast';d.textContent=msg;
   document.getElementById('tw').appendChild(d);setTimeout(()=>d.remove(),3000);
+}
+
+// ── Beep saat natural ended (Web Audio API) ─────────────────────────────
+// 1 bip 880Hz 200ms. Lazy-create AudioContext saat pertama kali dibutuhkan
+// (browser modern butuh interaksi user dulu sebelum izinkan audio).
+let _audioCtx = null;
+function playBeep(){
+  try {
+    if(!_audioCtx){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return; // browser tanpa Web Audio — silent fail
+      _audioCtx = new AC();
+    }
+    if(_audioCtx.state === 'suspended') _audioCtx.resume();
+    const osc = _audioCtx.createOscillator();
+    const gain = _audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880; // A5
+    gain.gain.value = 0.3;
+    osc.connect(gain).connect(_audioCtx.destination);
+    osc.start();
+    osc.stop(_audioCtx.currentTime + 0.2); // 200ms
+  } catch(e){ /* silent fail */ }
 }
 const openDlg=id=>{
   document.getElementById(id).classList.add('s');
@@ -964,6 +990,12 @@ function enterApp(){
   renderSetting();renderQPanel();updateProfile();poll();
   syncDateWithEsp32();
   loadStatsFromEsp32(); // muat total main dari ESP32 SPIFFS
+  // Restore mfs dari localStorage SEBELUM poll pertama selesai,
+  // supaya display langsung punya nilai (instant restore saat refresh).
+  restoreMfsFromStorage();
+  // Start smooth 1fps tick — increment mfs lokal untuk display smooth
+  // (master akan overwrite di poll berikutnya).
+  startSmoothTick();
   // Muat transaksi dulu, baru render laporan & restore tab agar data tidak hilang saat refresh
   loadTrxFromEsp32().then(()=>{
     renderLaporan();
@@ -1063,6 +1095,8 @@ async function resetStatEsp32(id,saCreds){
   // Reset live mfs juga — kalau ada sesi aktif, mfs harus di-nol-kan
   // supaya Total Main = base (0) + mfs (0) = 0 setelah reset.
   if(timers[String(id)]) timers[String(id)].mfs = 0;
+  // Bersihkan localStorage (reset total, jangan restore stale value)
+  try { localStorage.removeItem('rc_mfs_' + id); } catch(e){}
   updateStatEl(id);
   toast('🗑 Total main '+getRcName(id)+' direset');
 }
@@ -1075,6 +1109,8 @@ function updateStatEl(id){
   const base=getStat(id) || {totalDetik:0, totalSesi:0};
   // mfs = live sessionElapsed yang dikirim master di /api/slaves.
   // Single source of truth: master accumulator via heartbeat (2s cadence).
+  // Antara polls, mfs++ tiap detik secara lokal untuk smooth 1fps display.
+  // Poll berikutnya akan overwrite dengan nilai master (sumber kebenaran).
   // Defensive: clamp ke 0 kalau undefined / negatif / bukan number.
   let mfs = 0;
   if (timers[id] && !timers[id].sessionDone) {
@@ -1082,10 +1118,50 @@ function updateStatEl(id){
     if (typeof rawMfs === 'number' && rawMfs >= 0) mfs = rawMfs;
   }
   // Total Main = cumulative (dari /stats.json) + live current-session (dari master).
-  // Tidak ada math tfsAlreadyInBase lagi. Tidak ada double-count risk.
+  // Single source of truth: master. mfs di-overwrite setiap poll (3s) dengan
+  // nilai master. Smooth 1fps local increment di luar poll untuk display halus.
   const total = Math.max(0, (base.totalDetik || 0) + mfs);
   el.querySelector('.rs-total').textContent=fmtMMSS(total);
   el.querySelector('.rs-sesi').textContent = base.totalSesi || 0;
+}
+
+// ── Smooth 1fps local mfs increment + localStorage persistence ──────────
+// Setiap detik, increment mfs secara lokal untuk display yang smooth
+// (tanpa menunggu poll 3-detik). Poll berikutnya akan overwrite dengan
+// nilai master. localStorage menyimpan nilai terakhir untuk survive refresh.
+const SMOOTH_TICK_MS = 1000;
+let smoothTimer = null;
+function startSmoothTick(){
+  if(smoothTimer) return;
+  smoothTimer = setInterval(() => {
+    for(const s of slaves) {
+      const t = timers[s.id];
+      if(t && !t.sessionDone && t.mfs !== undefined) {
+        t.mfs++;
+        // Persist ke localStorage agar survive refresh.
+        // Key per-RC: rc_mfs_<id>. Pada refresh, applySlaves akan
+        // restore nilai ini sebelum poll pertama selesai.
+        try { localStorage.setItem('rc_mfs_' + s.id, String(t.mfs)); } catch(e){}
+        updateStatEl(s.id);
+      }
+    }
+  }, SMOOTH_TICK_MS);
+}
+function stopSmoothTick(){
+  if(smoothTimer){ clearInterval(smoothTimer); smoothTimer=null; }
+}
+
+// Restore mfs dari localStorage (untuk survive refresh)
+function restoreMfsFromStorage(){
+  for(const s of slaves){
+    try {
+      const stored = localStorage.getItem('rc_mfs_' + s.id);
+      if(stored !== null && timers[s.id] && !timers[s.id].sessionDone){
+        const v = parseInt(stored);
+        if(!isNaN(v) && v >= 0) timers[s.id].mfs = v;
+      }
+    } catch(e){}
+  }
 }
 
 // ══ MANAJEMEN KARYAWAN ══════════════════════════════════════════════
@@ -1194,6 +1270,7 @@ function konfirmasiLogout(){openDlg('dlgLogout');}
 function doLogout(){
   closeDlg('dlgLogout');
   authClear();clearTimeout(pollTmr);
+  stopSmoothTick(); // hentikan smooth mfs tick saat logout
   document.getElementById('screenApp').classList.remove('s');
   document.getElementById('screenAuth').classList.remove('h');
   document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';
@@ -1819,6 +1896,8 @@ function renderSetting(){
 
 // ══ POLLING ════════════════════════════════════════════════════════
 let pollInFlight=false;
+let lastSuccessfulPoll = 0; // millis() dari poll() yang berhasil. Untuk stale indicator.
+const STALE_THRESHOLD_MS = 10000; // 10 detik tanpa data = "stale"
 async function poll(){
   if(!isLoggedIn())return;
   if(pollInFlight)return; // cegah dua poll() berjalan bersamaan (overlap)
@@ -1834,9 +1913,25 @@ async function poll(){
     }
     if(res.status===503){setConn('rt');schedPoll(1500);return;}
     if(!res.ok)throw new Error();
-    const data=await res.json();errCount=0;setConn('on');applySlaves(data);schedPoll(POLL);
-  }catch{errCount++;setConn(errCount>=3?'of':'rt');schedPoll(Math.min(5000*Math.pow(2,errCount-1),30000));}
+    const data=await res.json();
+    errCount=0;
+    setConn('on');
+    lastSuccessfulPoll = millis();
+    applySlaves(data);
+    schedPoll(POLL);
+  }catch{
+    errCount++;
+    setConn(errCount>=3?'of':'rt');
+    schedPoll(Math.min(5000*Math.pow(2,errCount-1),30000));
+  }
   finally{pollInFlight=false;}
+}
+
+// Stale indicator: kalau >10 detik sejak poll terakhir berhasil, dashboard
+// nilai di-freeze (tidak update) — user tahu data mungkin tidak akurat.
+// Saat reconnect berhasil, lastSuccessfulPoll di-update dan display unfreeze.
+function isStale(){
+  return lastSuccessfulPoll > 0 && (millis() - lastSuccessfulPoll) > STALE_THRESHOLD_MS;
 }
 function schedPoll(ms){clearTimeout(pollTmr);pollTmr=setTimeout(poll,ms);}
 function setConn(s){
@@ -1902,17 +1997,19 @@ function applySlaves(data){
         clearTfsSnapshot(s.id);
         // Optimistic: show exact package time immediately before async fetch
         applyPackageToStats(s.id);
-        recordTrx(s.id);
-        if(timers[s.id]){
-          timers[s.id].sessionDone=true;
-          timers[s.id].tfs=0;
-          // Sesi selesai — master akan kirim final save, mfs jadi tidak relevan.
-          // Set ke 0 supaya display hanya menampilkan base (yang sudah berisi final).
-          timers[s.id].mfs = 0;
-        }
-        const prevTotal=(getStat(s.id).totalDetik||0);
-        loadStatsFromEsp32({[String(s.id)]:prevTotal});
-      }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
+         recordTrx(s.id);
+         if(timers[s.id]){
+           timers[s.id].sessionDone=true;
+           timers[s.id].tfs=0;
+           // Sesi selesai — master akan kirim final save, mfs jadi tidak relevan.
+           // Set ke 0 supaya display hanya menampilkan base (yang sudah berisi final).
+           timers[s.id].mfs = 0;
+         }
+         // Bersihkan localStorage agar tidak restore nilai stale di refresh berikutnya
+         try { localStorage.removeItem('rc_mfs_' + s.id); } catch(e){}
+         const prevTotal=(getStat(s.id).totalDetik||0);
+         loadStatsFromEsp32({[String(s.id)]:prevTotal});
+       }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
         // RC selesai secara alami (waktu habis).
         // Master heartbeat transition ke ENDED sudah auto-save full package + incSesi.
         // Master juga lapor sessionElapsed = sessionPackageTime. Tidak perlu push dari browser.
@@ -1924,6 +2021,10 @@ function applySlaves(data){
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
         timers[s.id].mfs = 0; // sesi selesai — Total Main = base only
+        // Bersihkan localStorage agar tidak restore nilai stale di refresh berikutnya
+        try { localStorage.removeItem('rc_mfs_' + s.id); } catch(e){}
+        // Bunyi beep untuk menandai sesi selesai alami
+        playBeep();
         const prevTotal2=(getStat(s.id).totalDetik||0);
         loadStatsFromEsp32({[String(s.id)]:prevTotal2}); // confirm/overwrite dari SPIFFS
       }
@@ -2036,25 +2137,26 @@ function buildCard(s,st,sisa,info){
     <span class="rc-pkg">${showInfo?(info.paket || info.menit+'m'):''}</span>
   </div>
   <div class="rc-stats" id="stats-${s.id}">
-    <div class="rs-item"><span class="rs-v rs-total">${fmtMMSS(stat.totalDetik)}</span><span class="rs-l">Total Main</span></div>
+    <div class="rs-item"><span class="rs-v rs-total">${fmtMMSS(stat.totalDetik)}</span><span class="rs-l" title="Total waktu main kumulatif untuk unit ini. Akumulasi dari semua sesi (termasuk yang di-cancel manual). Persist di /stats.json master + live session dari master.">Total Main</span></div>
     <div class="rs-div"></div>
-    <div class="rs-item"><span class="rs-v rs-sesi">${stat.totalSesi}</span><span class="rs-l">Sesi</span></div>
+    <div class="rs-item"><span class="rs-v rs-sesi">${stat.totalSesi}</span><span class="rs-l" title="Jumlah sesi yang selesai alami (timer habis sendiri). 1 sesi = 1 customer bayar 1 paket. Manual ⏹ tidak menambah. 🗑 Reset Total Main mereset ke 0.">Sesi</span></div>
   </div>
   <div class="rc-acts">${buildBtns(s,st)}</div>`;
 }
 function buildBtns(s,st){
-  if(st==='offline')return`<button class="btn b-stop" disabled style="flex:1;">⚫ Offline</button>`;
+  // Slave offline: tampilkan indikator offline, semua action button disabled
+  if(st==='offline')return`<button class="btn b-stop" disabled style="flex:1;" title="Slave tidak terhubung ke master. Tunggu reconnect.">⚫ Offline</button>`;
   if(st==='stopped')return`
-    <button class="btn b-start" onclick="bukaMulai(${s.id})">▶ Mulai</button>
-    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})">🗑</button>`;
+    <button class="btn b-start" onclick="bukaMulai(${s.id})" title="Mulai sesi baru. Timer akan jalan sesuai paket yang dipilih.">▶ Mulai</button>
+    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})" title="Reset Total Main + Sesi RC ini ke 0. Transaksi historis TIDAK terhapus. Butuh password SA.">🗑</button>`;
   if(st==='running')return`
-    <button class="btn b-pause" onclick="sendCmd(${s.id},'PAUSE',0)">⏸ Pause</button>
-    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})">⏹</button>
-    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})">🗑</button>`;
+    <button class="btn b-pause" onclick="sendCmd(${s.id},'PAUSE',0)" title="Pause timer. Sesi tetap aktif, bisa dilanjutkan dengan ▶ Lanjut.">⏸ Pause</button>
+    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})" title="Cancel sesi sekarang. Timer ke 00:00, Sesi tidak ditambah, tidak masuk laporan keuangan.">⏹</button>
+    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})" title="Reset Total Main + Sesi RC ini ke 0. Transaksi historis TIDAK terhapus. Butuh password SA.">🗑</button>`;
   if(st==='paused')return`
-    <button class="btn b-resume" onclick="sendCmd(${s.id},'RESUME',0)">▶ Lanjut</button>
-    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})">⏹</button>
-    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})">🗑</button>`;
+    <button class="btn b-resume" onclick="sendCmd(${s.id},'RESUME',0)" title="Lanjutkan timer yang di-pause. Sesi tetap aktif.">▶ Lanjut</button>
+    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})" title="Cancel sesi sekarang. Timer ke 00:00, Sesi tidak ditambah, tidak masuk laporan keuangan.">⏹</button>
+    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})" title="Reset Total Main + Sesi RC ini ke 0. Transaksi historis TIDAK terhapus. Butuh password SA.">🗑</button>`;
   return'';
 }
 function updateSummary(){
@@ -2123,6 +2225,8 @@ else if(cmd==='STOP'){
         // Manual STOP — display = base only (no current-session contribution).
         // mfs=0 ensures Total Main drops to whatever's saved, not the live mfs.
         if(timers[id]) timers[id].mfs = 0;
+        // Bersihkan localStorage (sesi cancelled, jangan restore stale value)
+        try { localStorage.removeItem('rc_mfs_' + id); } catch(e){}
         stopTmr(id);
         if(timers[id]) timers[id].sisa = 0;
         const prevTotalStop = (getStat(id).totalDetik || 0);

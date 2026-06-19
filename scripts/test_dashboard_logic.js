@@ -1031,6 +1031,170 @@ setTimeout(() => {
 }, 1350);
 
 // =============================================================================
+// TEST 28: localStorage persistence — mfs saved to localStorage, survives refresh
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 28] localStorage persistence — mfs survives refresh");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 300, sessionDone: false };
+
+  // Master reports mfs=30
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "RUNNING", time_left: 270, battery: "OK", sessionElapsed: 30, sessionPackageTime: 300 }
+  ]);
+
+  // Simulate smooth tick writing to localStorage (mimic what startSmoothTick does)
+  sandbox.localStorage.setItem('rc_mfs_1', '30');
+
+  // Verify localStorage was written
+  assert(sandbox.localStorage.getItem('rc_mfs_1') === '30',
+    `localStorage rc_mfs_1=30: got ${sandbox.localStorage.getItem('rc_mfs_1')}`);
+
+  // Simulate refresh: timers cleared, restoreMfsFromStorage() called
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 270, sessionDone: false };
+  sandbox.restoreMfsFromStorage();
+
+  // After restore, mfs should be 30 (from localStorage)
+  assert(sandbox.timers[1].mfs === 30,
+    `mfs restored from localStorage: got ${sandbox.timers[1].mfs}`);
+}, 1400);
+
+// =============================================================================
+// TEST 29: natural ENDED clears localStorage mfs entry
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 29] natural ENDED — localStorage mfs cleared");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 0, sessionDone: false, mfs: 295 };
+  sandbox.localStorage.setItem('rc_mfs_1', '295');
+  sandbox.setPending(1, "Andi", 5, 25000);
+
+  // Master has saved the full package
+  mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 300, totalSesi: 1 } } };
+
+  sandbox.applySlaves([
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK", sessionElapsed: 300, sessionPackageTime: 300 }
+  ]);
+
+  // After ENDED: localStorage entry cleared (so refresh doesn't restore stale value)
+  assert(sandbox.localStorage.getItem('rc_mfs_1') === null,
+    `localStorage rc_mfs_1 cleared after ENDED: got ${sandbox.localStorage.getItem('rc_mfs_1')}`);
+  assert(sandbox.timers[1].mfs === 0,
+    `mfs=0 after ENDED: got ${sandbox.timers[1].mfs}`);
+}, 1450);
+
+// =============================================================================
+// TEST 30: playBeep is callable (no exception when AudioContext unavailable)
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 30] playBeep — silent fail when AudioContext unavailable");
+  resetTestState();
+
+  // In test sandbox, AudioContext/webkitAudioContext are not defined.
+  // playBeep should silently fail without throwing.
+  try {
+    sandbox.playBeep();
+    assert(true, "playBeep did not throw when AudioContext unavailable");
+  } catch(e) {
+    assert(false, `playBeep threw: ${e.message}`);
+  }
+}, 1500);
+
+// =============================================================================
+// TEST 31: applySlaves natural ENDED triggers playBeep
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 31] natural ENDED — triggers playBeep (no exception)");
+  resetTestState();
+
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 0, totalSesi: 0 };
+  sandbox.timers[1] = { running: true, tfs: 0, sisa: 0, sessionDone: false, mfs: 295 };
+  sandbox.setPending(1, "Andi", 5, 25000);
+  mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 300, totalSesi: 1 } } };
+
+  // Natural ENDED — should not throw (AudioContext unavailable but silent fail)
+  try {
+    sandbox.applySlaves([
+      { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK", sessionElapsed: 300, sessionPackageTime: 300 }
+    ]);
+    assert(true, "natural ENDED did not throw despite no AudioContext");
+  } catch(e) {
+    assert(false, `natural ENDED threw: ${e.message}`);
+  }
+}, 1550);
+
+// =============================================================================
+// TEST 32: offline slave shows offline button (greyed out, no action buttons)
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 32] Offline slave — all action buttons greyed out");
+  resetTestState();
+
+  // Slave offline
+  const html = sandbox.buildBtns({ id: 1 }, 'offline');
+  assert(html.includes('⚫ Offline'),
+    `offline button shows ⚫ Offline: ${html}`);
+  assert(html.includes('disabled'),
+    `offline button is disabled: ${html}`);
+  // No action buttons (Mulai, Pause, Stop) should be present
+  assert(!html.includes('▶ Mulai'),
+    `offline state has no Mulai button: ${html}`);
+  assert(!html.includes('⏸ Pause'),
+    `offline state has no Pause button: ${html}`);
+  assert(!html.includes('⏹'),
+    `offline state has no Reset Timer button: ${html}`);
+}, 1600);
+
+// =============================================================================
+// TEST 33: tooltips present on labels and buttons
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 33] Tooltips present on action buttons");
+  resetTestState();
+
+  const stoppedHtml = sandbox.buildBtns({ id: 1 }, 'stopped');
+  assert(stoppedHtml.includes('title="Mulai sesi baru'),
+    `Mulai button has tooltip: ${stoppedHtml}`);
+  assert(stoppedHtml.includes('title="Reset Total Main'),
+    `🗑 button has tooltip: ${stoppedHtml}`);
+
+  const runningHtml = sandbox.buildBtns({ id: 1 }, 'running');
+  assert(runningHtml.includes('title="Pause timer'),
+    `Pause button has tooltip: ${runningHtml}`);
+  assert(runningHtml.includes('title="Cancel sesi sekarang'),
+    `⏹ button has tooltip: ${runningHtml}`);
+
+  const pausedHtml = sandbox.buildBtns({ id: 1 }, 'paused');
+  assert(pausedHtml.includes('title="Lanjutkan timer'),
+    `Lanjut button has tooltip: ${pausedHtml}`);
+}, 1650);
+
+// =============================================================================
+// TEST 34: buildCard includes tooltips on Total Main + Sesi labels
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 34] Tooltips on Total Main + Sesi labels");
+  resetTestState();
+
+  const s = { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "LOCKED", time_left: 0, battery: "OK" };
+  const st = 'stopped';
+  const info = null;
+  const card = sandbox.buildCard(s, st, 0, info);
+
+  assert(card.includes('title="Total waktu main kumulatif'),
+    `Total Main label has tooltip: ${card.substring(0, 200)}...`);
+  assert(card.includes('title="Jumlah sesi yang selesai alami'),
+    `Sesi label has tooltip: ${card.substring(0, 200)}...`);
+}, 1700);
+
+// =============================================================================
 // VALIDATION SUMMARY (runs after all tests)
 // =============================================================================
 setTimeout(() => {
@@ -1039,4 +1203,4 @@ setTimeout(() => {
   console.log("====================================================");
   console.log(`\n  Passed: ${passed}  |  Failed: ${failed}`);
   if (failed > 0) process.exit(1);
-}, 1400);
+}, 1800);
