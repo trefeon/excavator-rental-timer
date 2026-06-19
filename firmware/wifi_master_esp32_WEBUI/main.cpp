@@ -299,13 +299,25 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             // Deteksi transisi ke ENDED → auto-save stats
             // PENTING: callback ESP-NOW berjalan di WiFi task, jadi JANGAN tulis
             // SPIFFS di sini. Cukup masukkan job ke antrian (operasi cepat,
-            // non-blocking) lalu reset counter SAMBIL tetap memegang mutex —
-            // tidak ada lagi lepas/ambil-ulang mutex di tengah callback.
+            // non-blocking) lalu reset counter SAMBIL tetap memegang mutex.
             // Skip kalau sudah di-STOP manual (sudah disimpan via residual flush).
+            //
+            // FIX (sesi tidak nambah): JANGAN gate dengan sessionElapsed>0.
+            // periodic save terus menguras sessionElapsed ke ~0 selama sesi,
+            // jadi saat ENDED nilainya sering 0 → dulu job tak terkirim → sesi
+            // tak pernah bertambah. Sekarang selalu kirim job saat selesai alami.
+            //
+            // FIX (total tidak sesuai): tambahkan segmen final. Diff hanya dihitung
+            // pada RUNNING→RUNNING, sehingga detik terakhir (dari time_left RUNNING
+            // terakhir turun ke 0) tak pernah masuk hitungan. slaves[i].time_left
+            // di sini masih nilai LAMA (belum ditimpa pkt.timeLeft di baris bawah).
             if (slaves[i].state != "ENDED" && newState == "ENDED") {
-              if (!slaves[i].stoppedManually && slaves[i].sessionElapsed > 0 && statsQueue) {
-                StatsJob job = { slaves[i].id, slaves[i].sessionElapsed, true };
-                xQueueSend(statsQueue, &job, 0); // sesi selesai alami → increment sesi
+              if (!slaves[i].stoppedManually && statsQueue) {
+                int residual = slaves[i].sessionElapsed;
+                if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0)
+                  residual += slaves[i].time_left; // segmen final yang tak terhitung diff
+                StatsJob job = { slaves[i].id, residual, true }; // detik boleh 0; sesi tetap +1
+                xQueueSend(statsQueue, &job, 0);
               }
               slaves[i].sessionElapsed  = 0;
               slaves[i].stoppedManually = false; // reset flag
@@ -401,7 +413,10 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 // Dipanggil di server-side saat sesi RC selesai (time_left habis atau STOP)
 // sehingga total main tersimpan meski browser sedang tutup/offline.
 bool autoSaveStats(int slaveId, int detik) {
-  if (detik <= 0) return true;
+  // CATATAN: detik bisa 0 karena periodic save sudah menguras sessionElapsed
+  // selama sesi berjalan. Namun INI dipanggil hanya saat sesi selesai alami,
+  // jadi totalSesi HARUS tetap +1 walau detik==0. (Dulu fungsi ini keluar lebih
+  // awal saat detik<=0 → sesi tidak pernah bertambah — itulah bug-nya.)
   if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
     Serial.println("[STATS] autoSaveStats: gagal ambil statsMutex, skip");
     return false;
@@ -412,8 +427,9 @@ bool autoSaveStats(int slaveId, int detik) {
     stats[id]["totalDetik"] = 0;
     stats[id]["totalSesi"]  = 0;
   }
-  stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
-  stats[id]["totalSesi"]  = stats[id]["totalSesi"].as<int>() + 1;
+  if (detik > 0)
+    stats[id]["totalDetik"] = stats[id]["totalDetik"].as<int>() + detik;
+  stats[id]["totalSesi"]  = stats[id]["totalSesi"].as<int>() + 1; // selalu +1
   bool ok = saveJsonFile("/stats.json", stats);
   Serial.printf("[STATS] Auto-save: RC %d +%ds (total=%ds, sesi=%d) ok=%d\n",
                 slaveId, detik,
