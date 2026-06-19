@@ -326,13 +326,22 @@ button{cursor:pointer;}
 .btn-dng{flex:2;padding:12px;background:var(--rd);border:none;
   border-radius:var(--rs);color:#fff;font-size:13px;font-weight:700;}
 /* package picker */
-.pkg-g{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:13px;}
-.pkg-b{background:var(--s2);border:1.5px solid var(--bd);border-radius:var(--rs);
-  padding:8px 3px;font-size:9px;font-weight:600;color:var(--t2);
-  text-align:center;line-height:1.4;min-height:52px;}
-.pkg-b.sel{background:rgba(245,166,35,.12);border-color:var(--ac);color:var(--ac);}
-.pkg-dur{font-size:13px;font-weight:800;display:block;}
-.pkg-rp{font-size:8px;color:var(--t2);display:block;margin-top:1px;}
+.pkg-g{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:13px;}
+.pkg-b{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  background:var(--s2);border:1.5px solid var(--bd);border-radius:12px;
+  padding:13px 6px;min-height:64px;cursor:pointer;overflow:hidden;color:var(--tx);
+  transition:transform .12s ease,border-color .15s ease,background .15s ease,box-shadow .15s ease;}
+.pkg-b:hover{border-color:var(--ac);transform:translateY(-1px);}
+.pkg-b:active{transform:translateY(0);}
+.pkg-b.sel{background:linear-gradient(160deg,rgba(245,166,35,.16),rgba(245,166,35,.04));
+  border-color:var(--ac);box-shadow:0 0 0 3px rgba(245,166,35,.13);}
+.pkg-b.sel::after{content:'✓';position:absolute;top:4px;right:7px;font-size:10px;font-weight:800;color:var(--ac);}
+.pkg-tag{font-size:7.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--t2);background:rgba(255,255,255,.06);border-radius:5px;padding:1px 6px;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pkg-dur{font-size:14px;font-weight:800;color:var(--tx);line-height:1.1;text-align:center;}
+.pkg-b.sel .pkg-dur{color:var(--ac);}
+.pkg-rp{font-size:10px;font-weight:700;color:var(--gn);line-height:1;white-space:nowrap;}
 .pkg-b.sel .pkg-rp{color:var(--a2);}
 /* queue picker in dialog */
 .q-pick-list{display:flex;flex-direction:column;gap:5px;margin-bottom:10px;max-height:160px;overflow-y:auto;}
@@ -384,7 +393,7 @@ button{cursor:pointer;}
       <div style="font-size:28px;margin-bottom:8px;">⚠️</div>
       <div style="font-size:13px;font-weight:700;margin-bottom:5px;">ESP32 Tidak Terjangkau</div>
       <div style="font-size:11px;color:var(--t2);margin-bottom:14px;">Sambungkan HP ke WiFi <b>ExcavatorMaster</b> lalu coba lagi.</div>
-      <button class="auth-btn" onclick="bootApp()">🔄 Coba Lagi</button>
+      <button class="auth-btn" onclick="initAuth()">🔄 Coba Lagi</button>
     </div>
   </div>
 
@@ -395,7 +404,7 @@ button{cursor:pointer;}
     <div class="auth-info">📡 Akun disimpan di ESP32 SPIFFS — bisa login dari HP manapun.</div>
     <div class="auth-err" id="errReg"></div>
     <label class="al">Username</label>
-    <input class="ai" id="regUser" type="text" value="admin" readonly style="opacity:0.75;cursor:not-allowed;" autocapitalize="none">
+    <input class="ai" id="regUser" type="text" placeholder="cth: admin" autocapitalize="none">
     <label class="al">Password</label>
     <div class="pw-w"><input class="ai" id="regPass" type="password" placeholder="Min. 4 karakter">
       <button class="eyebtn" onclick="togEye('regPass',this)">👁</button></div>
@@ -489,7 +498,7 @@ button{cursor:pointer;}
     <div class="pf-card" style="padding:18px;text-align:center;">
       <div class="pf-logo">🎮</div>
       <div style="font-size:16px;font-weight:800;margin-bottom:3px;">RentalRC</div>
-      <div style="font-size:11px;color:var(--t2);">Web Dashboard v1.2.0-latest • ESP32 Master WiFi</div>
+      <div style="font-size:11px;color:var(--t2);">Web Dashboard v1.1 • ESP32 Master WiFi</div>
     </div>
     <div class="sec">Akun</div>
     <div class="pf-card" id="pfAccCard">
@@ -550,7 +559,7 @@ button{cursor:pointer;}
       <button class="btn-ok" style="width:100%;padding:12px;" onclick="gantiPassword()">🔒 Simpan Password ke ESP32</button>
     </div>
     <div style="padding:14px 0 6px;text-align:center;font-size:10px;color:var(--t3);">
-      RentalRC v1.2.0-latest • ESP32 192.168.4.1
+      RentalRC v1.1 • ESP32 192.168.4.1
     </div>
   </div>
 
@@ -738,53 +747,6 @@ button{cursor:pointer;}
   </div>
 </div>
 
-<!-- Developer Debugger Panel -->
-<div class="ov" id="dlgDebug">
-  <div class="dlg"><div class="dlg-h"></div>
-    <div class="dt">🪲 Dev Debugger Panel</div>
-    <div class="ds">Inspeksi state in-memory dashboard &amp; simulasi aksi.</div>
-    
-    <label class="lbl">Simulasi Jaringan</label>
-    <div style="display:flex; gap:6px; margin-bottom:12px;">
-      <button class="btn b-stop" onclick="simDevConn('of')" style="flex:1;">Simulate Offline</button>
-      <button class="btn b-start" onclick="simDevConn('on')" style="flex:1;">Simulate Online</button>
-    </div>
-
-    <label class="lbl">Simulasi Tanggal (YYYY-MM-DD)</label>
-    <div style="display:flex; gap:6px; margin-bottom:12px;">
-      <input class="inp" id="simDevDate" type="text" placeholder="YYYY-MM-DD" style="margin:0; flex:2;">
-      <button class="btn b-resume" onclick="simDevDateTrigger()" style="flex:1;">Trigger Reset</button>
-    </div>
-
-    <label class="lbl">Simulasi Sesi Cepat (Harga Rp 99)</label>
-    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px; background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:10px;">
-      <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
-        <span style="font-size:10px; color:var(--t2); flex:1;">Pilih RC:</span>
-        <select id="simDevRcSel" style="flex:2; background:var(--s3); border:1px solid var(--bd); border-radius:5px; color:var(--tx); font-size:10px; padding:4px; outline:none;"></select>
-      </div>
-      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:5px;">
-        <button class="btn b-start" onclick="simDevStartQuickSession(5)" style="font-size:8px; padding:6px 2px; min-height:24px;">5 Detik</button>
-        <button class="btn b-start" onclick="simDevStartQuickSession(10)" style="font-size:8px; padding:6px 2px; min-height:24px;">10 Detik</button>
-        <button class="btn b-start" onclick="simDevStartQuickSession(15)" style="font-size:8px; padding:6px 2px; min-height:24px;">15 Detik</button>
-        <button class="btn b-start" onclick="simDevStartQuickSession(20)" style="font-size:8px; padding:6px 2px; min-height:24px;">20 Detik</button>
-        <button class="btn b-start" onclick="simDevStartQuickSession(25)" style="font-size:8px; padding:6px 2px; min-height:24px;">25 Detik</button>
-        <button class="btn b-start" onclick="simDevStartQuickSession(30)" style="font-size:8px; padding:6px 2px; min-height:24px;">30 Detik</button>
-      </div>
-    </div>
-
-    <label class="lbl">Inspeksi State LocalStorage</label>
-    <div style="background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:8px; margin-bottom:10px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:10px; white-space:pre-wrap;" id="dbgLocalState"></div>
-
-    <label class="lbl">Inspeksi State Timers</label>
-    <div style="background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:8px; margin-bottom:10px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:10px; white-space:pre-wrap;" id="dbgTimerState"></div>
-
-    <div class="da">
-      <button class="btn-c" style="flex:1;" onclick="closeDlg('dlgDebug')">Tutup</button>
-      <button class="btn-dng" style="flex:1;" onclick="simDevResetAll()">Reset State</button>
-    </div>
-  </div>
-</div>
-
 <div class="toast-w" id="tw"></div>
 
 <script>
@@ -811,13 +773,8 @@ const DEF_PKG=[
 
 // ══ STATE ══════════════════════════════════════════════════════════
 let slaves=[],timers={},errCount=0,pollTmr=null,curTab='dashboard';
-let statsCache={}; // {rcId: {totalDetik, totalSesi}} — dari ESP32 SPIFFS (cumulative across sessions)
-//
-// Total Main = (base.totalDetik) + (mfs). mfs = live sessionElapsed yang dikirim
-// master di /api/slaves (2s heartbeat cadence). Dashboard smooth-increment mfs
-// setiap detik secara lokal (1fps) supaya display halus, tapi MASTER tetap
-// satu-satunya source of truth — poll berikutnya akan overwrite mfs dengan
-// nilai master. Saat refresh, mfs di-restore dari localStorage (rc_mfs_<id>).
+let statsCache={}; // {rcId: {totalDetik, totalSesi}} — dari ESP32 SPIFFS
+let tfsAlreadyInBase={}; // {rcId: tfs} — tfs yang sudah masuk ke statsCache.totalDetik saat load
 let trxCache=[];   // array transaksi — dari ESP32 SPIFFS (3 hari terakhir)
 let trxLoading=false; // cegah load ganda
 let pMulaiId=null,pMulaiQIdx=null,pMulaiPkg=null;
@@ -835,6 +792,9 @@ const fmtMMSS=d=>{d=Math.max(0,Math.floor(+d||0));const h=Math.floor(d/3600),m=M
 const getStat=id=>statsCache[String(id)]||{totalDetik:0,totalSesi:0};
 const fmtTime=s=>{if(!s||s<=0)return'--:--';return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');};
 const fmtDur=m=>m<60?m+'m':Math.floor(m/60)+'j'+(m%60?m%60+'m':'');
+// Durasi rapi & presisi dari angka menit (sumber kebenaran), tanpa singkatan:
+//   5 → "5 Menit", 60 → "1 Jam", 90 → "1 Jam 30 Menit"
+const fmtDurNice=m=>{m=parseInt(m)||0;if(m<60)return m+' Menit';const j=Math.floor(m/60),s=m%60;return j+' Jam'+(s?' '+s+' Menit':'');};
 const fmtTgl=ts=>{const d=new Date(ts);return d.toLocaleDateString('id-ID',{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});};
 const fmtAgo=ts=>{const s=Math.floor((Date.now()-ts)/1000);if(s<60)return s+'d';if(s<3600)return Math.floor(s/60)+'m';return Math.floor(s/3600)+'j';};
 
@@ -842,38 +802,12 @@ function toast(msg){
   const d=document.createElement('div');d.className='toast';d.textContent=msg;
   document.getElementById('tw').appendChild(d);setTimeout(()=>d.remove(),3000);
 }
-
-// ── Beep saat natural ended (Web Audio API) ─────────────────────────────
-// 1 bip 880Hz 200ms. Lazy-create AudioContext saat pertama kali dibutuhkan
-// (browser modern butuh interaksi user dulu sebelum izinkan audio).
-let _audioCtx = null;
-function playBeep(){
-  try {
-    if(!_audioCtx){
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if(!AC) return; // browser tanpa Web Audio — silent fail
-      _audioCtx = new AC();
-    }
-    if(_audioCtx.state === 'suspended') _audioCtx.resume();
-    const osc = _audioCtx.createOscillator();
-    const gain = _audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 880; // A5
-    gain.gain.value = 0.3;
-    osc.connect(gain).connect(_audioCtx.destination);
-    osc.start();
-    osc.stop(_audioCtx.currentTime + 0.2); // 200ms
-  } catch(e){ /* silent fail */ }
-}
-const openDlg=id=>{
-  document.getElementById(id).classList.add('s');
-  if(id==='dlgDebug') updateDbgPanel();
-};
+const openDlg=id=>document.getElementById(id).classList.add('s');
 const closeDlg=id=>document.getElementById(id).classList.remove('s');
 
 // Close dialogs on overlay click
 ['dlgAddQ','dlgCallQ','dlgMulai','dlgResetTimer','dlgResetTotal','dlgEditTarif',
- 'dlgEditRcName','dlgLogout','dlgConfirm','dlgTambahKaryawan','dlgHapusKaryawan','dlgDebug'].forEach(id=>{
+ 'dlgEditRcName','dlgLogout','dlgConfirm','dlgTambahKaryawan','dlgHapusKaryawan'].forEach(id=>{
   document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeDlg(id);});
 });
 
@@ -893,26 +827,15 @@ function showForm(id){
   });
 }
 
-async function bootApp(){
+async function initAuth(){
   showForm('fChecking');
   try{
     const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),6000);
     const res=await fetch(BASE+'/api/auth',{signal:ctrl.signal});
     if(!res.ok)throw new Error();
     const d=await res.json();
-    if(!d.exists){
-      // Master is freshly reset! Clean everything
-      localStorage.clear();
-      timers={};
-      statsCache={};
-      toast('⚠️ Master direset: Semua cache lokal dibersihkan');
-      showForm('fRegister');
-    }else{
-      isLoggedIn()?enterApp():showForm('fLogin');
-    }
-  }catch{
-    isLoggedIn()?enterApp():showForm('fOffline');
-  }
+    d.exists?showForm('fLogin'):showForm('fRegister');
+  }catch{showForm('fOffline');}
 }
 
 function setBusy(prefix,on){
@@ -938,7 +861,6 @@ async function doRegister(){
     const d=await res.json();
     if(d.ok===1){
       authSet(SS_USER,u);authSet(SS_PASS,p);authSet(SS_ROLE,'sa');
-      toast('✅ Akun SuperAdmin berhasil dibuat');
       enterApp();
     }else{err.textContent='Gagal: '+(d.code||'error');err.classList.add('s');}
   }catch{err.textContent='Gagal terhubung ke ESP32.';err.classList.add('s');}
@@ -953,20 +875,15 @@ async function doLogin(){
   if(!u||!p){err.textContent='Username dan password wajib diisi.';err.classList.add('s');return;}
   setBusy('Login',true);
   try{
+    // Coba login — server mengembalikan role ('sa' atau 'kr')
     const res=await fetch(BASE+'/api/auth/login',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     const d=await res.json();
     if(d.ok===1){
-      const role=d.role||'kr'; 
+      const role=d.role||'kr'; // server harus kembalikan field role: 'sa' atau 'kr'
       authSet(SS_USER,u);authSet(SS_PASS,p);authSet(SS_ROLE,role);
       enterApp();
-    }else{
-      if(d.code==='LOCKED'){err.textContent='Terlalu banyak percobaan salah. Coba lagi dalam 30 detik.';}
-      else if(d.code==='USER_NOT_FOUND'){err.textContent='Username tidak terdaftar.';}
-      else if(d.code==='WRONG_PASSWORD'){err.textContent='Password salah.';}
-      else{err.textContent='Username atau password salah.';}
-      err.classList.add('s');
-    }
+    }else{err.textContent='Username atau password salah.';err.classList.add('s');}
   }catch{err.textContent='Gagal terhubung ke ESP32.';err.classList.add('s');}
   setBusy('Login',false);
 }
@@ -984,18 +901,8 @@ function enterApp(){
   if(document.getElementById('cardChgPass'))document.getElementById('cardChgPass').style.display=isSA?'':'none';
   if(document.getElementById('secKaryawan'))document.getElementById('secKaryawan').style.display=isSA?'':'none';
   if(document.getElementById('cardKaryawan'))document.getElementById('cardKaryawan').style.display=isSA?'':'none';
-  if(isDev){
-    document.getElementById('devDebugBtn').style.display='flex';
-  }
   renderSetting();renderQPanel();updateProfile();poll();
-  syncDateWithEsp32();
   loadStatsFromEsp32(); // muat total main dari ESP32 SPIFFS
-  // Restore mfs dari localStorage SEBELUM poll pertama selesai,
-  // supaya display langsung punya nilai (instant restore saat refresh).
-  restoreMfsFromStorage();
-  // Start smooth 1fps tick — increment mfs lokal untuk display smooth
-  // (master akan overwrite di poll berikutnya).
-  startSmoothTick();
   // Muat transaksi dulu, baru render laporan & restore tab agar data tidak hilang saat refresh
   loadTrxFromEsp32().then(()=>{
     renderLaporan();
@@ -1017,27 +924,38 @@ function isSA(){return getRole()==='sa';}
 
 // ══ STATS ESP32 SPIFFS (/stats.json) ════════════════════════════════
 
-// prevTotals: {rcId: expectedMinTotalDetik} — if the fetched value is still
-// equal to the old value, the SPIFFS write hasn't landed yet; retry once.
-async function loadStatsFromEsp32(prevTotals, _retry){
+async function loadStatsFromEsp32(){
+  // Catat tfs masing-masing slave SEBELUM await — ini "snapshot sinkron"
+  // dari sesi yang sedang berjalan saat fungsi ini dipanggil.
+  // Setelah await, tfs bisa sudah berubah (sesi baru START), jadi kita
+  // hanya update tfsAlreadyInBase kalau tfs belum berganti sesi.
+  const tfsBefore={};
+  slaves.forEach(s=>{
+    tfsBefore[String(s.id)]=(timers[s.id]&&!timers[s.id].sessionDone)
+      ? (timers[s.id].tfs||0) : 0;
+  });
   try{
     const res=await fetch(BASE+'/api/stats',{headers:authHdr()});
-    if(!res.ok) { statsCache = {}; return; }
+    if(!res.ok){statsCache={};return;}
     const data=await res.json();
-    // Retry once (600ms) if totalDetik hasn't been updated yet for any RC in prevTotals
-    if(!_retry && prevTotals){
-      const needsRetry=Object.entries(prevTotals).some(([id,minVal])=>{
-        const cur=(data[id]&&data[id].totalDetik)||0;
-        return cur<minVal;
-      });
-      if(needsRetry){
-        setTimeout(()=>loadStatsFromEsp32(null,true),600);
-        return;
-      }
-    }
     statsCache=data||{};
-    // Total Main is now driven by master's live sessionElapsed (set in applySlaves).
-    // This function only needs to refresh statsCache (used for Sesi display).
+    // Update tfsAlreadyInBase hanya untuk slave yang sesinya BELUM berganti
+    // sejak sebelum await. Tandanya: sessionDone masih false DAN tfs yang
+    // sekarang >= tfs sebelum await (sesi masih sama, hanya bertambah).
+    // Kalau tfs < tfsBefore → sesi baru sudah START (tfs direset ke 0 lalu
+    // naik lagi) → jangan timpa, biarkan tfsAlreadyInBase tetap 0.
+    slaves.forEach(s=>{
+      const key=String(s.id);
+      const tfsNow=(timers[s.id]&&!timers[s.id].sessionDone)
+        ? (timers[s.id].tfs||0) : 0;
+      const before=tfsBefore[key]||0;
+      if(tfsNow>=before){
+        // Sesi sama (atau timer mati) — aman update
+        tfsAlreadyInBase[key]=tfsNow;
+      }
+      // else: sesi baru sudah jalan, tfsAlreadyInBase sudah di-set 0
+      //       oleh ADD_TIME handler — biarkan saja
+    });
     renderAllStatEls();
   }catch{
     statsCache={};
@@ -1091,12 +1009,6 @@ async function resetStatEsp32(id,saCreds){
   // supaya UI tidak menampilkan 0 padahal di server gagal/belum tersimpan.
   if(!statsCache[String(id)])statsCache[String(id)]={totalDetik:0,totalSesi:0};
   statsCache[String(id)].totalDetik=0;
-  statsCache[String(id)].totalSesi=0;
-  // Reset live mfs juga — kalau ada sesi aktif, mfs harus di-nol-kan
-  // supaya Total Main = base (0) + mfs (0) = 0 setelah reset.
-  if(timers[String(id)]) timers[String(id)].mfs = 0;
-  // Bersihkan localStorage (reset total, jangan restore stale value)
-  try { localStorage.removeItem('rc_mfs_' + id); } catch(e){}
   updateStatEl(id);
   toast('🗑 Total main '+getRcName(id)+' direset');
 }
@@ -1106,62 +1018,14 @@ function renderAllStatEls(){slaves.forEach(s=>updateStatEl(s.id));}
 function updateStatEl(id){
   const el=document.getElementById('stats-'+id);
   if(!el)return;
-  const base=getStat(id) || {totalDetik:0, totalSesi:0};
-  // mfs = live sessionElapsed yang dikirim master di /api/slaves.
-  // Single source of truth: master accumulator via heartbeat (2s cadence).
-  // Antara polls, mfs++ tiap detik secara lokal untuk smooth 1fps display.
-  // Poll berikutnya akan overwrite dengan nilai master (sumber kebenaran).
-  // Defensive: clamp ke 0 kalau undefined / negatif / bukan number.
-  let mfs = 0;
-  if (timers[id] && !timers[id].sessionDone) {
-    const rawMfs = timers[id].mfs;
-    if (typeof rawMfs === 'number' && rawMfs >= 0) mfs = rawMfs;
-  }
-  // Total Main = cumulative (dari /stats.json) + live current-session (dari master).
-  // Single source of truth: master. mfs di-overwrite setiap poll (3s) dengan
-  // nilai master. Smooth 1fps local increment di luar poll untuk display halus.
-  const total = Math.max(0, (base.totalDetik || 0) + mfs);
-  el.querySelector('.rs-total').textContent=fmtMMSS(total);
-  el.querySelector('.rs-sesi').textContent = base.totalSesi || 0;
-}
-
-// ── Smooth 1fps local mfs increment + localStorage persistence ──────────
-// Setiap detik, increment mfs secara lokal untuk display yang smooth
-// (tanpa menunggu poll 3-detik). Poll berikutnya akan overwrite dengan
-// nilai master. localStorage menyimpan nilai terakhir untuk survive refresh.
-const SMOOTH_TICK_MS = 1000;
-let smoothTimer = null;
-function startSmoothTick(){
-  if(smoothTimer) return;
-  smoothTimer = setInterval(() => {
-    for(const s of slaves) {
-      const t = timers[s.id];
-      if(t && !t.sessionDone && t.mfs !== undefined) {
-        t.mfs++;
-        // Persist ke localStorage agar survive refresh.
-        // Key per-RC: rc_mfs_<id>. Pada refresh, applySlaves akan
-        // restore nilai ini sebelum poll pertama selesai.
-        try { localStorage.setItem('rc_mfs_' + s.id, String(t.mfs)); } catch(e){}
-        updateStatEl(s.id);
-      }
-    }
-  }, SMOOTH_TICK_MS);
-}
-function stopSmoothTick(){
-  if(smoothTimer){ clearInterval(smoothTimer); smoothTimer=null; }
-}
-
-// Restore mfs dari localStorage (untuk survive refresh)
-function restoreMfsFromStorage(){
-  for(const s of slaves){
-    try {
-      const stored = localStorage.getItem('rc_mfs_' + s.id);
-      if(stored !== null && timers[s.id] && !timers[s.id].sessionDone){
-        const v = parseInt(stored);
-        if(!isNaN(v) && v >= 0) timers[s.id].mfs = v;
-      }
-    } catch(e){}
-  }
+  const base=getStat(id);
+  // sesElap = detik yang berjalan SEJAK statsCache terakhir di-load dari SPIFFS.
+  // Kurangi tfsAlreadyInBase agar tidak double-count periodic save yang sudah masuk base.
+  const rawTfs=(timers[id]&&!timers[id].sessionDone)?(timers[id].tfs||0):0;
+  const alreadyInBase=tfsAlreadyInBase[String(id)]||0;
+  const sesElap=Math.max(0,rawTfs-alreadyInBase);
+  el.querySelector('.rs-total').textContent=fmtMMSS(base.totalDetik+sesElap);
+  el.querySelector('.rs-sesi').textContent=base.totalSesi;
 }
 
 // ══ MANAJEMEN KARYAWAN ══════════════════════════════════════════════
@@ -1270,12 +1134,11 @@ function konfirmasiLogout(){openDlg('dlgLogout');}
 function doLogout(){
   closeDlg('dlgLogout');
   authClear();clearTimeout(pollTmr);
-  stopSmoothTick(); // hentikan smooth mfs tick saat logout
   document.getElementById('screenApp').classList.remove('s');
   document.getElementById('screenAuth').classList.remove('h');
   document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';
   document.getElementById('errLogin').classList.remove('s');
-  bootApp();
+  showForm('fLogin');
 }
 
 async function gantiPassword(){
@@ -1328,8 +1191,16 @@ function savePkg(p){localStorage.setItem(LS_PKG,JSON.stringify(p));}
 function buildPkgGrid(cid,onSel){
   const el=document.getElementById(cid);if(!el)return;el.innerHTML='';
   loadPkg().forEach(p=>{
+    const dur=fmtDurNice(p.menit);
+    const lbl=(p.label||'').trim();
+    // Tampilkan label HANYA jika benar-benar berbeda dari durasi otomatis,
+    // sehingga "1 Menit" tidak tampil dobel ("1m 1 Menit"). Untuk paket default
+    // label == durasi → cukup tampil "1 Menit" + harga saja.
+    const custom=lbl&&lbl.toLowerCase()!==dur.toLowerCase();
     const b=document.createElement('button');b.className='pkg-b';
-    b.innerHTML=`<span class="pkg-dur">${e(fmtDur(p.menit))}</span>${e(p.label)}<span class="pkg-rp">${e(fmtRp(p.harga))}</span>`;
+    b.innerHTML=(custom?`<span class="pkg-tag">${e(lbl)}</span>`:'')
+      +`<span class="pkg-dur">${e(dur)}</span>`
+      +`<span class="pkg-rp">${e(fmtRp(p.harga))}</span>`;
     b.onclick=()=>{el.querySelectorAll('.pkg-b').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');onSel({menit:p.menit,harga:p.harga,label:p.label});};
     el.appendChild(b);
   });
@@ -1571,24 +1442,8 @@ async function loadTrxFromEsp32(force=false){
 }
 function loadPend(){try{return JSON.parse(localStorage.getItem(LS_PEND)||'{}');}catch{return{};}}
 function savePend(p){localStorage.setItem(LS_PEND,JSON.stringify(p));}
-function setPending(rcId,pelanggan,menit,harga,paket){const p=loadPend();p[rcId]={pelanggan,menit,harga,paket,ts:Date.now()};savePend(p);}
+function setPending(rcId,pelanggan,menit,harga){const p=loadPend();p[rcId]={pelanggan,menit,harga,ts:Date.now()};savePend(p);}
 function clearPending(rcId){const p=loadPend();delete p[rcId];savePend(p);}
-
-// Optimistic immediate update: add exact package seconds to statsCache so
-// Total Main shows the correct value (e.g. exactly 2:00) instantly at session
-// end, without waiting for the async SPIFFS fetch to return.
-// loadStatsFromEsp32() will then confirm/overwrite with the authoritative value.
-function applyPackageToStats(id){
-  const p=loadPend();
-  const item=p[id];
-  if(!item)return;
-  const pkgSec=Math.round((item.menit||0)*60);
-  if(pkgSec<=0)return;
-  if(!statsCache[String(id)])statsCache[String(id)]={totalDetik:0,totalSesi:0};
-  statsCache[String(id)].totalDetik=(statsCache[String(id)].totalDetik||0)+pkgSec;
-  statsCache[String(id)].totalSesi=(statsCache[String(id)].totalSesi||0)+1;
-  updateStatEl(id);
-}
 
 // ── TFS SNAPSHOT ─────────────────────────────────────────────────────
 // Saat RC sedang berjalan / pause, simpan tfs ke localStorage agar
@@ -1614,7 +1469,7 @@ function recordTrx(rcId){
     pelanggan:item.pelanggan,
     menit:item.menit,
     harga:item.harga||0,
-    paket:item.paket||(item.menit+'m'),
+    paket:item.menit+'m',
     ts:now
   };
   clearPending(rcId);
@@ -1814,7 +1669,7 @@ function renderLaporan(){
         <span class="td td-m">${fmtTgl(t.ts)}</span>
         <span class="td td-rc">${e(t.rcNama)}</span>
         <span class="td" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e(t.pelanggan)}</span>
-        <span class="td td-m">${t.paket || t.menit + 'm'}</span>
+        <span class="td td-m">${t.menit}m</span>
         <span class="td td-rp">${e(fmtRp(t.harga))}</span>
       </div></div>`).join('')}`
       :'<div class="trx-empty">📭 Belum ada transaksi untuk filter ini</div>'}
@@ -1859,7 +1714,7 @@ function exportPDF(){
     <td>${e(fmtTgl(t.ts))}</td>
     <td class="td-rc">${e(t.rcNama)}</td>
     <td>${e(t.pelanggan)}</td>
-    <td>${t.paket || t.menit + 'm'}</td>
+    <td>${t.menit}m</td>
     <td class="td-rp">${e(fmtRp(t.harga))}</td>
   </tr>`).join('')}
   <tr><td colspan="4" style="font-weight:700;text-align:right;">TOTAL</td>
@@ -1896,42 +1751,18 @@ function renderSetting(){
 
 // ══ POLLING ════════════════════════════════════════════════════════
 let pollInFlight=false;
-let lastSuccessfulPoll = 0; // millis() dari poll() yang berhasil. Untuk stale indicator.
-const STALE_THRESHOLD_MS = 10000; // 10 detik tanpa data = "stale"
 async function poll(){
   if(!isLoggedIn())return;
   if(pollInFlight)return; // cegah dua poll() berjalan bersamaan (overlap)
   pollInFlight=true;
   try{
-    await syncDateWithEsp32();
     const ctrl=new AbortController();const tid=setTimeout(()=>ctrl.abort(),TMO);
     const res=await fetch(BASE+'/api/slaves',{signal:ctrl.signal});clearTimeout(tid);
-    if(res.status===401){
-      toast('❌ Password salah atau sesi telah berakhir');
-      doLogout();
-      return;
-    }
     if(res.status===503){setConn('rt');schedPoll(1500);return;}
     if(!res.ok)throw new Error();
-    const data=await res.json();
-    errCount=0;
-    setConn('on');
-    lastSuccessfulPoll = millis();
-    applySlaves(data);
-    schedPoll(POLL);
-  }catch{
-    errCount++;
-    setConn(errCount>=3?'of':'rt');
-    schedPoll(Math.min(5000*Math.pow(2,errCount-1),30000));
-  }
+    const data=await res.json();errCount=0;setConn('on');applySlaves(data);schedPoll(POLL);
+  }catch{errCount++;setConn(errCount>=3?'of':'rt');schedPoll(Math.min(5000*Math.pow(2,errCount-1),30000));}
   finally{pollInFlight=false;}
-}
-
-// Stale indicator: kalau >10 detik sejak poll terakhir berhasil, dashboard
-// nilai di-freeze (tidak update) — user tahu data mungkin tidak akurat.
-// Saat reconnect berhasil, lastSuccessfulPoll di-update dan display unfreeze.
-function isStale(){
-  return lastSuccessfulPoll > 0 && (millis() - lastSuccessfulPoll) > STALE_THRESHOLD_MS;
 }
 function schedPoll(ms){clearTimeout(pollTmr);pollTmr=setTimeout(poll,ms);}
 function setConn(s){
@@ -1944,30 +1775,20 @@ function setConn(s){
 function applySlaves(data){
   data.forEach(s=>{
     const st=slaveState(s);
-    // ── Real-time sync: master tells us current sessionElapsed ───────────
-    // mfs = master-from-slave (live, 2s heartbeat cadence via /api/slaves).
-    // Defensive: kalau undefined / negatif, jangan overwrite mfs.
-    // Reboot detection: kalau master value drop >5s di bawah last known,
-    // anggap master reboot — terima value baru (mulai dari 0 di master).
-    if (timers[s.id] && typeof s.sessionElapsed === 'number' && s.sessionElapsed >= 0) {
-      const newMfs = s.sessionElapsed;
-      const oldMfs = timers[s.id].mfs;
-      if (typeof oldMfs !== 'number' || newMfs >= oldMfs || (oldMfs - newMfs) > 5) {
-        timers[s.id].mfs = newMfs;
-      }
-    }
     if(st==='running'){
       const t=timers[s.id];
       if(!t||t.sessionDone){
         // SESI BARU atau setelah refresh: coba restore snapshot tfs dari localStorage
+        startTmr(s.id,s.time_left,true);
         const snap=loadTfsSnapshot(s.id);
-        const hasSnap=snap&&snap.tfs>0;
-        startTmr(s.id,s.time_left,!hasSnap);
-        if(hasSnap&&timers[s.id]){
-          // Snapshot masih relevan (sesi belum berganti) — restore tfs untuk timer display
-          // (sisa countdown). Total Main TIDAK pakai tfs — pakai mfs dari master.
+        if(snap&&snap.tfs>0&&timers[s.id]){
+          // Snapshot masih relevan (sesi belum berganti) — restore tfs
           timers[s.id].tfs=snap.tfs;
           timers[s.id]._tfsAtStart=snap.tfs;
+          // Refresh-safe: snap.tfs ini SUDAH ikut tersimpan ke SPIFFS totalDetik
+          // (periodic save firmware). Tandai sebagai "sudah di base" agar tidak
+          // dihitung dua kali, TANPA bergantung pada urutan loadStatsFromEsp32().
+          tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }else if(!t.running){
         // RESUME dari pause: pertahankan tfs yang sudah terkumpul
@@ -1990,43 +1811,26 @@ function applySlaves(data){
         if(snap&&snap.tfs>0){
           timers[s.id]={sisa:s.time_left,running:false,tfs:snap.tfs,iv:null,sessionDone:false,
             _startedAt:Date.now(),_sisaAtStart:s.time_left,_tfsAtStart:snap.tfs};
+          // Refresh-safe (sama seperti cabang running): snap.tfs sudah masuk base.
+          tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }
-      const pendingObj = loadPend();
-      if((s.state==='ENDED'||s.state==='LOCKED') && pendingObj[s.id]){
-        clearTfsSnapshot(s.id);
-        // Optimistic: show exact package time immediately before async fetch
-        applyPackageToStats(s.id);
-         recordTrx(s.id);
-         if(timers[s.id]){
-           timers[s.id].sessionDone=true;
-           timers[s.id].tfs=0;
-           // Sesi selesai — master akan kirim final save, mfs jadi tidak relevan.
-           // Set ke 0 supaya display hanya menampilkan base (yang sudah berisi final).
-           timers[s.id].mfs = 0;
-         }
-         // Bersihkan localStorage agar tidak restore nilai stale di refresh berikutnya
-         try { localStorage.removeItem('rc_mfs_' + s.id); } catch(e){}
-         const prevTotal=(getStat(s.id).totalDetik||0);
-         loadStatsFromEsp32({[String(s.id)]:prevTotal});
-       }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
+      if(s.state==='ENDED'){
         // RC selesai secara alami (waktu habis).
-        // Master heartbeat transition ke ENDED sudah auto-save full package + incSesi.
-        // Master juga lapor sessionElapsed = sessionPackageTime. Tidak perlu push dari browser.
-        // Cukup re-sync statsCache dari SPIFFS agar Sesi akurat.
-        clearTfsSnapshot(s.id); // hapus snapshot karena sesi sudah selesai
-        // Optimistic: show exact package time immediately before async fetch
-        applyPackageToStats(s.id);
-        recordTrx(s.id); // catat ke laporan (hanya jika pending ada)
-        timers[s.id].sessionDone=true;
-        timers[s.id].tfs=0;
-        timers[s.id].mfs = 0; // sesi selesai — Total Main = base only
-        // Bersihkan localStorage agar tidak restore nilai stale di refresh berikutnya
-        try { localStorage.removeItem('rc_mfs_' + s.id); } catch(e){}
-        // Bunyi beep untuk menandai sesi selesai alami
-        playBeep();
-        const prevTotal2=(getStat(s.id).totalDetik||0);
-        loadStatsFromEsp32({[String(s.id)]:prevTotal2}); // confirm/overwrite dari SPIFFS
+        // PENTING (fix laporan hilang saat refresh): JANGAN bergantung pada
+        // objek timer di memori — timer hilang saat refresh, sehingga sesi yang
+        // berakhir tepat setelah refresh tak akan tercatat. Sebagai gantinya,
+        // pakai `pending` yang tersimpan di localStorage (selamat dari refresh).
+        // recordTrx() idempotent: kalau pending ada → catat + clearPending;
+        // kalau tidak ada → no-op, jadi aman dipanggil tiap poll ENDED.
+        const adaPending=!!loadPend()[s.id];
+        if(adaPending){
+          clearTfsSnapshot(s.id);     // hapus snapshot karena sesi sudah selesai
+          recordTrx(s.id);            // catat ke laporan + clearPending (sekali)
+          loadStatsFromEsp32();       // re-sync totalDetik + totalSesi dari SPIFFS
+        }
+        if(timers[s.id]){timers[s.id].sessionDone=true;timers[s.id].tfs=0;}
+        tfsAlreadyInBase[String(s.id)]=0; // reset agar sesElap=0 saat ENDED
       }
       stopTmr(s.id);
       if(timers[s.id])timers[s.id].sisa=s.time_left;
@@ -2066,7 +1870,13 @@ function startTmr(id,sisa,isNew=false){
     // Hitung sisa & elapsed dari wall-clock, bukan dari counter
     const wallElapsed=Math.floor((Date.now()-t._startedAt)/1000);
     const newSisa=Math.max(0,t._sisaAtStart-wallElapsed);
-    const newTfs=(isNew?0:t._tfsAtStart||0)+wallElapsed; // tfs total sesi ini
+    // Gunakan _tfsAtStart sebagai baseline (BUKAN isNew). Nilai _tfsAtStart
+    // sudah di-set benar oleh startTmr / restore:
+    //   - sesi baru  : 0
+    //   - resume     : tfs yang dipertahankan
+    //   - refresh    : snap.tfs (ditambal applySlaves setelah startTmr)
+    // Memakai isNew di sini membuat tfs hasil restore diabaikan (bug freeze).
+    const newTfs=(t._tfsAtStart||0)+wallElapsed; // tfs total sesi ini
     t.sisa=newSisa;
     t.tfs=newTfs;
     const el=document.getElementById('tmr-'+id);
@@ -2114,7 +1924,7 @@ function renderGrid(){
       if(!timers[s.id]||!timers[s.id].running)tel.textContent=fmtTime(sisa);
       // update info row
       const ir=card.querySelector('.rc-info');
-      if(ir){if(info&&(st==='running'||st==='paused')){ir.style.display='';ir.querySelector('.rc-cust').textContent=info.pelanggan;ir.querySelector('.rc-pkg').textContent=info.paket || info.menit+'m';}else ir.style.display='none';}
+      if(ir){if(info&&(st==='running'||st==='paused')){ir.style.display='';ir.querySelector('.rc-cust').textContent=info.pelanggan;ir.querySelector('.rc-pkg').textContent=info.menit+'m';}else ir.style.display='none';}
       card.querySelector('.rc-acts').innerHTML=buildBtns(s,st);
     }else{
       const card=document.createElement('div');
@@ -2134,29 +1944,28 @@ function buildCard(s,st,sisa,info){
   <div class="rc-tmr ${st}" id="tmr-${s.id}">${fmtTime(sisa)}</div>
   <div class="rc-info" style="${showInfo?'':'display:none'}">
     <span class="rc-cust">${showInfo?e(info.pelanggan):''}</span>
-    <span class="rc-pkg">${showInfo?(info.paket || info.menit+'m'):''}</span>
+    <span class="rc-pkg">${showInfo?info.menit+'m':''}</span>
   </div>
   <div class="rc-stats" id="stats-${s.id}">
-    <div class="rs-item"><span class="rs-v rs-total">${fmtMMSS(stat.totalDetik)}</span><span class="rs-l" title="Total waktu main kumulatif untuk unit ini. Akumulasi dari semua sesi (termasuk yang di-cancel manual). Persist di /stats.json master + live session dari master.">Total Main</span></div>
+    <div class="rs-item"><span class="rs-v rs-total">${fmtMMSS(stat.totalDetik)}</span><span class="rs-l">Total Main</span></div>
     <div class="rs-div"></div>
-    <div class="rs-item"><span class="rs-v rs-sesi">${stat.totalSesi}</span><span class="rs-l" title="Jumlah sesi yang selesai alami (timer habis sendiri). 1 sesi = 1 customer bayar 1 paket. Manual ⏹ tidak menambah. 🗑 Reset Total Main mereset ke 0.">Sesi</span></div>
+    <div class="rs-item"><span class="rs-v rs-sesi">${stat.totalSesi}</span><span class="rs-l">Sesi</span></div>
   </div>
   <div class="rc-acts">${buildBtns(s,st)}</div>`;
 }
 function buildBtns(s,st){
-  // Slave offline: tampilkan indikator offline, semua action button disabled
-  if(st==='offline')return`<button class="btn b-stop" disabled style="flex:1;" title="Slave tidak terhubung ke master. Tunggu reconnect.">⚫ Offline</button>`;
+  if(st==='offline')return`<button class="btn b-stop" disabled style="flex:1;">⚫ Offline</button>`;
   if(st==='stopped')return`
-    <button class="btn b-start" onclick="bukaMulai(${s.id})" title="Mulai sesi baru. Timer akan jalan sesuai paket yang dipilih.">▶ Mulai</button>
-    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})" title="Reset Total Main + Sesi RC ini ke 0. Transaksi historis TIDAK terhapus. Butuh password SA.">🗑</button>`;
+    <button class="btn b-start" onclick="bukaMulai(${s.id})">▶ Mulai</button>
+    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})">🗑</button>`;
   if(st==='running')return`
-    <button class="btn b-pause" onclick="sendCmd(${s.id},'PAUSE',0)" title="Pause timer. Sesi tetap aktif, bisa dilanjutkan dengan ▶ Lanjut.">⏸ Pause</button>
-    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})" title="Cancel sesi sekarang. Timer ke 00:00, Sesi tidak ditambah, tidak masuk laporan keuangan.">⏹</button>
-    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})" title="Reset Total Main + Sesi RC ini ke 0. Transaksi historis TIDAK terhapus. Butuh password SA.">🗑</button>`;
+    <button class="btn b-pause" onclick="sendCmd(${s.id},'PAUSE',0)">⏸ Pause</button>
+    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})">⏹</button>
+    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})">🗑</button>`;
   if(st==='paused')return`
-    <button class="btn b-resume" onclick="sendCmd(${s.id},'RESUME',0)" title="Lanjutkan timer yang di-pause. Sesi tetap aktif.">▶ Lanjut</button>
-    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})" title="Cancel sesi sekarang. Timer ke 00:00, Sesi tidak ditambah, tidak masuk laporan keuangan.">⏹</button>
-    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})" title="Reset Total Main + Sesi RC ini ke 0. Transaksi historis TIDAK terhapus. Butuh password SA.">🗑</button>`;
+    <button class="btn b-resume" onclick="sendCmd(${s.id},'RESUME',0)">▶ Lanjut</button>
+    <button class="btn b-stop" onclick="bukaResetTimer(${s.id})">⏹</button>
+    <button class="btn b-reset" onclick="bukaResetTotal(${s.id})">🗑</button>`;
   return'';
 }
 function updateSummary(){
@@ -2175,22 +1984,18 @@ async function sendCmd(id,cmd,time,retry=1){
     clearTimeout(tid);
     if((res.status===503||res.status===502)&&retry>0){
       await slp(res.status===503?1000:500);setLoading(id,false);return sendCmd(id,cmd,time,retry-1);}
-    if(!res.ok){
-      if(cmd==='ADD_TIME')clearPending(id);
-      toast('❌ HTTP error: '+res.status);setLoading(id,false);return;
-    }
+    if(!res.ok){toast('❌ HTTP error: '+res.status);setLoading(id,false);return;}
     const data=await res.json();setLoading(id,false);
-      if(data.ok===1){
-        const s = slaves.find(x => x.id === id);
-        if(cmd==='ADD_TIME'){
-          // Sesi baru: reset tfs dan sessionDone
-          if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
-          startTmr(id,data.time_left||time,true);
-          if(timers[id]){ timers[id].tfs=0; timers[id].sessionDone=false; }
-          // mfs=0 sampai master heartbeat pertama (≤2s) overwrite dengan nilai live.
-          if(timers[id]) timers[id].mfs = 0;
-          toast('✅ Timer dimulai');
-        }
+    if(data.ok===1){
+      const s = slaves.find(x => x.id === id);
+      if(cmd==='ADD_TIME'){
+        // Sesi baru: reset tfs dan sessionDone
+        if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
+        startTmr(id,data.time_left||time,true);
+        if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=false;}
+        tfsAlreadyInBase[String(id)]=0; // sesi baru: base sudah di-load sebelumnya, tfs mulai dari 0
+        toast('✅ Timer dimulai');
+      }
       else if(cmd==='RESUME'){
         // Lanjut dari pause: pertahankan tfs yang sudah terkumpul
         if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
@@ -2206,43 +2011,38 @@ async function sendCmd(id,cmd,time,retry=1){
         updateStatEl(id); // tampilkan total yang sudah terkumpul (tidak bergerak)
         toast('⏸ Timer dijeda');
       }
-else if(cmd==='STOP'){
-        // ── ⏹ Reset Timer (manual, dari dashboard) ─────────────────────
-        // Operator-initiated cancellation — TIDAK dihitung ke laporan
-        // keuangan dan TIDAK menambah totalDetik/totalSesi. Hanya sesi yang
-        // BERAKHIR ALAMI (slave timer hits 0 → ENDED di applySlaves) yang
-        // masuk ke stats + transaksi.
+      else if(cmd==='STOP'){
+        // Operator menghentikan sesi secara manual.
+        // PENTING (fix double-count): firmware SUDAH menyimpan totalDetik lewat
+        // periodic save tiap detik + flush residual saat STOP. Browser TIDAK
+        // boleh menulis elapsed lagi.
         //
-        // - clearPending(): cegah applySlaves LOCKED branch dari re-record
-        //   saat slave heartbeat berikutnya melaporkan state=LOCKED.
-        // - clearTfsSnapshot(): hapus snapshot localStorage sesi ini.
-        // - loadStatsFromEsp32(): sync ulang dari SPIFFS (master tidak
-        //   menulis apa-apa untuk manual STOP, jadi nilai tetap).
+        // Fix async-race: sebelum loadStatsFromEsp32() (async), kita naikkan
+        // statsCache secara sinkron sebesar tfs yang belum masuk base.
+        // Ini mencegah tampilan "meloncat" jika START baru ditekan sebelum
+        // respons /api/stats tiba.
+        const tfsNow=(timers[id]&&!timers[id].sessionDone)?(timers[id].tfs||0):0;
+        const alreadyIn=tfsAlreadyInBase[String(id)]||0;
+        const residualDisplay=Math.max(0,tfsNow-alreadyIn);
+        if(residualDisplay>0){
+          if(!statsCache[String(id)])statsCache[String(id)]={totalDetik:0,totalSesi:0};
+          statsCache[String(id)].totalDetik+=residualDisplay;
+        }
         clearTfsSnapshot(id);
         clearPending(id);
-        if(s) { s.state = data.state || 'LOCKED'; s.time_left = 0; }
-        if(timers[id]){ timers[id].tfs = 0; timers[id].sessionDone = true; }
-        // Manual STOP — display = base only (no current-session contribution).
-        // mfs=0 ensures Total Main drops to whatever's saved, not the live mfs.
-        if(timers[id]) timers[id].mfs = 0;
-        // Bersihkan localStorage (sesi cancelled, jangan restore stale value)
-        try { localStorage.removeItem('rc_mfs_' + id); } catch(e){}
+        if(s){s.state=data.state||'LOCKED';s.time_left=0;}
+        if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=true;}
         stopTmr(id);
-        if(timers[id]) timers[id].sisa = 0;
-        const prevTotalStop = (getStat(id).totalDetik || 0);
-        loadStatsFromEsp32({[String(id)]: prevTotalStop});
+        if(timers[id])timers[id].sisa=0;
+        tfsAlreadyInBase[String(id)]=0;
+        updateStatEl(id); // tampilkan nilai sinkron dulu (tidak berkedip)
+        loadStatsFromEsp32(); // lalu re-sync dari server di background
         toast('⏹ Timer direset');
       }
       renderGrid(); // update UI secara instan!
       clearTimeout(pollTmr);pollTmr=setTimeout(poll,300);
-    }else{
-      if(cmd==='ADD_TIME')clearPending(id);
-      toast('⚠️ '+fErr(data.code));
-    }
-  }catch{
-    if(cmd==='ADD_TIME')clearPending(id);
-    setLoading(id,false);toast('❌ Koneksi gagal');
-  }
+    }else toast('⚠️ '+fErr(data.code));
+  }catch{setLoading(id,false);toast('❌ Koneksi gagal');}
 }
 
 // ══ MISC HELPERS ═══════════════════════════════════════════════════
@@ -2252,126 +2052,13 @@ const stLbl=st=>({running:'▶ Aktif',paused:'⏸ Pause',stopped:'Idle',offline:
 const fErr=c=>({BAD_STATE:'Unit tidak dalam kondisi yang sesuai',EXCEEDS_LIMIT:'Waktu melebihi batas'}[c]||'Gagal: '+c);
 function setLoading(id,on){const c=document.getElementById('card-'+id);if(c)c.querySelectorAll('.btn').forEach(b=>b.disabled=on);}
 
-// ══ DEV DEBUG & TIME SYNC HELPERS ══════════════════════════════════
-const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || new URLSearchParams(location.search).has('debug');
-let lastSyncedDateStr = '';
-
-async function syncDateWithEsp32(){
-  if(!isLoggedIn())return;
-  const localDateStr = new Date().toLocaleDateString('sv'); // YYYY-MM-DD
-  if(localDateStr === lastSyncedDateStr) return; // already synced today
-  try{
-    const res = await fetch(BASE+'/api/sync-time',{
-      method:'POST',
-      headers:authHdr(),
-      body:JSON.stringify({date:localDateStr})
-    });
-    if(res.status===401){
-      toast('❌ Password salah atau sesi telah berakhir');
-      doLogout();
-      return;
-    }
-    if(res.ok){
-      const data = await res.json();
-      lastSyncedDateStr = localDateStr;
-      if (data.dateChanged) {
-        toast('📅 Hari baru terdeteksi: Sesi RC direset');
-        loadStatsFromEsp32(); // reload stats to reflect resetted sessions
-      }
-    }
-  }catch(err){
-    console.warn('[TIME] Sync failed:',err);
-  }
-}
-
-function updateDbgPanel(){
-  const localState = {
-    pending: loadPend(),
-    tfs_snapshots: {}
-  };
-  for(let i=0; i<localStorage.length; i++){
-    const k = localStorage.key(i);
-    if(k.startsWith('rc_tfs_')) localState.tfs_snapshots[k] = JSON.parse(localStorage.getItem(k));
-  }
-  document.getElementById('dbgLocalState').textContent = JSON.stringify(localState, null, 2);
-  
-  const timersState = {};
-  for(let k in timers){
-    timersState[k] = {
-      sisa: timers[k].sisa,
-      running: timers[k].running,
-      tfs: timers[k].tfs,
-      sessionDone: timers[k].sessionDone
-    };
-  }
-  document.getElementById('dbgTimerState').textContent = JSON.stringify(timersState, null, 2);
-  document.getElementById('simDevDate').value = lastSyncedDateStr || new Date().toLocaleDateString('sv');
-  
-  const rcSel = document.getElementById('simDevRcSel');
-  if (rcSel) {
-    const curVal = rcSel.value;
-    rcSel.innerHTML = slaves.map(s => `<option value="${s.id}">${getRcName(s.id)} (ID:${s.id})</option>`).join('');
-    if (curVal) rcSel.value = curVal;
-  }
-}
-
-async function simDevStartQuickSession(seconds) {
-  const rcSel = document.getElementById('simDevRcSel');
-  if (!rcSel) return;
-  const rcId = parseInt(rcSel.value);
-  if (!rcId) { toast('❌ Pilih RC terlebih dahulu'); return; }
-  
-  toast(`⏳ Memulai sesi test ${seconds}s pada ${getRcName(rcId)}...`);
-  closeDlg('dlgDebug');
-  
-  setPending(rcId, `Test ${seconds}s`, seconds / 60, 99, `${seconds}d`);
-  await sendCmd(rcId, 'ADD_TIME', seconds);
-}
-
-function simDevConn(s){
-  if(s==='of'){
-    errCount = 5;
-    setConn('of');
-  } else {
-    errCount = 0;
-    setConn('on');
-  }
-  toast('🪲 Connection simulated: ' + s);
-}
-
-function simDevResetAll(){
-  localStorage.clear();
-  timers = {};
-  location.reload();
-}
-
-async function simDevDateTrigger(){
-  const customDate = document.getElementById('simDevDate').value.trim();
-  if(!customDate) return;
-  try {
-    const res = await fetch(BASE+'/api/sync-time',{
-      method:'POST',
-      headers:authHdr(),
-      body:JSON.stringify({date:customDate})
-    });
-    if(res.ok){
-      const data = await res.json();
-      lastSyncedDateStr = customDate;
-      if(data.dateChanged){
-        toast('📅 Sim Hari Baru: Stats direset!');
-        loadStatsFromEsp32();
-      } else {
-        toast('📅 Date sync: no change');
-      }
-      updateDbgPanel();
-    }
-  } catch(err){ toast('❌ Gagal sync date'); }
-}
-
 // ══ BOOT ═══════════════════════════════════════════════════════════
-bootApp();
+// Cek session dulu — kalau sudah login, langsung masuk app tanpa ke halaman login
+if(isLoggedIn()){
+  enterApp();
+}else{
+  initAuth();
+}
 </script>
-<!-- FLOATING DEV DEBUGGER BUTTON -->
-<button id="devDebugBtn" style="display:none; position:fixed; right:16px; top:76px; z-index:1000; width:44px; height:44px; border-radius:50%; background:var(--sf); border:1px solid var(--ac); color:var(--ac); font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 12px rgba(245,166,35,0.3); cursor:pointer;" onclick="openDlg('dlgDebug')">🪲</button>
 </body>
 </html>
