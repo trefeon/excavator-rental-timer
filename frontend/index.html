@@ -738,6 +738,37 @@ button{cursor:pointer;}
   </div>
 </div>
 
+<!-- Developer Debugger Panel -->
+<div class="ov" id="dlgDebug">
+  <div class="dlg"><div class="dlg-h"></div>
+    <div class="dt">🪲 Dev Debugger Panel</div>
+    <div class="ds">Inspeksi state in-memory dashboard &amp; simulasi aksi.</div>
+    
+    <label class="lbl">Simulasi Jaringan</label>
+    <div style="display:flex; gap:6px; margin-bottom:12px;">
+      <button class="btn b-stop" onclick="simDevConn('of')" style="flex:1;">Simulate Offline</button>
+      <button class="btn b-start" onclick="simDevConn('on')" style="flex:1;">Simulate Online</button>
+    </div>
+
+    <label class="lbl">Simulasi Tanggal (YYYY-MM-DD)</label>
+    <div style="display:flex; gap:6px; margin-bottom:12px;">
+      <input class="inp" id="simDevDate" type="text" placeholder="YYYY-MM-DD" style="margin:0; flex:2;">
+      <button class="btn b-resume" onclick="simDevDateTrigger()" style="flex:1;">Trigger Reset</button>
+    </div>
+
+    <label class="lbl">Inspeksi State LocalStorage</label>
+    <div style="background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:8px; margin-bottom:10px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:10px; white-space:pre-wrap;" id="dbgLocalState"></div>
+
+    <label class="lbl">Inspeksi State Timers</label>
+    <div style="background:var(--s2); border:1px solid var(--bd); border-radius:var(--rs); padding:8px; margin-bottom:10px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:10px; white-space:pre-wrap;" id="dbgTimerState"></div>
+
+    <div class="da">
+      <button class="btn-c" style="flex:1;" onclick="closeDlg('dlgDebug')">Tutup</button>
+      <button class="btn-dng" style="flex:1;" onclick="simDevResetAll()">Reset State</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-w" id="tw"></div>
 
 <script>
@@ -790,12 +821,15 @@ function toast(msg){
   const d=document.createElement('div');d.className='toast';d.textContent=msg;
   document.getElementById('tw').appendChild(d);setTimeout(()=>d.remove(),3000);
 }
-const openDlg=id=>document.getElementById(id).classList.add('s');
+const openDlg=id=>{
+  document.getElementById(id).classList.add('s');
+  if(id==='dlgDebug') updateDbgPanel();
+};
 const closeDlg=id=>document.getElementById(id).classList.remove('s');
 
 // Close dialogs on overlay click
 ['dlgAddQ','dlgCallQ','dlgMulai','dlgResetTimer','dlgResetTotal','dlgEditTarif',
- 'dlgEditRcName','dlgLogout','dlgConfirm','dlgTambahKaryawan','dlgHapusKaryawan'].forEach(id=>{
+ 'dlgEditRcName','dlgLogout','dlgConfirm','dlgTambahKaryawan','dlgHapusKaryawan','dlgDebug'].forEach(id=>{
   document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeDlg(id);});
 });
 
@@ -889,7 +923,11 @@ function enterApp(){
   if(document.getElementById('cardChgPass'))document.getElementById('cardChgPass').style.display=isSA?'':'none';
   if(document.getElementById('secKaryawan'))document.getElementById('secKaryawan').style.display=isSA?'':'none';
   if(document.getElementById('cardKaryawan'))document.getElementById('cardKaryawan').style.display=isSA?'':'none';
+  if(isDev){
+    document.getElementById('devDebugBtn').style.display='flex';
+  }
   renderSetting();renderQPanel();updateProfile();poll();
+  syncDateWithEsp32();
   loadStatsFromEsp32(); // muat total main dari ESP32 SPIFFS
   // Muat transaksi dulu, baru render laporan & restore tab agar data tidak hilang saat refresh
   loadTrxFromEsp32().then(()=>{
@@ -1719,8 +1757,14 @@ async function poll(){
   if(pollInFlight)return; // cegah dua poll() berjalan bersamaan (overlap)
   pollInFlight=true;
   try{
+    await syncDateWithEsp32();
     const ctrl=new AbortController();const tid=setTimeout(()=>ctrl.abort(),TMO);
     const res=await fetch(BASE+'/api/slaves',{signal:ctrl.signal});clearTimeout(tid);
+    if(res.status===401){
+      toast('❌ Password salah atau sesi telah berakhir');
+      doLogout();
+      return;
+    }
     if(res.status===503){setConn('rt');schedPoll(1500);return;}
     if(!res.ok)throw new Error();
     const data=await res.json();errCount=0;setConn('on');applySlaves(data);schedPoll(POLL);
@@ -1742,15 +1786,14 @@ function applySlaves(data){
       const t=timers[s.id];
       if(!t||t.sessionDone){
         // SESI BARU atau setelah refresh: coba restore snapshot tfs dari localStorage
-        startTmr(s.id,s.time_left,true);
         const snap=loadTfsSnapshot(s.id);
-        if(snap&&snap.tfs>0&&timers[s.id]){
+        const hasSnap=snap&&snap.tfs>0;
+        startTmr(s.id,s.time_left,!hasSnap);
+        if(hasSnap&&timers[s.id]){
           // Snapshot masih relevan (sesi belum berganti) — restore tfs
           timers[s.id].tfs=snap.tfs;
           timers[s.id]._tfsAtStart=snap.tfs;
           // Refresh-safe: snap.tfs ini SUDAH ikut tersimpan ke SPIFFS totalDetik
-          // (periodic save firmware). Tandai sebagai "sudah di base" agar tidak
-          // dihitung dua kali, TANPA bergantung pada urutan loadStatsFromEsp32().
           tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }else if(!t.running){
@@ -2011,6 +2054,102 @@ const stLbl=st=>({running:'▶ Aktif',paused:'⏸ Pause',stopped:'Idle',offline:
 const fErr=c=>({BAD_STATE:'Unit tidak dalam kondisi yang sesuai',EXCEEDS_LIMIT:'Waktu melebihi batas'}[c]||'Gagal: '+c);
 function setLoading(id,on){const c=document.getElementById('card-'+id);if(c)c.querySelectorAll('.btn').forEach(b=>b.disabled=on);}
 
+// ══ DEV DEBUG & TIME SYNC HELPERS ══════════════════════════════════
+const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || new URLSearchParams(location.search).has('debug');
+let lastSyncedDateStr = '';
+
+async function syncDateWithEsp32(){
+  if(!isLoggedIn())return;
+  const localDateStr = new Date().toLocaleDateString('sv'); // YYYY-MM-DD
+  if(localDateStr === lastSyncedDateStr) return; // already synced today
+  try{
+    const res = await fetch(BASE+'/api/sync-time',{
+      method:'POST',
+      headers:authHdr(),
+      body:JSON.stringify({date:localDateStr})
+    });
+    if(res.status===401){
+      toast('❌ Password salah atau sesi telah berakhir');
+      doLogout();
+      return;
+    }
+    if(res.ok){
+      const data = await res.json();
+      lastSyncedDateStr = localDateStr;
+      if (data.dateChanged) {
+        toast('📅 Hari baru terdeteksi: Sesi RC direset');
+        loadStatsFromEsp32(); // reload stats to reflect resetted sessions
+      }
+    }
+  }catch(err){
+    console.warn('[TIME] Sync failed:',err);
+  }
+}
+
+function updateDbgPanel(){
+  const localState = {
+    pending: loadPend(),
+    tfs_snapshots: {}
+  };
+  for(let i=0; i<localStorage.length; i++){
+    const k = localStorage.key(i);
+    if(k.startsWith('rc_tfs_')) localState.tfs_snapshots[k] = JSON.parse(localStorage.getItem(k));
+  }
+  document.getElementById('dbgLocalState').textContent = JSON.stringify(localState, null, 2);
+  
+  const timersState = {};
+  for(let k in timers){
+    timersState[k] = {
+      sisa: timers[k].sisa,
+      running: timers[k].running,
+      tfs: timers[k].tfs,
+      sessionDone: timers[k].sessionDone
+    };
+  }
+  document.getElementById('dbgTimerState').textContent = JSON.stringify(timersState, null, 2);
+  document.getElementById('simDevDate').value = lastSyncedDateStr || new Date().toLocaleDateString('sv');
+}
+
+function simDevConn(s){
+  if(s==='of'){
+    errCount = 5;
+    setConn('of');
+  } else {
+    errCount = 0;
+    setConn('on');
+  }
+  toast('🪲 Connection simulated: ' + s);
+}
+
+function simDevResetAll(){
+  localStorage.clear();
+  timers = {};
+  location.reload();
+}
+
+async function simDevDateTrigger(){
+  const customDate = document.getElementById('simDevDate').value.trim();
+  if(!customDate) return;
+  try {
+    const res = await fetch(BASE+'/api/sync-time',{
+      method:'POST',
+      headers:authHdr(),
+      body:JSON.stringify({date:customDate})
+    });
+    if(res.ok){
+      const data = await res.json();
+      lastSyncedDateStr = customDate;
+      if(data.dateChanged){
+        toast('📅 Sim Hari Baru: Stats direset!');
+        loadStatsFromEsp32();
+      } else {
+        toast('📅 Date sync: no change');
+      }
+      updateDbgPanel();
+    }
+  } catch(err){ toast('❌ Gagal sync date'); }
+}
+
 // ══ BOOT ═══════════════════════════════════════════════════════════
 // Cek session dulu — kalau sudah login, langsung masuk app tanpa ke halaman login
 if(isLoggedIn()){
@@ -2019,5 +2158,7 @@ if(isLoggedIn()){
   initAuth();
 }
 </script>
+<!-- FLOATING DEV DEBUGGER BUTTON -->
+<button id="devDebugBtn" style="display:none; position:fixed; right:16px; top:76px; z-index:1000; width:44px; height:44px; border-radius:50%; background:var(--sf); border:1px solid var(--ac); color:var(--ac); font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 12px rgba(245,166,35,0.3); cursor:pointer;" onclick="openDlg('dlgDebug')">🪲</button>
 </body>
 </html>

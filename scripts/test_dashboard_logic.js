@@ -148,6 +148,7 @@ const tickTimers = (seconds) => {
 const sandbox = {
   // Browser Globals
   window: {},
+  location: { hostname: 'localhost', search: '?debug=1' },
   document: mockDocument,
   localStorage: new MockLocalStorage(),
   console: {

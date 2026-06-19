@@ -5,7 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = 8080
-HTML_FILE = "RCDashboard (1).html"
+HTML_FILE = "frontend/index.html"
 
 # Simulated DB
 state_lock = threading.Lock()
@@ -23,6 +23,7 @@ stats = {
 
 transaksi = []
 karyawan = ["karyawan1", "karyawan2"]
+current_simulated_date = ""
 
 # Background simulator loop to tick timers
 def simulator_loop():
@@ -214,6 +215,7 @@ class MockMasterHandler(BaseHTTPRequestHandler):
             with state_lock:
                 if sid in stats:
                     stats[sid]["totalDetik"] = 0
+                    stats[sid]["totalSesi"] = 0
             self.send_json({"ok": 1})
             
         elif self.path == "/api/karyawan/add":
@@ -240,6 +242,18 @@ class MockMasterHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": 1, "saUser": "admin"})
             else:
                 self.send_json({"ok": 0}, 400)
+        elif self.path == "/api/sync-time":
+            d = json.loads(body)
+            client_date = d.get("date", "")
+            global current_simulated_date
+            date_changed = False
+            if current_simulated_date != "" and current_simulated_date != client_date:
+                date_changed = True
+                with state_lock:
+                    for sid in stats:
+                        stats[sid]["totalSesi"] = 0
+            current_simulated_date = client_date
+            self.send_json({"ok": 1, "dateChanged": date_changed})
         else:
             self.send_response(404)
             self.end_headers()

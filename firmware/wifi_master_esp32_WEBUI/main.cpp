@@ -728,11 +728,57 @@ void handleResetStats() {
     stats[id]["totalSesi"]  = 0;
   } else {
     stats[id]["totalDetik"] = 0;
-    // totalSesi TIDAK direset — hanya total main (waktu) yang di-reset
+    stats[id]["totalSesi"]  = 0; // Clear session count too
   }
   saveJsonFile("/stats.json", stats);
   xSemaphoreGive(statsMutex);
   server.send(200, "application/json", "{\"ok\":1}");
+}
+
+// POST /api/sync-time
+// Body: {"date": "YYYY-MM-DD"}
+void handleSyncTime() {
+  addCorsHeaders();
+  if (!authCheck(false)) { server.send(401); return; } // SA or Karyawan who is logged in
+  if (!server.hasArg("plain")) { server.send(400); return; }
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "application/json", "{\"ok\":0}");
+    return;
+  }
+  
+  String clientDate = doc["date"] | "";
+  if (clientDate == "" || clientDate.length() > 16) {
+    server.send(400, "application/json", "{\"ok\":0,\"error\":\"Invalid Date\"}");
+    return;
+  }
+
+  preferences.begin("registry", false);
+  String lastDate = preferences.getString("lastDate", "");
+  
+  bool dateChanged = false;
+  if (lastDate != "" && lastDate != clientDate) {
+    dateChanged = true;
+  }
+
+  // Save the new date to Preferences
+  preferences.putString("lastDate", clientDate);
+  preferences.end();
+
+  if (dateChanged) {
+    Serial.printf("[DATE] Date changed from %s to %s. Resetting totalSesi for all units...\n", lastDate.c_str(), clientDate.c_str());
+    if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+      JsonDocument stats = loadJsonFile("/stats.json");
+      JsonObject rootObj = stats.as<JsonObject>();
+      for (JsonPair kv : rootObj) {
+        stats[kv.key()]["totalSesi"] = 0;
+      }
+      saveJsonFile("/stats.json", stats);
+      xSemaphoreGive(statsMutex);
+    }
+  }
+
+  server.send(200, "application/json", "{\"ok\":1,\"dateChanged\":" + String(dateChanged ? "true" : "false") + "}");
 }
 
 void handleGetTransaksi() {
@@ -1411,6 +1457,8 @@ void setup() {
   server.on("/api/stats/add", HTTP_OPTIONS, handleOptions);
   server.on("/api/stats/reset", HTTP_POST, handleResetStats);
   server.on("/api/stats/reset", HTTP_OPTIONS, handleOptions);
+  server.on("/api/sync-time", HTTP_POST, handleSyncTime);
+  server.on("/api/sync-time", HTTP_OPTIONS, handleOptions);
 
   server.on("/api/transaksi",     HTTP_GET,  handleGetTransaksi);
   server.on("/api/transaksi",     HTTP_OPTIONS, handleOptions);
