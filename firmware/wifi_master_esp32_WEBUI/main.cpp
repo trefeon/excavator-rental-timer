@@ -529,20 +529,34 @@ void handleLogin() {
   String p = doc["password"] | "";
 
   JsonDocument auth = loadJsonFile("/auth.json");
-  if (auth["sa"]["user"] == u && auth["sa"]["pass"] == p) {
-    authNoteSuccess();
-    server.send(200, "application/json", "{\"ok\":1,\"role\":\"sa\"}"); return;
-  }
+  bool userExists = false;
 
-  JsonArray kr = auth["kr"].as<JsonArray>();
-  for (JsonObject k : kr) {
-    if (k["user"] == u && k["pass"] == p) {
+  if (!auth["sa"]["user"].isNull() && auth["sa"]["user"] == u) {
+    userExists = true;
+    if (auth["sa"]["pass"] == p) {
       authNoteSuccess();
-      server.send(200, "application/json", "{\"ok\":1,\"role\":\"kr\"}"); return;
+      server.send(200, "application/json", "{\"ok\":1,\"role\":\"sa\"}"); return;
+    }
+  } else {
+    JsonArray kr = auth["kr"].as<JsonArray>();
+    for (JsonObject k : kr) {
+      if (k["user"] == u) {
+        userExists = true;
+        if (k["pass"] == p) {
+          authNoteSuccess();
+          server.send(200, "application/json", "{\"ok\":1,\"role\":\"kr\"}"); return;
+        }
+        break;
+      }
     }
   }
+
   authNoteFail();
-  server.send(400, "application/json", "{\"ok\":0}");
+  if (!userExists) {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"USER_NOT_FOUND\"}");
+  } else {
+    server.send(400, "application/json", "{\"ok\":0,\"code\":\"WRONG_PASSWORD\"}");
+  }
 }
 
 // POST /api/auth/verify-sa — cek HANYA password SuperAdmin (tanpa perlu username)

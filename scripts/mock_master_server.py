@@ -137,10 +137,20 @@ class MockMasterHandler(BaseHTTPRequestHandler):
         if self.path == "/api/auth/login":
             # Simple dummy validation
             d = json.loads(body)
-            if d.get("username") == "admin" and d.get("password") == "admin":
-                self.send_json({"ok": 1, "role": "sa"})
+            u = d.get("username", "")
+            p = d.get("password", "")
+            if u == "admin":
+                if p == "admin":
+                    self.send_json({"ok": 1, "role": "sa"})
+                else:
+                    self.send_json({"ok": 0, "code": "WRONG_PASSWORD"}, 400)
+            elif u in karyawan:
+                if p == "admin" or p == "1234" or p == u:
+                    self.send_json({"ok": 1, "role": "kr"})
+                else:
+                    self.send_json({"ok": 0, "code": "WRONG_PASSWORD"}, 400)
             else:
-                self.send_json({"ok": 0}, 400)
+                self.send_json({"ok": 0, "code": "USER_NOT_FOUND"}, 400)
                 
         elif self.path == "/api/command":
             d = json.loads(body)

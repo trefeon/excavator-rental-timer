@@ -395,7 +395,7 @@ button{cursor:pointer;}
     <div class="auth-info">📡 Akun disimpan di ESP32 SPIFFS — bisa login dari HP manapun.</div>
     <div class="auth-err" id="errReg"></div>
     <label class="al">Username</label>
-    <input class="ai" id="regUser" type="text" placeholder="cth: admin" autocapitalize="none">
+    <input class="ai" id="regUser" type="text" value="admin" readonly style="opacity:0.75;cursor:not-allowed;" autocapitalize="none">
     <label class="al">Password</label>
     <div class="pw-w"><input class="ai" id="regPass" type="password" placeholder="Min. 4 karakter">
       <button class="eyebtn" onclick="togEye('regPass',this)">👁</button></div>
@@ -489,7 +489,7 @@ button{cursor:pointer;}
     <div class="pf-card" style="padding:18px;text-align:center;">
       <div class="pf-logo">🎮</div>
       <div style="font-size:16px;font-weight:800;margin-bottom:3px;">RentalRC</div>
-      <div style="font-size:11px;color:var(--t2);">Web Dashboard v1.1-latest • ESP32 Master WiFi</div>
+      <div style="font-size:11px;color:var(--t2);">Web Dashboard v1.2.0-latest • ESP32 Master WiFi</div>
     </div>
     <div class="sec">Akun</div>
     <div class="pf-card" id="pfAccCard">
@@ -550,7 +550,7 @@ button{cursor:pointer;}
       <button class="btn-ok" style="width:100%;padding:12px;" onclick="gantiPassword()">🔒 Simpan Password ke ESP32</button>
     </div>
     <div style="padding:14px 0 6px;text-align:center;font-size:10px;color:var(--t3);">
-      RentalRC v1.1-latest • ESP32 192.168.4.1
+      RentalRC v1.2.0-latest • ESP32 192.168.4.1
     </div>
   </div>
 
@@ -883,6 +883,7 @@ async function doRegister(){
     const d=await res.json();
     if(d.ok===1){
       authSet(SS_USER,u);authSet(SS_PASS,p);authSet(SS_ROLE,'sa');
+      toast('✅ Akun SuperAdmin berhasil dibuat');
       enterApp();
     }else{err.textContent='Gagal: '+(d.code||'error');err.classList.add('s');}
   }catch{err.textContent='Gagal terhubung ke ESP32.';err.classList.add('s');}
@@ -897,15 +898,20 @@ async function doLogin(){
   if(!u||!p){err.textContent='Username dan password wajib diisi.';err.classList.add('s');return;}
   setBusy('Login',true);
   try{
-    // Coba login — server mengembalikan role ('sa' atau 'kr')
     const res=await fetch(BASE+'/api/auth/login',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     const d=await res.json();
     if(d.ok===1){
-      const role=d.role||'kr'; // server harus kembalikan field role: 'sa' atau 'kr'
+      const role=d.role||'kr'; 
       authSet(SS_USER,u);authSet(SS_PASS,p);authSet(SS_ROLE,role);
       enterApp();
-    }else{err.textContent='Username atau password salah.';err.classList.add('s');}
+    }else{
+      if(d.code==='LOCKED'){err.textContent='Terlalu banyak percobaan salah. Coba lagi dalam 30 detik.';}
+      else if(d.code==='USER_NOT_FOUND'){err.textContent='Username tidak terdaftar.';}
+      else if(d.code==='WRONG_PASSWORD'){err.textContent='Password salah.';}
+      else{err.textContent='Username atau password salah.';}
+      err.classList.add('s');
+    }
   }catch{err.textContent='Gagal terhubung ke ESP32.';err.classList.add('s');}
   setBusy('Login',false);
 }
@@ -1147,7 +1153,7 @@ function doLogout(){
   document.getElementById('screenAuth').classList.remove('h');
   document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';
   document.getElementById('errLogin').classList.remove('s');
-  showForm('fLogin');
+  initAuth();
 }
 
 async function gantiPassword(){
