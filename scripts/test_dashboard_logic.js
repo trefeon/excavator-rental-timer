@@ -11,7 +11,7 @@ if (!scriptMatch) {
   console.error("Could not find <script> block in HTML!");
   process.exit(1);
 }
-const dashboardScript = scriptMatch[1];
+const dashboardScript = scriptMatch[1] + "\nwindow.timers = timers; window.slaves = slaves; globalThis.timers = timers; globalThis.slaves = slaves;\n";
 
 // Mock localStorage
 class MockLocalStorage {
@@ -180,11 +180,11 @@ console.log("====================================================\n");
 // helper resets
 function resetTestState() {
   sandbox.localStorage.clear();
-  sandbox.slaves = [];
-  sandbox.timers = {};
-  sandbox.statsCache = {};
-  sandbox.tfsAlreadyInBase = {};
-  sandbox.trxCache = [];
+  if (sandbox.slaves) sandbox.slaves.length = 0; else sandbox.slaves = [];
+  if (sandbox.timers) { for (let k in sandbox.timers) delete sandbox.timers[k]; } else sandbox.timers = {};
+  if (sandbox.statsCache) { for (let k in sandbox.statsCache) delete sandbox.statsCache[k]; } else sandbox.statsCache = {};
+  if (sandbox.tfsAlreadyInBase) { for (let k in sandbox.tfsAlreadyInBase) delete sandbox.tfsAlreadyInBase[k]; } else sandbox.tfsAlreadyInBase = {};
+  if (sandbox.trxCache) sandbox.trxCache.length = 0; else sandbox.trxCache = [];
   fetchHistory = [];
   mockFetchResponses = {};
   activeTimers = [];
