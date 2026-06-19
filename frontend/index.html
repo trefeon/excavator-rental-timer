@@ -765,6 +765,7 @@ const DEF_PKG=[
 // ══ STATE ══════════════════════════════════════════════════════════
 let slaves=[],timers={},errCount=0,pollTmr=null,curTab='dashboard';
 let statsCache={}; // {rcId: {totalDetik, totalSesi}} — dari ESP32 SPIFFS
+let tfsAlreadyInBase={}; // {rcId: tfs} — tfs yang sudah masuk ke statsCache.totalDetik saat load
 let trxCache=[];   // array transaksi — dari ESP32 SPIFFS (3 hari terakhir)
 let trxLoading=false; // cegah load ganda
 let pMulaiId=null,pMulaiQIdx=null,pMulaiPkg=null;
@@ -917,6 +918,15 @@ async function loadStatsFromEsp32(){
     if(!res.ok) { statsCache = {}; return; }
     const data=await res.json();
     statsCache=data||{};
+    // Catat tfs yang sudah masuk ke statsCache.totalDetik saat ini.
+    // Ini untuk mencegah overcount di updateStatEl saat sesi RUNNING:
+    // sesElap = tfs - tfsAlreadyInBase, sehingga base + sesElap tidak double-count
+    // periodic save yang sudah tersimpan di SPIFFS.
+    slaves.forEach(s=>{
+      if(timers[s.id]&&!timers[s.id].sessionDone){
+        tfsAlreadyInBase[String(s.id)]=timers[s.id].tfs||0;
+      }
+    });
     renderAllStatEls();
   }catch{
     statsCache={};
@@ -936,8 +946,10 @@ async function addSesiEsp32(id,detik){
 }
 
 async function addElapsedOnly(id,detik){
-  // Dipakai saat STOP manual — hanya tambah totalDetik, TIDAK tambah sesi
-  // karena sesi belum benar-benar selesai
+  // ⚠️ DEPRECATED / JANGAN DIPAKAI untuk STOP manual.
+  // Firmware sudah menyimpan totalDetik via periodic save + residual flush,
+  // sehingga memanggil ini akan menyebabkan double-count. Dibiarkan ada hanya
+  // untuk kompatibilitas; jalur STOP sekarang memakai loadStatsFromEsp32().
   if(!statsCache[id])statsCache[id]={totalDetik:0,totalSesi:0};
   statsCache[id].totalDetik+=detik;
   updateStatEl(id);
@@ -978,9 +990,11 @@ function updateStatEl(id){
   const el=document.getElementById('stats-'+id);
   if(!el)return;
   const base=getStat(id);
-  // Tambahkan elapsed sesi aktif ke total SPIFFS supaya angka berjalan live
-  // sessionDone=true berarti sesi sudah selesai, tidak perlu tambah
-  const sesElap=(timers[id]&&!timers[id].sessionDone)?(timers[id].tfs||0):0;
+  // sesElap = detik yang berjalan SEJAK statsCache terakhir di-load dari SPIFFS.
+  // Kurangi tfsAlreadyInBase agar tidak double-count periodic save yang sudah masuk base.
+  const rawTfs=(timers[id]&&!timers[id].sessionDone)?(timers[id].tfs||0):0;
+  const alreadyInBase=tfsAlreadyInBase[String(id)]||0;
+  const sesElap=Math.max(0,rawTfs-alreadyInBase);
   el.querySelector('.rs-total').textContent=fmtMMSS(base.totalDetik+sesElap);
   el.querySelector('.rs-sesi').textContent=base.totalSesi;
 }
@@ -1629,6 +1643,7 @@ function renderLaporan(){
 function exportPDF(){
   const f=filterTrx();if(!f.length){toast('❌ Tidak ada data');return;}
   const w=window.open('','_blank');
+  if(!w){toast('❌ Popup diblokir browser. Izinkan popup untuk ekspor PDF.');return;}
   let periodeLabel={'minggu':'Minggu Ini','bulan':'Bulan Ini','semua':'Semua Waktu'}[periodeFilter];
   if(periodeFilter==='hari'){const dd=new Date();dd.setDate(dd.getDate()-hariOffset);
     periodeLabel=HARI_LBL[hariOffset]+' ('+dd.toLocaleDateString('id-ID',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})+')';}
@@ -1698,8 +1713,11 @@ function renderSetting(){
 }
 
 // ══ POLLING ════════════════════════════════════════════════════════
+let pollInFlight=false;
 async function poll(){
   if(!isLoggedIn())return;
+  if(pollInFlight)return; // cegah dua poll() berjalan bersamaan (overlap)
+  pollInFlight=true;
   try{
     const ctrl=new AbortController();const tid=setTimeout(()=>ctrl.abort(),TMO);
     const res=await fetch(BASE+'/api/slaves',{signal:ctrl.signal});clearTimeout(tid);
@@ -1707,6 +1725,7 @@ async function poll(){
     if(!res.ok)throw new Error();
     const data=await res.json();errCount=0;setConn('on');applySlaves(data);schedPoll(POLL);
   }catch{errCount++;setConn(errCount>=3?'of':'rt');schedPoll(Math.min(5000*Math.pow(2,errCount-1),30000));}
+  finally{pollInFlight=false;}
 }
 function schedPoll(ms){clearTimeout(pollTmr);pollTmr=setTimeout(poll,ms);}
 function setConn(s){
@@ -1729,6 +1748,10 @@ function applySlaves(data){
           // Snapshot masih relevan (sesi belum berganti) — restore tfs
           timers[s.id].tfs=snap.tfs;
           timers[s.id]._tfsAtStart=snap.tfs;
+          // Refresh-safe: snap.tfs ini SUDAH ikut tersimpan ke SPIFFS totalDetik
+          // (periodic save firmware). Tandai sebagai "sudah di base" agar tidak
+          // dihitung dua kali, TANPA bergantung pada urutan loadStatsFromEsp32().
+          tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }else if(!t.running){
         // RESUME dari pause: pertahankan tfs yang sudah terkumpul
@@ -1751,20 +1774,31 @@ function applySlaves(data){
         if(snap&&snap.tfs>0){
           timers[s.id]={sisa:s.time_left,running:false,tfs:snap.tfs,iv:null,sessionDone:false,
             _startedAt:Date.now(),_sisaAtStart:s.time_left,_tfsAtStart:snap.tfs};
+          // Refresh-safe (sama seperti cabang running): snap.tfs sudah masuk base.
+          tfsAlreadyInBase[String(s.id)]=snap.tfs;
         }
       }
-      if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
-        // RC selesai secara alami (waktu habis)
-        const elapsed=timers[s.id].tfs||0;
-        if(elapsed>0){
-          // Simpan ke SPIFFS via addSesiEsp32 (cache RAM + /api/stats/add)
-          // supaya Total Main tetap benar setelah refresh
-          addSesiEsp32(String(s.id),elapsed);
+      const pendingObj = loadPend();
+      if((s.state==='ENDED'||s.state==='LOCKED') && pendingObj[s.id]){
+        clearTfsSnapshot(s.id);
+        recordTrx(s.id);
+        if(timers[s.id]){
+          timers[s.id].sessionDone=true;
+          timers[s.id].tfs=0;
+          tfsAlreadyInBase[String(s.id)]=0;
         }
+        loadStatsFromEsp32();
+      }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
+        // RC selesai secara alami (waktu habis).
+        // Firmware sudah otomatis simpan via autoSaveStats (totalDetik + totalSesi)
+        // dan periodic save sudah jalan setiap detik — TIDAK perlu push dari browser.
+        // Cukup re-sync statsCache dari SPIFFS agar tampilan akurat.
         clearTfsSnapshot(s.id); // hapus snapshot karena sesi sudah selesai
         recordTrx(s.id); // catat ke laporan (hanya jika pending ada)
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
+        tfsAlreadyInBase[String(s.id)]=0; // reset agar sesElap=0 saat ENDED
+        loadStatsFromEsp32(); // re-sync totalDetik + totalSesi dari SPIFFS
       }
       stopTmr(s.id);
       if(timers[s.id])timers[s.id].sisa=s.time_left;
@@ -1912,7 +1946,10 @@ async function sendCmd(id,cmd,time,retry=1){
     clearTimeout(tid);
     if((res.status===503||res.status===502)&&retry>0){
       await slp(res.status===503?1000:500);setLoading(id,false);return sendCmd(id,cmd,time,retry-1);}
-    if(!res.ok){toast('❌ HTTP error: '+res.status);setLoading(id,false);return;}
+    if(!res.ok){
+      if(cmd==='ADD_TIME')clearPending(id);
+      toast('❌ HTTP error: '+res.status);setLoading(id,false);return;
+    }
     const data=await res.json();setLoading(id,false);
     if(data.ok===1){
       const s = slaves.find(x => x.id === id);
@@ -1921,6 +1958,7 @@ async function sendCmd(id,cmd,time,retry=1){
         if(s) { s.state = data.state || 'RUNNING'; s.time_left = data.time_left || time; }
         startTmr(id,data.time_left||time,true);
         if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=false;}
+        tfsAlreadyInBase[String(id)]=0; // sesi baru: base sudah di-load sebelumnya, tfs mulai dari 0
         toast('✅ Timer dimulai');
       }
       else if(cmd==='RESUME'){
@@ -1939,29 +1977,31 @@ async function sendCmd(id,cmd,time,retry=1){
         toast('⏸ Timer dijeda');
       }
       else if(cmd==='STOP'){
-        // Operator menghentikan sesi secara manual
-        // ① Akumulasi elapsed ke statsCache RAM + simpan ke ESP32 SPIFFS
-        //   supaya Total Main tidak kembali ke nilai awal setelah refresh/browser ditutup
-        if(timers[id]){
-          const elapsed=timers[id].tfs||0;
-          if(elapsed>0){
-            // addElapsedOnly: tambah totalDetik TANPA increment sesi (sesi belum selesai)
-            addElapsedOnly(String(id),elapsed);
-          }
-        }
+        // Operator menghentikan sesi secara manual.
+        // PENTING (fix double-count): firmware SUDAH menyimpan totalDetik lewat
+        // periodic save tiap detik + flush residual saat STOP. Browser TIDAK
+        // boleh menulis elapsed lagi (dulu memakai addElapsedOnly → dobel).
+        // Cukup re-sync nilai otoritatif dari SPIFFS.
         clearTfsSnapshot(id); // hapus snapshot localStorage sesi ini
-        clearPending(id);
+        recordTrx(id);
         if(s) { s.state = data.state || 'LOCKED'; s.time_left = 0; }
         if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=true;}
         stopTmr(id);
         if(timers[id])timers[id].sisa=0;
-        updateStatEl(id);
+        tfsAlreadyInBase[String(id)]=0;
+        loadStatsFromEsp32(); // ambil totalDetik final dari firmware (anti dobel)
         toast('⏹ Timer direset');
       }
       renderGrid(); // update UI secara instan!
       clearTimeout(pollTmr);pollTmr=setTimeout(poll,300);
-    }else toast('⚠️ '+fErr(data.code));
-  }catch{setLoading(id,false);toast('❌ Koneksi gagal');}
+    }else{
+      if(cmd==='ADD_TIME')clearPending(id);
+      toast('⚠️ '+fErr(data.code));
+    }
+  }catch{
+    if(cmd==='ADD_TIME')clearPending(id);
+    setLoading(id,false);toast('❌ Koneksi gagal');
+  }
 }
 
 // ══ MISC HELPERS ═══════════════════════════════════════════════════
