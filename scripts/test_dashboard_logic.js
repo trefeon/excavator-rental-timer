@@ -288,23 +288,50 @@ setTimeout(() => {
 }, 50);
 
 // =============================================================================
-// TEST 3: Manual STOP — transaction recorded
+// TEST 3: Manual STOP — must NOT record transaction or increment stats
 // =============================================================================
 setTimeout(() => {
-  console.log("\n[Test 3] Manual STOP — transaction recorded correctly");
+  console.log("\n[Test 3] Manual STOP — no transaction, no stats increment, pending cleared");
   resetTestState();
+
+  // Seed initial stats so we can detect any unwanted increment
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 300, totalSesi: 5 };
 
   sandbox.setPending(1, "Andi", 10, 40000);
   sandbox.timers[1] = { running: true, tfs: 120, sisa: 480, sessionDone: false };
 
+  // Master SPIFFS returns the unchanged value (master doesn't write on STOP)
+  mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 300, totalSesi: 5 } } };
   mockFetchResponses['/api/command'] = {
     ok: true, data: { ok: 1, code: "SUCCESS", time_left: 0, state: "LOCKED" }
   };
 
   sandbox.sendCmd(1, 'STOP', 0).then(() => {
+    // No transaction recorded — manual reset must not count toward keuangan
     const trxCall = fetchHistory.find(h => h.url.includes('/api/transaksi/add'));
-    assert(trxCall && trxCall.body.pelanggan === 'Andi',
-      "Transaction recorded for manual STOP");
+    assert(!trxCall,
+      "No POST to /api/transaksi/add on manual STOP");
+
+    // statsCache unchanged — master didn't write, dashboard didn't optimistically bump
+    const sc2 = sandbox.__getStatsCache();
+    assert(sc2['1'].totalDetik === 300,
+      `totalDetik unchanged after manual STOP: ${sc2['1'].totalDetik} (expected 300)`);
+    assert(sc2['1'].totalSesi === 5,
+      `totalSesi unchanged after manual STOP: ${sc2['1'].totalSesi} (expected 5)`);
+
+    // Pending cleared so applySlaves LOCKED branch won't re-record later
+    const pend = JSON.parse(sandbox.localStorage.getItem('rc_pending') || '{}');
+    assert(!pend['1'],
+      "Pending cleared after manual STOP");
+
+    // Timer state: session marked done, tfs reset, tfsAlreadyInBase zeroed
+    assert(sandbox.timers[1] && sandbox.timers[1].sessionDone === true,
+      "timers[1].sessionDone=true after manual STOP");
+    assert(sandbox.timers[1].tfs === 0,
+      "timers[1].tfs=0 after manual STOP");
+    assert(sandbox.__getTfsAlreadyInBase()['1'] === 0,
+      "tfsAlreadyInBase['1']=0 after manual STOP");
   });
 }, 100);
 
@@ -584,4 +611,46 @@ setTimeout(() => {
   console.log("====================================================");
   console.log(`\n  Passed: ${passed}  |  Failed: ${failed}`);
   if (failed > 0) process.exit(1);
-}, 600);
+}, 700);
+
+// =============================================================================
+// TEST 14: Manual STOP race — applySlaves LOCKED must NOT re-record
+// =============================================================================
+setTimeout(() => {
+  console.log("\n[Test 14] Manual STOP race — applySlaves LOCKED does NOT re-record");
+  resetTestState();
+
+  // Seed initial stats
+  const sc = sandbox.__getStatsCache();
+  sc['1'] = { totalDetik: 100, totalSesi: 2 };
+
+  sandbox.setPending(1, "Race", 5, 25000);
+  sandbox.timers[1] = { running: true, tfs: 60, sisa: 240, sessionDone: false };
+
+  mockFetchResponses['/api/command'] = {
+    ok: true, data: { ok: 1, code: "SUCCESS", time_left: 0, state: "LOCKED" }
+  };
+
+  sandbox.sendCmd(1, 'STOP', 0).then(() => {
+    // After STOP, slave transitions to LOCKED. The next poll() fires applySlaves
+    // with state=LOCKED. With pending cleared in sendCmd, the first branch must
+    // NOT fire (otherwise it would record a duplicate transaction).
+    mockFetchResponses['/api/stats'] = { ok: true, data: { "1": { totalDetik: 100, totalSesi: 2 } } };
+
+    sandbox.applySlaves([
+      { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "LOCKED", time_left: 0, battery: "OK" }
+    ]);
+
+    // No transaction should be recorded (no double-record via applySlaves)
+    const trxCall = fetchHistory.find(h => h.url.includes('/api/transaksi/add'));
+    assert(!trxCall,
+      "No transaction recorded after manual STOP + applySlaves LOCKED");
+
+    // statsCache unchanged
+    const sc2 = sandbox.__getStatsCache();
+    assert(sc2['1'].totalDetik === 100,
+      `statsCache totalDetik unchanged: ${sc2['1'].totalDetik} (expected 100)`);
+    assert(sc2['1'].totalSesi === 2,
+      `statsCache totalSesi unchanged: ${sc2['1'].totalSesi} (expected 2)`);
+  });
+}, 650);

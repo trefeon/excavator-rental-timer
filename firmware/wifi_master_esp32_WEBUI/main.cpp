@@ -1114,6 +1114,15 @@ void handleCommandProxy() {
     }
 
     if (ok && cmdEnum == CMD_STOP) {
+      // ── Manual STOP via dashboard ⏹ Reset Timer ────────────────────────
+      // Operator-initiated cancellation — TIDAK dihitung ke laporan keuangan
+      // dan TIDAK menambah totalDetik / totalSesi. Hanya sesi yang BERAKHIR
+      // ALAMI (slave timer hits 0 → ENDED transition terdeteksi di heartbeat
+      // handler, line ~307) yang masuk ke stats + transaksi.
+      //
+      // Tandai stoppedManually=true agar kalau heartbeat ENDED terlambat
+      // sampai (race condition dengan natural ENDED), handler skip save —
+      // menghindari double-count antara path ini dan path heartbeat.
       int packageTime = 0, sid = 0;
       if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
         for (int i = 0; i < slaveCount; i++) {
@@ -1121,13 +1130,17 @@ void handleCommandProxy() {
             packageTime = slaves[i].sessionPackageTime;
             sid      = slaves[i].id;
             slaves[i].sessionPackageTime = 0;
-            slaves[i].stoppedManually = true;
+            slaves[i].stoppedManually = true; // lindungi dari race dengan heartbeat ENDED
             break;
           }
         }
         xSemaphoreGive(slavesMutex);
       }
-      if (packageTime > 0) autoSaveStats(sid, packageTime);
+      // (Tidak ada autoSaveStats di sini — supaya manual reset tidak
+      // muncul di laporan keuangan. Sebelumnya path ini menulis ke SPIFFS
+      // meskipun sesi tidak selesai alami, sehingga totalDetik/totalSesi
+      // ikut naik setiap operator cancel.)
+      (void)packageTime; // intentionally unused
     }
 
     char resp[160];

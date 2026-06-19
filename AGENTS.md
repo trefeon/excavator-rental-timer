@@ -277,6 +277,11 @@ Offsets are ESP32: `0x1000/0x8000/0xe000/0x10000`; ESP32-C3: `0x0000/0x8000/0xe0
 Distilled from `docs/AUDIT.md` and current code:
 
 - **Stats double-count is the #1 historical bug.** The fix: master WEBUI never increments `totalSesi` on its own — slave's heartbeat transition to ENDED enqueues a `StatsJob`, drained in `loop()` while holding `statsMutex`. Frontend never writes elapsed. Only `applyPackageToStats` (immediate, optimistic) for instant UI; followed by `loadStatsFromEsp32` (authoritative, from SPIFFS).
+- **Manual ⏹ Reset Timer must NOT count** (laporan keuangan or stats). Invariant: only clean natural ENDED (slave timer hits 0) increments `totalDetik`/`totalSesi` and creates a transaksi entry. Two enforcement points:
+  - **Frontend** `sendCmd` STOP path: skip `applyPackageToStats` + `recordTrx`, call `clearPending(id)` so the applySlaves LOCKED-with-pending branch doesn't re-record the next poll.
+  - **Firmware** (`wifi_master_esp32_WEBUI/main.cpp`): the `CMD_STOP` handler must NOT call `autoSaveStats(sid, packageTime)`. Master must still set `stoppedManually = true` so the heartbeat handler skips any late-arriving ENDED transition (race protection).
+  - **Firmware** nonWEBUI achieves the same effect differently: line ~871 zeros `sessionElapsed` before broadcasting STOP, so when the heartbeat ENDED transition fires, `autoSaveStats(0)` is a no-op.
+  - Test 3 asserts NO POST to `/api/transaksi/add`, statsCache unchanged, pending cleared. Test 14 asserts the LOCKED-after-STOP race doesn't re-record.
 - **Slave `lastMasterContactMs` guard is intentionally a no-op** (assigns `nowMs` then immediately compares). Documented in `docs/AUDIT.md`. Recovery is via ESP-NOW re-register on heartbeat.
 - **Powerloss recovery auto-RESUMES** a paid rental (not PAUSED) — intentional design. 3 warning beeps give staff time to move hands away. Change at slave `main.cpp` if you want paused.
 - **`cmdFromString` is case-sensitive in C** (`ADD_TIME` etc.) — Python mirror `cmd_from_string` is case-insensitive. Tests reflect Python semantics.

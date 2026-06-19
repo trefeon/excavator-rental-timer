@@ -2091,23 +2091,27 @@ async function sendCmd(id,cmd,time,retry=1){
         updateStatEl(id); // tampilkan total yang sudah terkumpul (tidak bergerak)
         toast('⏸ Timer dijeda');
       }
-      else if(cmd==='STOP'){
-        // Operator menghentikan sesi secara manual.
-        // PENTING (fix double-count): firmware SUDAH menyimpan totalDetik lewat
-        // periodic save tiap detik + flush residual saat STOP. Browser TIDAK
-        // boleh menulis elapsed lagi (dulu memakai addElapsedOnly → dobel).
-        // Cukup re-sync nilai otoritatif dari SPIFFS.
-        clearTfsSnapshot(id); // hapus snapshot localStorage sesi ini
-        // Optimistic: show exact package time immediately before async fetch
-        applyPackageToStats(id);
-        recordTrx(id);
+else if(cmd==='STOP'){
+        // ── ⏹ Reset Timer (manual, dari dashboard) ─────────────────────
+        // Operator-initiated cancellation — TIDAK dihitung ke laporan
+        // keuangan dan TIDAK menambah totalDetik/totalSesi. Hanya sesi yang
+        // BERAKHIR ALAMI (slave timer hits 0 → ENDED di applySlaves) yang
+        // masuk ke stats + transaksi.
+        //
+        // - clearPending(): cegah applySlaves LOCKED branch dari re-record
+        //   saat slave heartbeat berikutnya melaporkan state=LOCKED.
+        // - clearTfsSnapshot(): hapus snapshot localStorage sesi ini.
+        // - loadStatsFromEsp32(): sync ulang dari SPIFFS (master tidak
+        //   menulis apa-apa untuk manual STOP, jadi nilai tetap).
+        clearTfsSnapshot(id);
+        clearPending(id);
         if(s) { s.state = data.state || 'LOCKED'; s.time_left = 0; }
-        if(timers[id]){timers[id].tfs=0;timers[id].sessionDone=true;}
+        if(timers[id]){ timers[id].tfs = 0; timers[id].sessionDone = true; }
         stopTmr(id);
-        if(timers[id])timers[id].sisa=0;
-        tfsAlreadyInBase[String(id)]=0;
-        const prevTotalStop=(getStat(id).totalDetik||0);
-        loadStatsFromEsp32({[String(id)]:prevTotalStop}); // confirm/overwrite dari SPIFFS (anti dobel)
+        if(timers[id]) timers[id].sisa = 0;
+        tfsAlreadyInBase[String(id)] = 0;
+        const prevTotalStop = (getStat(id).totalDetik || 0);
+        loadStatsFromEsp32({[String(id)]: prevTotalStop});
         toast('⏹ Timer direset');
       }
       renderGrid(); // update UI secara instan!
