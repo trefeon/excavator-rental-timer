@@ -84,6 +84,7 @@ struct SlaveRecord {
   String prevState;    // state sebelumnya, untuk deteksi transisi ke ENDED
   int time_left;
   int sessionElapsed;  // detik yang sudah berjalan di sesi ini (untuk auto-save)
+  int sessionPackageTime; // exact package time used in this session (in seconds)
   bool stoppedManually; // true = di-STOP manual, polling ENDED tidak perlu autoSaveStats lagi
   String battery;
   uint8_t rawMac[6];   // raw MAC bytes for ESP-NOW addressing
@@ -219,6 +220,7 @@ void upsertSlave(const String& mac, int id, const uint8_t* rawMac) {
     slaves[slaveCount].prevState = "LOCKED";
     slaves[slaveCount].time_left = 0;
     slaves[slaveCount].sessionElapsed = 0;
+    slaves[slaveCount].sessionPackageTime = 0;
     slaves[slaveCount].stoppedManually = false;
     slaves[slaveCount].battery = "OK";
     memcpy(slaves[slaveCount].rawMac, rawMac, 6);
@@ -301,13 +303,13 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             // SPIFFS di sini. Cukup masukkan job ke antrian (operasi cepat,
             // non-blocking) lalu reset counter SAMBIL tetap memegang mutex —
             // tidak ada lagi lepas/ambil-ulang mutex di tengah callback.
-            // Skip kalau sudah di-STOP manual (sudah disimpan via residual flush).
+            // Skip kalau sudah di-STOP manual.
             if (slaves[i].state != "ENDED" && newState == "ENDED") {
               if (!slaves[i].stoppedManually && statsQueue) {
-                StatsJob job = { slaves[i].id, slaves[i].sessionElapsed, true };
+                StatsJob job = { slaves[i].id, slaves[i].sessionPackageTime, true };
                 xQueueSend(statsQueue, &job, 0); // sesi selesai alami → increment sesi
               }
-              slaves[i].sessionElapsed  = 0;
+              slaves[i].sessionPackageTime = 0;
               slaves[i].stoppedManually = false; // reset flag
             }
 
@@ -346,6 +348,7 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
               if (slaves[i].mac == senderMac) {
                 slaves[i].state = pktStateName(pkt.state);
                 slaves[i].time_left = pkt.timeLeft;
+                slaves[i].sessionPackageTime = pkt.timeLeft; // Fallback to current time left on reboot
                 slaves[i].lastSeen = millis();
                 break;
               }
@@ -1012,11 +1015,12 @@ void handleCommandProxy() {
   if (targetMac.startsWith("FF:FF:FF:00:00:") || targetMac.startsWith("EE:EE:EE:00:00:")) {
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       if (cmdEnum == CMD_ADD_TIME) {
-        // Sesi baru: reset sessionElapsed dan stoppedManually
         if (slaves[slaveIdx].state == "LOCKED" || slaves[slaveIdx].state == "ENDED") {
-          slaves[slaveIdx].sessionElapsed  = 0;
+          slaves[slaveIdx].sessionPackageTime = time;
           slaves[slaveIdx].stoppedManually = false;
           slaves[slaveIdx].state = "RUNNING";
+        } else {
+          slaves[slaveIdx].sessionPackageTime += time;
         }
         slaves[slaveIdx].time_left += time;
       } else if (cmdEnum == CMD_PAUSE) {
@@ -1026,18 +1030,17 @@ void handleCommandProxy() {
           slaves[slaveIdx].state = "RUNNING";
         }
       } else if (cmdEnum == CMD_STOP) {
-        // Simpan elapsed sebelum di-reset
-        int elapsed = slaves[slaveIdx].sessionElapsed;
+        int packageTime = slaves[slaveIdx].sessionPackageTime;
         int slaveId  = slaves[slaveIdx].id;
         slaves[slaveIdx].state = "ENDED";
         slaves[slaveIdx].time_left = 0;
-        slaves[slaveIdx].sessionElapsed = 0;
-        slaves[slaveIdx].stoppedManually = true; // tandai: jangan autoSave lagi saat ENDED terdeteksi polling
+        slaves[slaveIdx].sessionPackageTime = 0;
+        slaves[slaveIdx].stoppedManually = true;
         char resp[128];
         snprintf(resp, sizeof(resp), "{\"ok\":1,\"code\":\"SUCCESS\",\"time_left\":0,\"state\":\"ENDED\"}");
         server.send(200, "application/json", String(resp));
         xSemaphoreGive(slavesMutex);
-        saveElapsedOnly(slaveId, elapsed); // simpan totalDetik saja, TIDAK increment sesi
+        if (packageTime > 0) autoSaveStats(slaveId, packageTime);
         return;
       }
       slaves[slaveIdx].lastSeen = millis();
@@ -1093,25 +1096,38 @@ void handleCommandProxy() {
     RespCode actualCode = (RespCode)respCopy.respCode;
     int ok = (actualCode == RESP_OK || actualCode == RESP_REBOOTING) ? 1 : 0;
 
-    // Jika STOP berhasil: flush sisa elapsed (residual) yang BELUM tersimpan oleh
-    // periodic save, lalu tandai stoppedManually agar heartbeat ENDED berikutnya
-    // tidak menyimpan lagi. Browser TIDAK lagi mengirim elapsed (mencegah
-    // double-count totalDetik), jadi residual ini ditangani sepenuhnya di sini.
-    if (ok && cmdEnum == CMD_STOP) {
-      int residual = 0, sid = 0;
+    if (ok && cmdEnum == CMD_ADD_TIME) {
       if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
         for (int i = 0; i < slaveCount; i++) {
           if (slaves[i].id == targetId) {
-            residual = slaves[i].sessionElapsed;
+            if (slaves[i].state == "LOCKED" || slaves[i].state == "ENDED") {
+              slaves[i].sessionPackageTime = time;
+              slaves[i].stoppedManually = false;
+            } else {
+              slaves[i].sessionPackageTime += time;
+            }
+            break;
+          }
+        }
+        xSemaphoreGive(slavesMutex);
+      }
+    }
+
+    if (ok && cmdEnum == CMD_STOP) {
+      int packageTime = 0, sid = 0;
+      if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+        for (int i = 0; i < slaveCount; i++) {
+          if (slaves[i].id == targetId) {
+            packageTime = slaves[i].sessionPackageTime;
             sid      = slaves[i].id;
-            slaves[i].sessionElapsed  = 0;
+            slaves[i].sessionPackageTime = 0;
             slaves[i].stoppedManually = true;
             break;
           }
         }
         xSemaphoreGive(slavesMutex);
       }
-      if (residual > 0) saveElapsedOnly(sid, residual); // hanya residual, tidak double
+      if (packageTime > 0) autoSaveStats(sid, packageTime);
     }
 
     char resp[160];
@@ -1540,36 +1556,6 @@ void loop() {
     if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
       Serial.printf("[MASTER-HB] up=%lus slaves=%d\n", now / 1000, slaveCount);
 
-      // Periodic save totalDetik ke SPIFFS setiap detik untuk slave real yang RUNNING
-      // Supaya kalau ESP32 reboot/browser ditutup, total main tidak hilang
-      for (int i = 0; i < slaveCount; i++) {
-#if DEMO_MODE
-        // Demo slave sudah ditangani di blok DEMO_MODE di bawah, skip di sini
-        if (slaves[i].mac.startsWith("FF:FF:FF:00:00:") || slaves[i].mac.startsWith("EE:EE:EE:00:00:")) continue;
-#endif
-        if (slaves[i].state == "RUNNING" && slaves[i].sessionElapsed > 0 && !slaves[i].stoppedManually) {
-          int slaveId = slaves[i].id;
-          int elapsed = slaves[i].sessionElapsed;
-          // JANGAN nol-kan dulu — tunggu konfirmasi simpan agar tidak hilang
-          xSemaphoreGive(slavesMutex);
-          bool saved = saveElapsedOnly(slaveId, elapsed); // simpan ke SPIFFS, tidak increment sesi
-          if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) != pdTRUE) goto doneHb;
-          if (saved) {
-            // Cari ulang berdasarkan id (mutex sempat dilepas; array bisa berubah).
-            // Kurangi hanya jumlah yang sudah tersimpan — increment baru yang
-            // datang selama proses simpan tetap aman tersimpan di siklus berikutnya.
-            for (int k = 0; k < slaveCount; k++) {
-              if (slaves[k].id == slaveId) {
-                slaves[k].sessionElapsed -= elapsed;
-                if (slaves[k].sessionElapsed < 0) slaves[k].sessionElapsed = 0;
-                break;
-              }
-            }
-          }
-          // Jika gagal simpan: sessionElapsed dibiarkan utuh, dicoba lagi siklus berikutnya.
-        }
-      }
-
 #if DEMO_MODE
       for (int i = 0; i < slaveCount; i++) {
         bool isFakeOnline = slaves[i].mac.startsWith("FF:FF:FF:00:00:");
@@ -1579,20 +1565,16 @@ void loop() {
         if (isFakeOnline) {
           slaves[i].lastSeen = now; // tetap online
         }
-        // EE biarkan lastSeen = 0 (tampil offline), tapi timer tetap berjalan
 
         if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0) {
           slaves[i].time_left--;
-          slaves[i].sessionElapsed++;
           if (slaves[i].time_left <= 0) {
             slaves[i].state = "ENDED";
             int slaveId = slaves[i].id;
-            int elapsed = slaves[i].sessionElapsed;
-            slaves[i].sessionElapsed = 0;
-            // Auto-save harus di luar mutex — simpan dulu, rilis mutex lalu save
+            int packageTime = slaves[i].sessionPackageTime;
+            slaves[i].sessionPackageTime = 0;
             xSemaphoreGive(slavesMutex);
-            autoSaveStats(slaveId, elapsed);
-            // Tidak perlu ambil mutex lagi, langsung break dari heartbeat interval
+            if (packageTime > 0) autoSaveStats(slaveId, packageTime);
             goto doneHb;
           }
         }

@@ -1477,7 +1477,7 @@ async function loadTrxFromEsp32(force=false){
 }
 function loadPend(){try{return JSON.parse(localStorage.getItem(LS_PEND)||'{}');}catch{return{};}}
 function savePend(p){localStorage.setItem(LS_PEND,JSON.stringify(p));}
-function setPending(rcId,pelanggan,menit,harga){const p=loadPend();p[rcId]={pelanggan,menit,harga,ts:Date.now()};savePend(p);}
+function setPending(rcId,pelanggan,menit,harga,paket){const p=loadPend();p[rcId]={pelanggan,menit,harga,paket,ts:Date.now()};savePend(p);}
 function clearPending(rcId){const p=loadPend();delete p[rcId];savePend(p);}
 
 // ── TFS SNAPSHOT ─────────────────────────────────────────────────────
@@ -1504,7 +1504,7 @@ function recordTrx(rcId){
     pelanggan:item.pelanggan,
     menit:item.menit,
     harga:item.harga||0,
-    paket:item.menit+'m',
+    paket:item.paket||(item.menit+'m'),
     ts:now
   };
   clearPending(rcId);
@@ -1704,7 +1704,7 @@ function renderLaporan(){
         <span class="td td-m">${fmtTgl(t.ts)}</span>
         <span class="td td-rc">${e(t.rcNama)}</span>
         <span class="td" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e(t.pelanggan)}</span>
-        <span class="td td-m">${t.menit}m</span>
+        <span class="td td-m">${t.paket || t.menit + 'm'}</span>
         <span class="td td-rp">${e(fmtRp(t.harga))}</span>
       </div></div>`).join('')}`
       :'<div class="trx-empty">📭 Belum ada transaksi untuk filter ini</div>'}
@@ -1749,7 +1749,7 @@ function exportPDF(){
     <td>${e(fmtTgl(t.ts))}</td>
     <td class="td-rc">${e(t.rcNama)}</td>
     <td>${e(t.pelanggan)}</td>
-    <td>${t.menit}m</td>
+    <td>${t.paket || t.menit + 'm'}</td>
     <td class="td-rp">${e(fmtRp(t.harga))}</td>
   </tr>`).join('')}
   <tr><td colspan="4" style="font-weight:700;text-align:right;">TOTAL</td>
@@ -1963,7 +1963,7 @@ function renderGrid(){
       if(!timers[s.id]||!timers[s.id].running)tel.textContent=fmtTime(sisa);
       // update info row
       const ir=card.querySelector('.rc-info');
-      if(ir){if(info&&(st==='running'||st==='paused')){ir.style.display='';ir.querySelector('.rc-cust').textContent=info.pelanggan;ir.querySelector('.rc-pkg').textContent=info.menit+'m';}else ir.style.display='none';}
+      if(ir){if(info&&(st==='running'||st==='paused')){ir.style.display='';ir.querySelector('.rc-cust').textContent=info.pelanggan;ir.querySelector('.rc-pkg').textContent=info.paket || info.menit+'m';}else ir.style.display='none';}
       card.querySelector('.rc-acts').innerHTML=buildBtns(s,st);
     }else{
       const card=document.createElement('div');
@@ -1983,7 +1983,7 @@ function buildCard(s,st,sisa,info){
   <div class="rc-tmr ${st}" id="tmr-${s.id}">${fmtTime(sisa)}</div>
   <div class="rc-info" style="${showInfo?'':'display:none'}">
     <span class="rc-cust">${showInfo?e(info.pelanggan):''}</span>
-    <span class="rc-pkg">${showInfo?info.menit+'m':''}</span>
+    <span class="rc-pkg">${showInfo?(info.paket || info.menit+'m'):''}</span>
   </div>
   <div class="rc-stats" id="stats-${s.id}">
     <div class="rs-item"><span class="rs-v rs-total">${fmtMMSS(stat.totalDetik)}</span><span class="rs-l">Total Main</span></div>
@@ -2160,7 +2160,7 @@ async function simDevStartQuickSession(seconds) {
   toast(`⏳ Memulai sesi test ${seconds}s pada ${getRcName(rcId)}...`);
   closeDlg('dlgDebug');
   
-  setPending(rcId, `Test ${seconds}s`, 1, 99);
+  setPending(rcId, `Test ${seconds}s`, seconds / 60, 99, `${seconds}d`);
   await sendCmd(rcId, 'ADD_TIME', seconds);
 }
 

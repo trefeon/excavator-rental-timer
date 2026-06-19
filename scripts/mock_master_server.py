@@ -10,9 +10,9 @@ HTML_FILE = "frontend/index.html"
 # Simulated DB
 state_lock = threading.Lock()
 slaves = [
-    {"id": 1, "mac": "AA:BB:CC:DD:EE:01", "online": True, "state": "LOCKED", "time_left": 0, "battery": "OK", "sessionElapsed": 0, "stoppedManually": False},
-    {"id": 2, "mac": "AA:BB:CC:DD:EE:02", "online": True, "state": "LOCKED", "time_left": 0, "battery": "OK", "sessionElapsed": 0, "stoppedManually": False},
-    {"id": 3, "mac": "AA:BB:CC:DD:EE:03", "online": False, "state": "OFFLINE", "time_left": 0, "battery": "LOW", "sessionElapsed": 0, "stoppedManually": False}
+    {"id": 1, "mac": "AA:BB:CC:DD:EE:01", "online": True, "state": "LOCKED", "time_left": 0, "battery": "OK", "sessionElapsed": 0, "sessionPackageTime": 0, "stoppedManually": False},
+    {"id": 2, "mac": "AA:BB:CC:DD:EE:02", "online": True, "state": "LOCKED", "time_left": 0, "battery": "OK", "sessionElapsed": 0, "sessionPackageTime": 0, "stoppedManually": False},
+    {"id": 3, "mac": "AA:BB:CC:DD:EE:03", "online": False, "state": "OFFLINE", "time_left": 0, "battery": "LOW", "sessionElapsed": 0, "sessionPackageTime": 0, "stoppedManually": False}
 ]
 
 stats = {
@@ -37,25 +37,18 @@ def simulator_loop():
                     s["time_left"] -= 1
                     s["sessionElapsed"] += 1
                     
-                    # Simulate periodic stats save every 10 seconds
-                    if s["sessionElapsed"] >= 10:
-                        sid_str = str(s["id"])
-                        if sid_str not in stats:
-                            stats[sid_str] = {"totalDetik": 0, "totalSesi": 0}
-                        stats[sid_str]["totalDetik"] += s["sessionElapsed"]
-                        s["sessionElapsed"] = 0
-                        print(f"[SIMULATOR] Periodic save stats: EXC-{s['id']} totalDetik={stats[sid_str]['totalDetik']}")
-
                     if s["time_left"] == 0:
                         s["state"] = "ENDED"
                         sid_str = str(s["id"])
                         if sid_str not in stats:
                             stats[sid_str] = {"totalDetik": 0, "totalSesi": 0}
-                        # Natural session end -> Add elapsed and increment sessions
-                        if not s["stoppedManually"] and s["sessionElapsed"] > 0:
-                            stats[sid_str]["totalDetik"] += s["sessionElapsed"]
+                        # Natural session end -> Add package time and increment sessions
+                        package_time = s.get("sessionPackageTime", 0)
+                        if not s["stoppedManually"] and package_time > 0:
+                            stats[sid_str]["totalDetik"] += package_time
                             stats[sid_str]["totalSesi"] += 1
                         s["sessionElapsed"] = 0
+                        s["sessionPackageTime"] = 0
                         s["stoppedManually"] = False
                         print(f"[SIMULATOR] Natural session end: EXC-{s['id']} state=ENDED. stats={stats[sid_str]}")
 
@@ -165,10 +158,14 @@ class MockMasterHandler(BaseHTTPRequestHandler):
                     return
                 
                 if cmd == "ADD_TIME":
-                    target_slave["state"] = "RUNNING"
+                    if target_slave["state"] in ["LOCKED", "ENDED"]:
+                        target_slave["sessionPackageTime"] = val_time
+                        target_slave["stoppedManually"] = False
+                        target_slave["state"] = "RUNNING"
+                    else:
+                        target_slave["sessionPackageTime"] = target_slave.get("sessionPackageTime", 0) + val_time
                     target_slave["time_left"] += val_time
                     target_slave["sessionElapsed"] = 0
-                    target_slave["stoppedManually"] = False
                     
                 elif cmd == "PAUSE":
                     target_slave["state"] = "PAUSED"
@@ -177,18 +174,19 @@ class MockMasterHandler(BaseHTTPRequestHandler):
                     target_slave["state"] = "RUNNING"
                     
                 elif cmd == "STOP":
-                    # Simulate residual flush
-                    residual = target_slave["sessionElapsed"]
-                    target_slave["state"] = "LOCKED"
+                    # Simulate package time stats save
+                    package_time = target_slave.get("sessionPackageTime", 0)
+                    target_slave["state"] = "ENDED"
                     target_slave["time_left"] = 0
                     target_slave["sessionElapsed"] = 0
+                    target_slave["sessionPackageTime"] = 0
                     target_slave["stoppedManually"] = True
                     
                     sid_str = str(target_id)
                     if sid_str not in stats:
                         stats[sid_str] = {"totalDetik": 0, "totalSesi": 0}
-                    stats[sid_str]["totalDetik"] += residual
-                    print(f"[SIMULATOR] Manual STOP residual stats save: EXC-{target_id} +{residual}s totalDetik={stats[sid_str]['totalDetik']}")
+                    stats[sid_str]["totalDetik"] += package_time
+                    print(f"[SIMULATOR] Manual STOP package stats save: EXC-{target_id} +{package_time}s totalDetik={stats[sid_str]['totalDetik']}")
 
                 self.send_json({
                     "ok": 1,

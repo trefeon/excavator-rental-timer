@@ -95,7 +95,12 @@ const mockDocument = {
 
 // Mock fetch requests registry
 let fetchHistory = [];
-let mockFetchResponses = {};
+let mockFetchResponses = {
+  '/api/auth': {
+    ok: true,
+    data: { exists: true }
+  }
+};
 
 const mockFetch = (url, options = {}) => {
   const method = options.method || 'GET';
@@ -163,8 +168,15 @@ const sandbox = {
   clearInterval: mockClearInterval,
   setTimeout: (cb, ms) => cb(), // Immediate timeout for testing
   clearTimeout: () => {},
-  Date: {
-    now: () => fakeClockTime
+  Date: class extends Date {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(fakeClockTime);
+      } else {
+        super(...args);
+      }
+    }
+    static now() { return fakeClockTime; }
   },
   // Placeholders for external library APIs (like PDF export if any)
   navigator: { userAgent: "mock" },
@@ -181,7 +193,13 @@ console.log("====================================================\n");
 // helper resets
 function resetTestState() {
   sandbox.localStorage.clear();
-  if (sandbox.slaves) sandbox.slaves.length = 0; else sandbox.slaves = [];
+  if (!sandbox.slaves) sandbox.slaves = [];
+  sandbox.slaves.length = 0;
+  sandbox.slaves.push(
+    { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "LOCKED", time_left: 0, battery: "OK" },
+    { id: 2, mac: "AA:BB:CC:DD:EE:02", online: true, state: "LOCKED", time_left: 0, battery: "OK" },
+    { id: 3, mac: "AA:BB:CC:DD:EE:03", online: false, state: "OFFLINE", time_left: 0, battery: "LOW" }
+  );
   if (sandbox.timers) { for (let k in sandbox.timers) delete sandbox.timers[k]; } else sandbox.timers = {};
   if (sandbox.statsCache) { for (let k in sandbox.statsCache) delete sandbox.statsCache[k]; } else sandbox.statsCache = {};
   if (sandbox.tfsAlreadyInBase) { for (let k in sandbox.tfsAlreadyInBase) delete sandbox.tfsAlreadyInBase[k]; } else sandbox.tfsAlreadyInBase = {};
@@ -189,6 +207,12 @@ function resetTestState() {
   fetchHistory = [];
   mockFetchResponses = {};
   activeTimers = [];
+  
+  // Set default auth mock so checkAuthStatus doesn't trigger a reset
+  mockFetchResponses['/api/auth'] = {
+    ok: true,
+    data: { exists: true }
+  };
   
   // Set default logged in credentials
   sandbox.localStorage.setItem('rc_u', 'admin');
