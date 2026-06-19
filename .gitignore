@@ -12,6 +12,7 @@
 !.gitignore
 !/platformio.ini
 !/README.md
+!/AGENTS.md
 
 # ----------------------------------------------------
 # Blacklist specific patterns inside the whitelisted dirs

@@ -13,12 +13,19 @@ if (!scriptMatch) {
 }
 const dashboardScript = scriptMatch[1] + `
 // ── Test harness exports ────────────────────────────────────────────────────
+// timers, slaves, statsCache, tfsAlreadyInBase, trxCache are NOT auto-globals
+// in the sandbox (they're declared with let/const). Tests that reassign these
+// would decouple sandbox.X from the internal variable, so we expose both
+// objects via accessor functions. Tests should always read/write through
+// these accessors — never reassign sandbox.timers / sandbox.slaves directly.
 window.timers  = timers;  globalThis.timers  = timers;
 window.slaves  = slaves;  globalThis.slaves  = slaves;
 
-// statsCache, tfsAlreadyInBase, trxCache are 'let' variables — not auto-global.
-// Expose via accessor functions so resetTestState can read/write them even after
-// loadStatsFromEsp32 reassigns statsCache to a new object.
+globalThis.__getTimers  = () => timers;
+globalThis.__setTimers  = (v) => { timers  = v; };
+globalThis.__getSlaves  = () => slaves;
+globalThis.__setSlaves  = (v) => { slaves  = v; };
+
 globalThis.__getStatsCache       = () => statsCache;
 globalThis.__setStatsCache       = (v) => { statsCache = v; };
 globalThis.__getTfsAlreadyInBase = () => tfsAlreadyInBase;
@@ -197,15 +204,18 @@ function assert(cond, msg) {
 
 function resetTestState() {
   sandbox.localStorage.clear();
-  if (!sandbox.slaves) sandbox.slaves = [];
-  sandbox.slaves.length = 0;
-  sandbox.slaves.push(
+  const slaves = sandbox.__getSlaves();
+  slaves.length = 0;
+  slaves.push(
     { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true,  state: "LOCKED",  time_left: 0, battery: "OK" },
     { id: 2, mac: "AA:BB:CC:DD:EE:02", online: true,  state: "LOCKED",  time_left: 0, battery: "OK" },
     { id: 3, mac: "AA:BB:CC:DD:EE:03", online: false, state: "OFFLINE", time_left: 0, battery: "LOW" }
   );
-  if (sandbox.timers) { for (let k in sandbox.timers) delete sandbox.timers[k]; } else sandbox.timers = {};
-  // Use VM accessors to reset internal let-variables
+  // Use VM accessors to reset internal let-variables (NEVER reassign
+  // sandbox.timers / sandbox.slaves — that would decouple them from the
+  // dashboard's internal state, breaking subsequent assertions).
+  const timers = sandbox.__getTimers();
+  for (let k in timers) delete timers[k];
   const sc = sandbox.__getStatsCache();
   for (let k in sc) delete sc[k];
   const tfb = sandbox.__getTfsAlreadyInBase();
@@ -311,7 +321,9 @@ setTimeout(() => {
   sandbox.localStorage.setItem('rc_tfs_1', JSON.stringify(
     { tfs: 5, savedAt: Date.now(), sisa: 595 }
   ));
-  sandbox.timers = {};
+  // Clear timers via accessor (NEVER sandbox.timers = {} — that decouples).
+  const _t = sandbox.__getTimers();
+  for (let k in _t) delete _t[k];
 
   sandbox.applySlaves([
     { id: 1, mac: "AA:BB:CC:DD:EE:01", online: true, state: "ENDED", time_left: 0, battery: "OK" }
@@ -498,17 +510,24 @@ setTimeout(() => {
     return origFetch(url, opts);
   };
 
-  // Note: sandbox.setTimeout fires cb immediately (synchronous).
-  // loadStatsFromEsp32 is async — the first .then() triggers retry setTimeout (immediate)
-  // which calls the function again synchronously, but its .then() is a microtask.
-  // We chain via Promise to let both microtask queues flush before asserting.
-  sandbox.loadStatsFromEsp32({ '1': 101 });
+  // loadStatsFromEsp32 is async. The first call detects needsRetry, schedules
+  // a setTimeout(sync in sandbox) that fires loadStatsFromEsp32(null, true).
+  // The retry then needs ~4 microtask cycles to await fetch + json + apply
+  // statsCache. We must wait for ALL of them, then restore fetch.
+  const waitForRetry = sandbox.loadStatsFromEsp32({ '1': 101 }).then(() => {
+    // First call's Promise resolves when it returns from the retry branch.
+    // The retry itself is in flight — wait a few more microtask flushes.
+    return Promise.resolve();
+  }).then(() => Promise.resolve())
+    .then(() => Promise.resolve())
+    .then(() => Promise.resolve());
 
-  // Allow all pending Promise microtasks to settle, THEN assert
-  Promise.resolve().then(() => Promise.resolve()).then(() => {
+  waitForRetry.then(() => {
     const sc2 = sandbox.__getStatsCache();
     assert(sc2['1'] && sc2['1'].totalDetik === 220,
       `After retry, statsCache.totalDetik=${sc2['1'] && sc2['1'].totalDetik} (expected 220)`);
+    assert(callCount === 2,
+      `Fetch called twice (1 initial + 1 retry): callCount=${callCount}`);
     sandbox.fetch = origFetch;
   });
 }, 500);
