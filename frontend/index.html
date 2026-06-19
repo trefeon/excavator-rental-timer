@@ -984,11 +984,24 @@ function isSA(){return getRole()==='sa';}
 
 // ══ STATS ESP32 SPIFFS (/stats.json) ════════════════════════════════
 
-async function loadStatsFromEsp32(){
+// prevTotals: {rcId: expectedMinTotalDetik} — if the fetched value is still
+// equal to the old value, the SPIFFS write hasn't landed yet; retry once.
+async function loadStatsFromEsp32(prevTotals, _retry){
   try{
     const res=await fetch(BASE+'/api/stats',{headers:authHdr()});
     if(!res.ok) { statsCache = {}; return; }
     const data=await res.json();
+    // Retry once (600ms) if totalDetik hasn't been updated yet for any RC in prevTotals
+    if(!_retry && prevTotals){
+      const needsRetry=Object.entries(prevTotals).some(([id,minVal])=>{
+        const cur=(data[id]&&data[id].totalDetik)||0;
+        return cur<minVal;
+      });
+      if(needsRetry){
+        setTimeout(()=>loadStatsFromEsp32(null,true),600);
+        return;
+      }
+    }
     statsCache=data||{};
     // Catat tfs yang sudah masuk ke statsCache.totalDetik saat ini.
     // Ini untuk mencegah overcount di updateStatEl saat sesi RUNNING:
@@ -997,6 +1010,9 @@ async function loadStatsFromEsp32(){
     slaves.forEach(s=>{
       if(timers[s.id]&&!timers[s.id].sessionDone){
         tfsAlreadyInBase[String(s.id)]=timers[s.id].tfs||0;
+      } else {
+        // Session is done — sesElap must be 0 so next session starts clean
+        tfsAlreadyInBase[String(s.id)]=0;
       }
     });
     renderAllStatEls();
@@ -1864,7 +1880,8 @@ function applySlaves(data){
           timers[s.id].tfs=0;
           tfsAlreadyInBase[String(s.id)]=0;
         }
-        loadStatsFromEsp32();
+        const prevTotal=(getStat(s.id).totalDetik||0);
+        loadStatsFromEsp32({[String(s.id)]:prevTotal+1});
       }else if(s.state==='ENDED'&&timers[s.id]&&!timers[s.id].sessionDone){
         // RC selesai secara alami (waktu habis).
         // Firmware sudah otomatis simpan via autoSaveStats (totalDetik + totalSesi)
@@ -1875,7 +1892,8 @@ function applySlaves(data){
         timers[s.id].sessionDone=true;
         timers[s.id].tfs=0;
         tfsAlreadyInBase[String(s.id)]=0; // reset agar sesElap=0 saat ENDED
-        loadStatsFromEsp32(); // re-sync totalDetik + totalSesi dari SPIFFS
+        const prevTotal2=(getStat(s.id).totalDetik||0);
+        loadStatsFromEsp32({[String(s.id)]:prevTotal2+1}); // re-sync totalDetik + totalSesi dari SPIFFS
       }
       stopTmr(s.id);
       if(timers[s.id])timers[s.id].sisa=s.time_left;
@@ -2066,7 +2084,8 @@ async function sendCmd(id,cmd,time,retry=1){
         stopTmr(id);
         if(timers[id])timers[id].sisa=0;
         tfsAlreadyInBase[String(id)]=0;
-        loadStatsFromEsp32(); // ambil totalDetik final dari firmware (anti dobel)
+        const prevTotalStop=(getStat(id).totalDetik||0);
+        loadStatsFromEsp32({[String(id)]:prevTotalStop+1}); // ambil totalDetik final dari firmware (anti dobel)
         toast('⏹ Timer direset');
       }
       renderGrid(); // update UI secara instan!
