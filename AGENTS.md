@@ -335,3 +335,79 @@ Distilled from `docs/AUDIT.md` and current code:
 - Slave state machine + powerloss: `firmware/wifi_slave_esp32/main.cpp` (lines 579–606 for NVS restore).
 - Dashboard entry points: `frontend/index.html` — search for `function applySlaves`, `function sendCmd`, `function applyPackageToStats`, `function loadStatsFromEsp32`.
 - Recent commits worth reading: `git log --oneline -10` — the project has been iterating v1.2.x with dashboard E2E test additions.
+
+---
+
+## 13. Dev Tools Reference
+
+Every tool a developer or tester might run, grouped by purpose. Each entry: **what it is / when to reach for it / how to invoke / what it returns**.
+
+### 13.1 Test runners (no hardware needed)
+
+| Tool | What it does | When | How |
+|---|---|---|---|
+| `pytest` | Runs the Python test suite. Mirrors the C++ ESP-NOW protocol (`protocol_lib.py`) and the master's heartbeat / demo-mode logic in Python. | Every commit. Required by the release flow (§11). | `pytest` (all) / `pytest tests/test_protocol.py -v` (one file) |
+| `node scripts/test_dashboard_logic.js` | Extracts `<script>` from `frontend/index.html`, runs it in a `vm` sandbox with mocked `localStorage`/`fetch`/`document`/`Date`. 13 cases, 23 assertions covering session start / ENDED / STOP / closed-tab recovery / command failure / `applyPackageToStats` / multi-session / paket field / `tfsAlreadyInBase` cleanup / `sesElap` / SPIFFS retry / exact package time / multi-RC isolation. | Every dashboard change. Required by the release flow. | `node scripts/test_dashboard_logic.js` — exits 1 on any FAIL |
+| `python scripts/test_esptool.py` | One-liner that imports `esptool` and runs `esptool --chip esp32 flash_id`. | Diagnose broken Python env / CH340 wiring / esptool install before doing a real flash. | `python scripts/test_esptool.py` |
+
+### 13.2 Mock servers (no hardware needed)
+
+| Tool | What it does | When | How |
+|---|---|---|---|
+| `scripts/mock_master_server.py` | Standalone Python HTTP server on `:8080` that **emulates the master**: `/` serves `frontend/index.html`; `/api/{auth,slaves,stats,transaksi,karyawan,command,sync-time,verify-sa}` all implemented in-process. A background thread ticks fake timers so RUNNING → ENDED transitions happen naturally. | Develop the dashboard UI against a desktop mock (no ESP32 needed). Auth: `admin/admin` (SA) or any karyawan listed in `karyawan = ['karyawan1', 'karyawan2']` with password `1234`. | `python scripts/mock_master_server.py` → open `http://localhost:8080` |
+| `scripts/test_logic.py` | Runs a **mock slave** HTTP server on `:80` (so the master can poll it via `/api/state`/`/api/command`) AND drives the **real master** at `192.168.4.1`. Asserts the master observes RUNNING after ADD_TIME, then ENDED after the mock flips its state. | Smoke-test master↔slave plumbing when you have a real master but no real slaves. **Requires your PC to be on `ExcavatorMaster` AP and to occupy port 80 (run as admin or use `netsh http add iplisten`).** | `python scripts/test_logic.py` |
+| `scripts/test_real_hardware.py` | Drives the **real master** at `192.168.4.1`. Sends `ADD_TIME(60)` then `STOP` to the first online slave and asserts `LOCKED`. | End-to-end hardware check that the master → ESP-NOW → slave → state-poll loop still works. | `python scripts/test_real_hardware.py` |
+| `scripts/scratch.py` | **Load + resilience test.** Spawns a mock slave on `:80`, factory-resets the master, registers 9 slaves, then runs 4 parallel threads: dashboard polling (`/api/slaves`), admin history polling, an operator hammering ADD_TIME/PAUSE/RESUME/STOP at random IDs every 0.8 s, and an **attacker** sending broken JSON / 5 KB payloads / bogus endpoints every 5 s. Prints RPS / errors / slave-hits every 3 s. | Stress-test the master before a mall opens. Watch `Errors` rising = master is choking. | `python scripts/scratch.py --verbose --duration 60` |
+
+### 13.3 Hardware diagnostics
+
+| Tool | What it does | When | How |
+|---|---|---|---|
+| `scripts/monitor.py` | Spawns 3 daemon threads reading `COM6`, `COM26`, `COM27` at 115200 baud simultaneously; prefixes each line with its port. | Watch 1 master + 2 slaves side-by-side during a live session. **Edit `ports = [...]` to match your setup.** | `python scripts/monitor.py` |
+| `scripts/com_test.py` | Same 3-port reader (COM6/COM26/COM27) **plus** a single `POST /api/command {id:2, cmd:ADD_TIME, val:60}` to the master after 2 s, so you can correlate the command dispatch against each slave's serial log. | One-shot: confirm a slave's ESP-NOW path end-to-end without touching the dashboard. | `python scripts/com_test.py` |
+
+### 13.4 Dashboard's built-in Dev Debugger Panel
+
+The dashboard itself has a hidden dev panel — no extra tool needed. Enable with **`?debug=1`** on the URL (e.g. `http://192.168.4.1/?debug=1`). A floating 🪲 button appears in the top-right; tapping it opens `dlgDebug` with:
+
+- **Simulasi Jaringan** — `Simulate Offline` / `Simulate Online` buttons. Toggles the conn-pill without disconnecting; useful to test the retry / back-off UX without unplugging.
+- **Simulasi Tanggal (YYYY-MM-DD)** — type a date and `Trigger Reset` to hit `POST /api/sync-time` with that date. If it differs from the last synced date, master zeros `totalSesi` for all RCs.
+- **Simulasi Sesi Cepat (Harga Rp 99)** — pick an RC, then 5/10/15/20/25/30-second buttons. These call `setPending(rcId, 'Test Ns', N/60, 99, 'Nd')` then `sendCmd(rcId, 'ADD_TIME', N)`. `paket: 'Nd'` is what triggers the `applyPackageToStats` exact-package-time path. Use to validate ENDED → transaksi + stats → tfs-cleanup flow without waiting minutes for a real 5-minute package.
+- **Inspeksi State LocalStorage** — live JSON dump of `rc_pending` + every `rc_tfs_*` snapshot.
+- **Inspeksi State Timers** — live JSON dump of `timers[id].{sisa,running,tfs,sessionDone}` per RC.
+
+The panel is gated by `isDev` (`location.hostname === 'localhost' || '127.0.0.1' || new URLSearchParams(location.search).has('debug')`). In production it won't render even if you ship the URL parameter.
+
+### 13.5 Build & release
+
+| Tool | What it does | When | How |
+|---|---|---|---|
+| `firmware/build_frontend.py` | Reads `frontend/index.html`, `gzip.compress`es it, writes `wifi_master_esp32_WEBUI/index_html.h` as a `uint8_t[] PROGMEM`. | Any time `frontend/index.html` changes. Required before `pio run -e master_html`. | `python build_frontend.py` (run from `firmware/`) — or pass a custom HTML path as arg 1. |
+| `build_release.py` | The full release pipeline: builds 4 PlatformIO envs → `esptool merge_bin` for each (offsets per chip) → PyInstaller bundles `release/flash.py` → `flash.exe` → copies README → zips into `Excavator_Firmware_Flasher.zip` → mirrors to `release/latest/`. | Cutting a release tag. | `python build_release.py v1.2.5` (output → `release/v1.2.5/`); with no arg → `release/latest/` only. |
+| `release/flash.py` (source) / `release/flash.exe` (built) | **End-user flasher.** Interactive menu of 4 firmware options (Master WEBUI / Master non-WEBUI / Slave C3 / Slave ESP32). Auto-detects ESP ports by USB descriptor (CH340 / CH341 / CP210 / FTDI / JTAG / UART), prompts for full-erase (y/N), then runs `esptool write_flash`. Catches `SystemExit` so a user can flash multiple boards in one session. Calls `esptool.main()` directly (PyInstaller can't `subprocess -m esptool`). | Distribute to end users. Inside `release/vX.Y.Z/`, alongside the 4 `.bin` files. | Double-click `flash.exe`, choose option, choose port, answer erase prompt. |
+
+### 13.6 App provisioning
+
+| Tool | What it does | When | How |
+|---|---|---|---|
+| `scripts/keygen.py` | Generates HMAC-SHA256 activation codes for the Android app's licensing scheme. Two tiers: **`PEMULA`** (16 chars) and **`CUAN`** (20 chars). Secret is hardcoded (`RC7T!m3r@K3y#2024$S3cr3t&S4f3Key`); input is `<device_id>\|<package_type>`. | When a customer pays and needs an unlock code. The device_id is shown in the Android app. | `python keygen.py <device_id>` — prints both `PEMULA` and `CUAN` codes. |
+
+---
+
+## 14. Tool selection cheat sheet
+
+| I want to … | Reach for |
+|---|---|
+| Validate a protocol/wire-format change without flashing | `pytest tests/test_protocol.py` |
+| Validate a dashboard UI change without flashing | `node scripts/test_dashboard_logic.js` (logic) + `python scripts/mock_master_server.py` (visual) |
+| Confirm the master can talk to slaves (any slaves, real or mock) | `python scripts/test_logic.py` |
+| Confirm the master can talk to **real** slaves | `python scripts/test_real_hardware.py` |
+| Watch 3 boards' serial output side-by-side | `python scripts/monitor.py` |
+| One-shot: dispatch one command and read serial | `python scripts/com_test.py` |
+| Stress-test the master (9 slaves + 3 clients + attacker) | `python scripts/scratch.py --verbose --duration 120` |
+| Sanity-check esptool install + CH340 driver | `python scripts/test_esptool.py` |
+| Inspect dashboard in-memory state from a real device | open `http://192.168.4.1/?debug=1` → tap 🪲 |
+| Generate an Android app activation code | `python scripts/keygen.py <device_id>` |
+| Rebuild the embedded dashboard header | `python firmware/build_frontend.py` (from `firmware/`) |
+| Cut a new release tag | `python build_release.py vX.Y.Z` |
+| Flash one board to one device (end-user flow) | `release/flash.exe` (built) or `python release/flash.py` (from source) |
