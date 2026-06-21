@@ -96,6 +96,19 @@ button{cursor:pointer;}
 /* Tabs */
 .tab{display:none;padding:12px 14px 20px;}
 .tab.a{display:block;}
+/* Sub-tab dashboard: RC | Antrian */
+.dash-sub-tabs{display:flex;gap:6px;margin-bottom:10px;}
+.dst{flex:1;border:1px solid var(--bd);background:var(--s2);
+  border-radius:20px;padding:7px 6px;font-size:10px;font-weight:700;
+  color:var(--t2);text-align:center;position:relative;transition:all .15s;}
+.dst.a{background:rgba(245,166,35,.12);border-color:rgba(245,166,35,.3);color:var(--ac);}
+.dst-badge{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;
+  padding:0 4px;background:var(--rd);border-radius:20px;font-size:8px;font-weight:800;
+  color:#fff;display:none;align-items:center;justify-content:center;
+  border:2px solid var(--bg);}
+.dst-badge.show{display:flex;}
+.dash-sub-content{display:none;}
+.dash-sub-content.a{display:block;}
 
 /* Sections */
 .sec{font-size:10px;font-weight:700;color:var(--t2);text-transform:uppercase;
@@ -185,19 +198,57 @@ button{cursor:pointer;}
 .q-panel{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);overflow:hidden;margin-top:12px;}
 .q-hd{padding:9px 13px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd);}
 .q-title{font-size:10px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.5px;}
+.q-count{font-size:8px;font-weight:800;padding:2px 7px;border-radius:20px;background:rgba(245,166,35,.12);color:var(--ac);}
 .btn-addq{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);
   border-radius:20px;padding:5px 11px;font-size:10px;font-weight:700;color:var(--bl);}
-.q-item{display:flex;align-items:center;padding:9px 13px;border-bottom:1px solid var(--bd);gap:7px;}
+.q-item{padding:10px 13px;border-bottom:1px solid var(--bd);}
 .q-item:last-child{border-bottom:none;}
-.q-num{width:20px;height:20px;background:var(--bl);border-radius:50%;display:flex;
-  align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;flex-shrink:0;}
-.q-nm{font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.q-item-top{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.q-num{width:22px;height:22px;background:var(--bl);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:800;color:#fff;flex-shrink:0;}
+.q-nm{font-size:12px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .q-ag{font-size:9px;color:var(--t2);flex-shrink:0;}
-.btn-callq{background:var(--gn);border:none;border-radius:5px;
-  padding:4px 8px;font-size:9px;font-weight:700;color:#000;}
-.btn-delq{background:none;border:1px solid var(--bd);border-radius:5px;
-  padding:4px 7px;font-size:9px;color:var(--t2);}
+.btn-delq{background:none;border:1px solid var(--bd);border-radius:20px;
+  padding:3px 8px;font-size:9px;color:var(--rd);flex-shrink:0;}
+.q-eta-box{border-radius:9px;padding:8px 10px;display:flex;align-items:flex-start;gap:8px;margin-bottom:7px;}
+.q-eta-box.idle{background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.2);}
+.q-eta-box.running{background:rgba(245,166,35,.07);border:1px solid rgba(245,166,35,.15);}
+.q-eta-icon{font-size:15px;flex-shrink:0;margin-top:1px;}
+.q-eta-body{display:flex;flex-direction:column;gap:2px;}
+.q-eta-title{font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;}
+.q-eta-box.idle .q-eta-title{color:var(--gn);}
+.q-eta-box.running .q-eta-title{color:var(--or);}
+.q-eta-sub{font-size:10px;font-weight:700;color:var(--tx);}
+.q-eta-note{font-size:8px;color:var(--t2);}
+.q-rc-chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;}
+.q-chip-avail{display:flex;align-items:center;gap:3px;background:rgba(34,197,94,.1);
+  border:1px solid rgba(34,197,94,.22);border-radius:20px;padding:2px 8px;}
+.q-chip-avail .dot{width:5px;height:5px;border-radius:50%;background:var(--gn);}
+.q-chip-avail span{font-size:8.5px;font-weight:700;color:var(--gn);}
+.q-chip-soon{background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.2);
+  border-radius:20px;padding:2px 8px;font-size:8.5px;font-weight:700;color:var(--or);}
+.q-item-btns{display:flex;gap:5px;}
+.btn-callq{flex:1;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.2);
+  border-radius:9px;padding:8px;font-size:10px;font-weight:800;color:var(--ac);}
+.btn-callq:disabled{opacity:.35;cursor:not-allowed;}
 .q-empty{padding:14px;text-align:center;font-size:11px;color:var(--t2);}
+/* Idle popup */
+.idle-popup{display:none;position:fixed;bottom:calc(var(--nb)+10px);
+  left:50%;transform:translateX(-50%);width:calc(100% - 28px);max-width:512px;
+  background:var(--sf);border:1.5px solid rgba(34,197,94,.35);
+  border-radius:14px;padding:10px 13px;
+  align-items:center;gap:10px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:90;}
+.idle-popup.show{display:flex;animation:idleIn .3s ease;}
+@keyframes idleIn{from{opacity:0;transform:translateX(-50%) translateY(10px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+.idle-popup-icon{font-size:20px;flex-shrink:0;}
+.idle-popup-body{flex:1;}
+.idle-popup-title{font-size:11px;font-weight:800;color:var(--gn);}
+.idle-popup-sub{font-size:9px;color:var(--t2);margin-top:2px;}
+.idle-popup-sub b{color:var(--tx);}
+.idle-popup-close{background:rgba(255,255,255,.06);border:none;border-radius:20px;
+  padding:4px 9px;font-size:10px;color:var(--t2);flex-shrink:0;}
 
 /* Laporan */
 .fl-row{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px;}
@@ -566,7 +617,7 @@ button{cursor:pointer;}
 
   <!-- ── DASHBOARD ── -->
   <div class="tab a" id="tab-dashboard">
-    <!-- Fitur 1: Widget Pendapatan Hari Ini -->
+    <!-- Widget Pendapatan -->
     <div class="rev-widget" id="revWidget" style="margin-top:10px;">
       <div class="rev-left">
         <span class="rev-label">💰 Pendapatan Hari Ini</span>
@@ -581,19 +632,39 @@ button{cursor:pointer;}
         <span class="rev-active"><b id="revAktif">–</b> RC aktif</span>
       </div>
     </div>
+    <!-- Counter strip -->
     <div class="sum-g">
       <div class="sc"><div class="sc-v" id="sAktif">–</div><div class="sc-l">Aktif</div></div>
       <div class="sc"><div class="sc-v" id="sIdle">–</div><div class="sc-l">Idle</div></div>
       <div class="sc bl"><div class="sc-v" id="sAntrian">0</div><div class="sc-l">Antrian</div></div>
     </div>
-    <div class="sec">Unit RC</div>
-    <div class="rc-g" id="rcGrid"></div>
-    <div class="q-panel">
-      <div class="q-hd">
-        <span class="q-title">🕐 Antrian Global</span>
-        <button class="btn-addq" onclick="bukaAddQ()">+ Tambah</button>
+
+    <!-- Sub-tab: Unit RC | Antrian -->
+    <div class="dash-sub-tabs">
+      <button class="dst a" id="dst-rc" onclick="goDashTab('rc')">🎮 Unit RC</button>
+      <button class="dst" id="dst-antrian" onclick="goDashTab('antrian')">
+        🕐 Antrian
+        <div class="dst-badge" id="dstBadge"></div>
+      </button>
+    </div>
+
+    <!-- Sub-tab content: RC -->
+    <div class="dash-sub-content a" id="dsc-rc">
+      <div class="rc-g" id="rcGrid"></div>
+    </div>
+
+    <!-- Sub-tab content: Antrian -->
+    <div class="dash-sub-content" id="dsc-antrian">
+      <div class="q-panel">
+        <div class="q-hd">
+          <div style="display:flex;align-items:center;gap:7px;">
+            <span class="q-title">🕐 Antrian Global</span>
+            <span class="q-count" id="qCount" style="display:none;"></span>
+          </div>
+          <button class="btn-addq" onclick="bukaAddQ()">+ Tambah</button>
+        </div>
+        <div id="qList"></div>
       </div>
-      <div id="qList"></div>
     </div>
   </div>
 
@@ -1074,7 +1145,9 @@ function enterApp(){
   if(document.getElementById('cardChgPass'))document.getElementById('cardChgPass').style.display=isSA?'':'none';
   if(document.getElementById('secKaryawan'))document.getElementById('secKaryawan').style.display=isSA?'':'none';
   if(document.getElementById('cardKaryawan'))document.getElementById('cardKaryawan').style.display=isSA?'':'none';
-  renderSetting();renderQPanel();updateProfile();poll();
+  renderSetting();renderQPanel();updateProfile();
+  updateRevWidget(); // Fix Rp 0: tampilkan dari cache dulu sebelum fetch selesai
+  poll();
   loadStatsFromEsp32(); // muat total main dari ESP32 SPIFFS
   // Muat transaksi dulu, baru render laporan & restore tab agar data tidak hilang saat refresh
   loadTrxFromEsp32().then(()=>{
@@ -1452,16 +1525,120 @@ function addQ(nama){const q=loadQ();q.push({nama,ts:Date.now()});saveQ(q);}
 function delQ(idx){const q=loadQ();q.splice(idx,1);saveQ(q);}
 
 function renderQPanel(){
-  const q=loadQ();document.getElementById('sAntrian').textContent=q.length;
+  const q=loadQ();
+  // update counter navbar & badge
+  document.getElementById('sAntrian').textContent=q.length;
+  const countEl=document.getElementById('qCount');
+  if(countEl){
+    if(q.length){countEl.style.display='';countEl.textContent=q.length+' orang';}
+    else countEl.style.display='none';
+  }
+  // update badge di sub-tab tombol Antrian
+  const dstBadge=document.getElementById('dstBadge');
+  if(dstBadge){
+    dstBadge.textContent=q.length||'';
+    dstBadge.classList.toggle('show',q.length>0);
+  }
   const el=document.getElementById('qList');
-  if(!q.length){el.innerHTML='<div class="q-empty">Belum ada antrian</div>';return;}
-  el.innerHTML=q.map((item,i)=>`<div class="q-item">
-    <div class="q-num">${i+1}</div>
-    <div class="q-nm">${e(item.nama)}</div>
-    <div class="q-ag">${fmtAgo(item.ts)}</div>
-    <button class="btn-callq" onclick="bukaCallQ(${i})">📢 Panggil</button>
-    <button class="btn-delq" onclick="tapDelQ(${i})">✕</button>
-  </div>`).join('');
+  if(!q.length){el.innerHTML='<div class="q-empty">Belum ada antrian</div>';updateIdlePopup();return;}
+
+  // Hitung RC idle & RC yang paling cepat selesai
+  const idleRCs=slaves.filter(s=>slaveState(s)==='stopped');
+  // RC running diurutkan dari sisa terkecil
+  const runningRCs=slaves
+    .filter(s=>slaveState(s)==='running')
+    .map(s=>({s,sisa:timers[s.id]?timers[s.id].sisa:s.time_left}))
+    .sort((a,b)=>a.sisa-b.sisa);
+
+  el.innerHTML=q.map((item,i)=>{
+    const hasIdle=idleRCs.length>0;
+    let etaHtml='';
+    if(hasIdle){
+      // Ada RC idle → tampilkan RC yang tersedia
+      const chips=idleRCs.map(s=>
+        `<div class="q-chip-avail"><div class="dot"></div><span>${e(getRcName(s.id))}</span></div>`
+      ).join('');
+      etaHtml=`<div class="q-eta-box idle">
+        <span class="q-eta-icon">🟢</span>
+        <div class="q-eta-body">
+          <span class="q-eta-title">RC Tersedia Sekarang!</span>
+          <span class="q-eta-sub">Bisa langsung mulai main</span>
+          <div class="q-rc-chips">${chips}</div>
+        </div>
+      </div>`;
+    } else if(runningRCs.length){
+      // Semua running → estimasi dari RC tercepat selesai
+      const fastest=runningRCs[0];
+      const fin=new Date(Date.now()+fastest.sisa*1000);
+      const finStr=String(fin.getHours()).padStart(2,'0')+':'+String(fin.getMinutes()).padStart(2,'0');
+      const sisaMnt=Math.ceil(fastest.sisa/60);
+      etaHtml=`<div class="q-eta-box running">
+        <span class="q-eta-icon">⏳</span>
+        <div class="q-eta-body">
+          <span class="q-eta-title">Estimasi Menunggu</span>
+          <span class="q-eta-sub">RC tersedia sekitar pukul <b>${finStr}</b></span>
+          <div class="q-rc-chips">
+            <span class="q-chip-soon">${e(getRcName(fastest.s.id))} · sisa ${sisaMnt} mnt</span>
+          </div>
+          <span class="q-eta-note">Dari RC yang paling cepat selesai</span>
+        </div>
+      </div>`;
+    } else {
+      etaHtml=`<div class="q-eta-box running">
+        <span class="q-eta-icon">📡</span>
+        <div class="q-eta-body">
+          <span class="q-eta-title">Menunggu Data RC</span>
+          <span class="q-eta-sub">Belum ada RC terhubung</span>
+        </div>
+      </div>`;
+    }
+    // Tombol panggil aktif hanya jika ada RC idle
+    const callDisabled=hasIdle?'':'disabled';
+    return`<div class="q-item">
+      <div class="q-item-top">
+        <div class="q-num">${i+1}</div>
+        <span class="q-nm">${e(item.nama)}</span>
+        <span class="q-ag">${fmtAgo(item.ts)}</span>
+        <button class="btn-delq" onclick="tapDelQ(${i})">✕</button>
+      </div>
+      ${etaHtml}
+      <div class="q-item-btns">
+        <button class="btn-callq" onclick="bukaCallQ(${i})" ${callDisabled}>📢 Panggil ke RC</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  updateIdlePopup();
+}
+
+// ── Idle popup ─────────────────────────────────────────────────────
+let _idlePopupDismissed=false;
+function updateIdlePopup(){
+  const popup=document.getElementById('idlePopup');
+  if(!popup)return;
+  const q=loadQ();
+  const idleRCs=slaves.filter(s=>slaveState(s)==='stopped');
+  // Tampilkan jika: ada antrian + ada RC idle + belum di-dismiss sesi ini
+  if(q.length&&idleRCs.length&&!_idlePopupDismissed){
+    const rcNames=idleRCs.map(s=>getRcName(s.id));
+    const sub=document.getElementById('idlePopupSub');
+    if(sub){
+      const rcStr=rcNames.length===1
+        ?`<b>${e(rcNames[0])}</b>`
+        :rcNames.slice(0,-1).map(n=>`<b>${e(n)}</b>`).join(', ')+` & <b>${e(rcNames[rcNames.length-1])}</b>`;
+      sub.innerHTML=`${rcStr} menganggur — <b>${q.length}</b> orang menunggu`;
+    }
+    popup.classList.add('show');
+  } else {
+    popup.classList.remove('show');
+    // Reset dismiss jika tidak ada lagi kondisinya (RC kembali running / antrian habis)
+    if(!q.length||!idleRCs.length)_idlePopupDismissed=false;
+  }
+}
+function closeIdlePopup(){
+  _idlePopupDismissed=true;
+  const popup=document.getElementById('idlePopup');
+  if(popup)popup.classList.remove('show');
 }
 function tapDelQ(idx){delQ(idx);renderQPanel();toast('❌ Antrian dihapus');}
 
@@ -2275,7 +2452,22 @@ const stLbl=st=>({running:'▶ Aktif',paused:'⏸ Pause',stopped:'Idle',offline:
 const fErr=c=>({BAD_STATE:'Unit tidak dalam kondisi yang sesuai',EXCEEDS_LIMIT:'Waktu melebihi batas'}[c]||'Gagal: '+c);
 function setLoading(id,on){const c=document.getElementById('card-'+id);if(c)c.querySelectorAll('.btn').forEach(b=>b.disabled=on);}
 
-// ══ FITUR 6: SEARCH PELANGGAN ═════════════════════════════════════
+// ══ SUB-TAB DASHBOARD ════════════════════════════════════════════
+let curDashTab='rc'; // 'rc' | 'antrian'
+function goDashTab(t){
+  curDashTab=t;
+  ['rc','antrian'].forEach(id=>{
+    document.getElementById('dst-'+id).classList.toggle('a',id===t);
+    document.getElementById('dsc-'+id).classList.toggle('a',id===t);
+  });
+  // Saat buka tab antrian, scroll ke atas supaya langsung kelihatan
+  if(t==='antrian') window.scrollTo({top:0,behavior:'smooth'});
+}
+// Buka sub-tab antrian dari luar (mis. klik counter Antrian di sum-g)
+document.getElementById('sAntrian').style.cursor='pointer';
+document.getElementById('sAntrian').addEventListener('click',()=>{
+  gotoTab('dashboard'); goDashTab('antrian');
+});
 let srchQuery='';
 function onSrch(q){
   srchQuery=q.trim().toLowerCase();
@@ -2460,5 +2652,14 @@ if(isLoggedIn()){
   initAuth();
 }
 </script>
+<!-- Idle RC popup -->
+<div class="idle-popup" id="idlePopup">
+  <span class="idle-popup-icon">🟢</span>
+  <div class="idle-popup-body">
+    <div class="idle-popup-title">RC Idle Tersedia!</div>
+    <div class="idle-popup-sub" id="idlePopupSub"></div>
+  </div>
+  <button class="idle-popup-close" onclick="closeIdlePopup()">✕</button>
+</div>
 </body>
 </html>
