@@ -105,6 +105,7 @@ const mockDocument = {
     return [getMockElement('nb-dashboard'), getMockElement('nb-laporan')];
   },
   createElement: (tag) => new MockElement(tag),
+  addEventListener: (event, callback) => {},
 };
 
 // Mock fetch requests registry

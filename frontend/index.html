@@ -97,9 +97,9 @@ button{cursor:pointer;}
 .tab{display:none;padding:12px 14px 20px;}
 .tab.a{display:block;}
 /* Sub-tab dashboard: RC | Antrian */
-.dash-sub-tabs{display:flex;gap:6px;margin-bottom:10px;}
+.dash-sub-tabs{display:flex;gap:6px;margin-top:14px;margin-bottom:12px;}
 .dst{flex:1;border:1px solid var(--bd);background:var(--s2);
-  border-radius:20px;padding:7px 6px;font-size:10px;font-weight:700;
+  border-radius:20px;padding:9px 6px;font-size:10px;font-weight:700;
   color:var(--t2);text-align:center;position:relative;transition:all .15s;}
 .dst.a{background:rgba(245,166,35,.12);border-color:rgba(245,166,35,.3);color:var(--ac);}
 .dst-badge{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;
@@ -116,7 +116,7 @@ button{cursor:pointer;}
 .sec:first-child{margin-top:2px;}
 
 /* Summary */
-.sum-g{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.sum-g{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:2px;}
 .sc{background:var(--sf);border:1px solid var(--bd);border-radius:var(--rs);
   padding:11px 8px;text-align:center;}
 .sc-v{font-size:22px;font-weight:800;color:var(--ac);line-height:1;}
@@ -2510,6 +2510,10 @@ function toggleFS(){
     document.exitFullscreen();
   }
 }
+// Blokir pull-to-refresh saat fullscreen, restore saat keluar
+document.addEventListener('fullscreenchange',()=>{
+  document.body.style.overscrollBehavior=document.fullscreenElement?'none':'';
+});
 
 // ══ FITUR 2: ETA (estimasi jam selesai) ═══════════════════════════
 function buildEta(id,sisa,st){
