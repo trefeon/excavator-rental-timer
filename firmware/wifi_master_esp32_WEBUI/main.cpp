@@ -294,40 +294,21 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             if ((slaves[i].state == "ENDED" || slaves[i].state == "LOCKED") &&
                 newState == "RUNNING") {
               slaves[i].sessionElapsed  = 0;     // reset counter sesi baru
-              slaves[i].stoppedManually = false; // PENTING: bersihkan flag agar
-              // sesi baru terhitung normal. Kalau sesi sebelumnya di-STOP manual
-              // dan slave melapor "LOCKED" (bukan "ENDED"), blok ENDED tidak
-              // mereset flag → tanpa baris ini, sesi BERIKUTNYA ikut ter-skip.
+              slaves[i].stoppedManually = false; // bersihkan flag agar sesi baru terhitung
             }
 
-            // Deteksi transisi ke ENDED → auto-save stats
-            // PENTING: callback ESP-NOW berjalan di WiFi task, jadi JANGAN tulis
-            // SPIFFS di sini. Cukup masukkan job ke antrian (operasi cepat,
-            // non-blocking) lalu reset counter SAMBIL tetap memegang mutex.
-            // Skip kalau sudah di-STOP manual (sudah disimpan via residual flush).
-            //
-            // FIX (sesi tidak nambah): JANGAN gate dengan sessionElapsed>0.
-            // periodic save terus menguras sessionElapsed ke ~0 selama sesi,
-            // jadi saat ENDED nilainya sering 0 → dulu job tak terkirim → sesi
-            // tak pernah bertambah. Sekarang selalu kirim job saat selesai alami.
-            //
-            // FIX (total tidak sesuai): tambahkan segmen final. Diff hanya dihitung
-            // pada RUNNING→RUNNING, sehingga detik terakhir (dari time_left RUNNING
-            // terakhir turun ke 0) tak pernah masuk hitungan. slaves[i].time_left
-            // di sini masih nilai LAMA (belum ditimpa pkt.timeLeft di baris bawah).
-            // FIX UTAMA (sesi tidak nambah di perangkat): tangkap akhir sesi dari
-            // RUNNING ke "ENDED" MAUPUN "LOCKED". Mock Python selalu mengirim
-            // "ENDED", tetapi firmware slave Anda mungkin melaporkan "LOCKED" saat
-            // waktu habis — sehingga deteksi yang hanya menangkap "ENDED" membuat
-            // sesi tak pernah terhitung di ESP32 (inilah beda mock vs perangkat).
-            // Prasyarat state lama == "RUNNING" mencegah double-count bila slave
-            // mengirim beberapa heartbeat akhir berturut (mis. ENDED lalu LOCKED).
+            // Deteksi akhir sesi → auto-save stats. Tangkap RUNNING→ENDED MAUPUN
+            // RUNNING→LOCKED (sebagian slave melapor LOCKED saat waktu habis).
+            // JANGAN gate dengan sessionElapsed>0: periodic save terus menguras
+            // sessionElapsed ke ~0, jadi saat akhir nilainya sering 0 → dulu sesi
+            // tak pernah bertambah. Tambah segmen detik terakhir (time_left lama)
+            // yang tak terhitung diff agar Total Main akurat. STOP manual
+            // dikecualikan via stoppedManually.
             if (slaves[i].state == "RUNNING" &&
                 (newState == "ENDED" || newState == "LOCKED")) {
               if (!slaves[i].stoppedManually && statsQueue) {
                 int residual = slaves[i].sessionElapsed;
-                if (slaves[i].time_left > 0)
-                  residual += slaves[i].time_left; // segmen final (tak terhitung diff)
+                if (slaves[i].time_left > 0) residual += slaves[i].time_left;
                 StatsJob job = { slaves[i].id, residual, true }; // detik boleh 0; sesi tetap +1
                 xQueueSend(statsQueue, &job, 0);
               }
@@ -425,10 +406,8 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 // Dipanggil di server-side saat sesi RC selesai (time_left habis atau STOP)
 // sehingga total main tersimpan meski browser sedang tutup/offline.
 bool autoSaveStats(int slaveId, int detik) {
-  // CATATAN: detik bisa 0 karena periodic save sudah menguras sessionElapsed
-  // selama sesi berjalan. Namun INI dipanggil hanya saat sesi selesai alami,
-  // jadi totalSesi HARUS tetap +1 walau detik==0. (Dulu fungsi ini keluar lebih
-  // awal saat detik<=0 → sesi tidak pernah bertambah — itulah bug-nya.)
+  // detik bisa 0 (residual sudah dikuras periodic save) — sesi TETAP +1 karena
+  // fungsi ini hanya dipanggil saat sesi selesai alami.
   if (xSemaphoreTake(statsMutex, STATS_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
     Serial.println("[STATS] autoSaveStats: gagal ambil statsMutex, skip");
     return false;
@@ -906,10 +885,10 @@ void handleSlaves() {
       obj["mac"] = slaves[i].mac;
       obj["online"] = (now - slaves[i].lastSeen) < ONLINE_THRESHOLD_MS;
       obj["state"] = slaves[i].state;
-      // Ekstrapolasi time_left ke "sekarang": nilai tersimpan adalah dari
-      // heartbeat terakhir yang sudah tertinggal beberapa detik dari timer RC.
-      // Untuk slave RUNNING, kurangi dengan usia sejak lastSeen agar dashboard
-      // tidak selisih 1-2 detik dengan RC (terlihat saat spam refresh).
+      // Ekstrapolasi time_left ke "sekarang": nilai tersimpan dari heartbeat
+      // terakhir sudah tertinggal beberapa detik dari timer RC. Untuk slave
+      // RUNNING, kurangi usia sejak lastSeen agar dashboard tidak selisih 1-2
+      // detik dengan RC (terlihat saat spam refresh).
       int tl = slaves[i].time_left;
       if (slaves[i].state == "RUNNING" && tl > 0) {
         int ageSec = (int)((now - slaves[i].lastSeen) / 1000);
@@ -1088,6 +1067,30 @@ void handleCommandProxy() {
         xSemaphoreGive(slavesMutex);
       }
       if (residual > 0) saveElapsedOnly(sid, residual); // hanya residual, tidak double
+    }
+
+    // FIX TIMER: perbarui cache state master SEGERA dari balasan slave, supaya
+    // poll /api/slaves berikutnya langsung konsisten. Tanpa ini, master masih
+    // menyimpan state lama (LOCKED/ENDED) sampai heartbeat RUNNING tiba, sehingga
+    // dashboard mengira sesi belum jalan lalu MENGHENTIKAN timer yang baru mulai.
+    if (ok) {
+      if (xSemaphoreTake(slavesMutex, MUTEX_TIMEOUT_TICKS) == pdTRUE) {
+        for (int i = 0; i < slaveCount; i++) {
+          if (slaves[i].id == targetId) {
+            String prev        = slaves[i].state;
+            slaves[i].state    = pktStateName(respCopy.state);
+            slaves[i].time_left= (int)respCopy.timeLeft;
+            slaves[i].lastSeen = millis(); // anggap online (baru saja merespons)
+            // Sesi baru via ADD_TIME dari kondisi idle → reset counter sesi
+            if (cmdEnum == CMD_ADD_TIME && (prev == "LOCKED" || prev == "ENDED")) {
+              slaves[i].sessionElapsed  = 0;
+              slaves[i].stoppedManually = false;
+            }
+            break;
+          }
+        }
+        xSemaphoreGive(slavesMutex);
+      }
     }
 
     char resp[160];
