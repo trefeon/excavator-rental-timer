@@ -39,6 +39,12 @@
 **/*.hex
 **/*.map
 
+# PyInstaller temp cruft inside release/<version>/build/
+release/*/build/
+
+# Customer-specific web flasher output (one-off bins + manifests)
+webflasher_builds/
+
 # Docs specific ignores
 /docs/*.pdf
 /docs/convert.ps1

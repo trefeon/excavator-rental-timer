@@ -44,12 +44,14 @@ excavator-rental-timer/
 ├── scripts/
 │   ├── test_dashboard_logic.js  ★ vm-sandboxed E2E tests of frontend/index.html
 │   ├── mock_master_server.py    HTTP mock of Master on :8080 (for dashboard dev)
+│   ├── build_custom_webui.py    HTML → flashable master_WEBUI .bin (for web flasher customers)
 │   ├── monitor.py               3-port serial monitor
 │   ├── com_test.py              smoke-test Master command + read 3 COM ports
 │   ├── keygen.py                Android app HMAC activation codes
 │   ├── test_logic.py / test_real_hardware.py  end-to-end against a real Master
 │   ├── test_esptool.py          import smoke test
 │   └── scratch.py               load/stress test (registers 9 slaves + 3 clients + attacker)
+├── webflasher_builds/           (gitignored) output dir for build_custom_webui.py
 ├── release/                     frozen binaries per version + standalone flash.exe
 │   ├── flash.py / flash.spec / flash.bat / README.txt   PyInstaller flasher source
 │   ├── v1.1.0/ … v1.2.4/        per-version artifacts (4 merged .bin + flash.exe + ZIP)
@@ -278,6 +280,15 @@ Offsets are ESP32: `0x1000/0x8000/0xe000/0x10000`; ESP32-C3: `0x0000/0x8000/0xe0
 - Copy `esp_now_protocol.h` from `wifi_slave_esp32/`.
 - Add to `TARGETS` list in `build_release.py` with correct `chip` + offsets.
 - Document pinout in `docs/WIRING_RC_EXCAVATOR.md`.
+
+### Build a custom-WebUI firmware bin (for a customer supplying their own dashboard)
+
+```bash
+python scripts/build_custom_webui.py path/to/customer.html
+# -> webflasher_builds/master_custom_<8-char-hash>.bin
+```
+
+Hand the `.bin` to the customer. They flash it at offset `0x0` via [esptool.spacehuhn.com](https://esptool.spacehuhn.com/) (Baudrate `115200`) per `docs/Panduan_Web_Flasher.md`. To restore the project default dashboard afterwards, run `python firmware/build_frontend.py` (no arg).
 
 ### Debug a stuck master
 - Watch serial @ 115200 baud (LED on GPIO 2 blinks every 3 s = alive).
