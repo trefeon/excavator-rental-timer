@@ -293,7 +293,11 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             // Deteksi transisi ke sesi baru: dari ENDED/LOCKED ke RUNNING
             if ((slaves[i].state == "ENDED" || slaves[i].state == "LOCKED") &&
                 newState == "RUNNING") {
-              slaves[i].sessionElapsed = 0; // reset counter sesi baru
+              slaves[i].sessionElapsed  = 0;     // reset counter sesi baru
+              slaves[i].stoppedManually = false; // PENTING: bersihkan flag agar
+              // sesi baru terhitung normal. Kalau sesi sebelumnya di-STOP manual
+              // dan slave melapor "LOCKED" (bukan "ENDED"), blok ENDED tidak
+              // mereset flag → tanpa baris ini, sesi BERIKUTNYA ikut ter-skip.
             }
 
             // Deteksi transisi ke ENDED → auto-save stats
@@ -311,11 +315,19 @@ void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             // pada RUNNING→RUNNING, sehingga detik terakhir (dari time_left RUNNING
             // terakhir turun ke 0) tak pernah masuk hitungan. slaves[i].time_left
             // di sini masih nilai LAMA (belum ditimpa pkt.timeLeft di baris bawah).
-            if (slaves[i].state != "ENDED" && newState == "ENDED") {
+            // FIX UTAMA (sesi tidak nambah di perangkat): tangkap akhir sesi dari
+            // RUNNING ke "ENDED" MAUPUN "LOCKED". Mock Python selalu mengirim
+            // "ENDED", tetapi firmware slave Anda mungkin melaporkan "LOCKED" saat
+            // waktu habis — sehingga deteksi yang hanya menangkap "ENDED" membuat
+            // sesi tak pernah terhitung di ESP32 (inilah beda mock vs perangkat).
+            // Prasyarat state lama == "RUNNING" mencegah double-count bila slave
+            // mengirim beberapa heartbeat akhir berturut (mis. ENDED lalu LOCKED).
+            if (slaves[i].state == "RUNNING" &&
+                (newState == "ENDED" || newState == "LOCKED")) {
               if (!slaves[i].stoppedManually && statsQueue) {
                 int residual = slaves[i].sessionElapsed;
-                if (slaves[i].state == "RUNNING" && slaves[i].time_left > 0)
-                  residual += slaves[i].time_left; // segmen final yang tak terhitung diff
+                if (slaves[i].time_left > 0)
+                  residual += slaves[i].time_left; // segmen final (tak terhitung diff)
                 StatsJob job = { slaves[i].id, residual, true }; // detik boleh 0; sesi tetap +1
                 xQueueSend(statsQueue, &job, 0);
               }
@@ -894,7 +906,16 @@ void handleSlaves() {
       obj["mac"] = slaves[i].mac;
       obj["online"] = (now - slaves[i].lastSeen) < ONLINE_THRESHOLD_MS;
       obj["state"] = slaves[i].state;
-      obj["time_left"] = slaves[i].time_left;
+      // Ekstrapolasi time_left ke "sekarang": nilai tersimpan adalah dari
+      // heartbeat terakhir yang sudah tertinggal beberapa detik dari timer RC.
+      // Untuk slave RUNNING, kurangi dengan usia sejak lastSeen agar dashboard
+      // tidak selisih 1-2 detik dengan RC (terlihat saat spam refresh).
+      int tl = slaves[i].time_left;
+      if (slaves[i].state == "RUNNING" && tl > 0) {
+        int ageSec = (int)((now - slaves[i].lastSeen) / 1000);
+        tl = (ageSec >= tl) ? 0 : (tl - ageSec);
+      }
+      obj["time_left"] = tl;
       obj["battery"] = slaves[i].battery;
     }
     xSemaphoreGive(slavesMutex);
