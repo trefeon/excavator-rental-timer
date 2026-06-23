@@ -64,7 +64,7 @@ static const uint8_t TRIGGER_MODE = 3; // Ganti angka ini sesuai hardware (XY-MO
 // ===== TIMING CONSTANTS =====
 static const uint32_t FLASH_SAVE_INTERVAL_S = 10;
 static const uint32_t BUTTON_DEBOUNCE_MS = 300;
-static const uint32_t HEARTBEAT_INTERVAL_MS = 2000;
+static const uint32_t HEARTBEAT_INTERVAL_MS = 5000;
 static const uint32_t MASTER_TIMEOUT_MS = 45000;
 static const uint32_t REGISTRATION_RETRY_INITIAL_MS = 1000;
 static const uint32_t REGISTRATION_RETRY_MAX_MS = 8000;
@@ -548,7 +548,7 @@ void setup() {
   Serial.println("[SYSTEM] Starting Excavator Slave (ESP-NOW)...");
   Serial.println("========================================");
 
-  display.setBrightness(0x0f);
+  display.setBrightness(0x07);
 
   if (TRIGGER_MODE == 1 || TRIGGER_MODE == 3) {
     digitalWrite(RELAY_PIN, LOW);
@@ -727,6 +727,7 @@ void loop() {
       } else {
         if (now - lastTickMs >= 1000) {
           lastTickMs = now;
+          display.setBrightness(0, false);
           display.clear();
         }
       }
@@ -776,7 +777,7 @@ void loop() {
   updateNetLed();
 
   static uint32_t lastLedBlink = 0;
-  if (millis() - lastLedBlink >= 3000) {
+  if (millis() - lastLedBlink >= 10000) {
     lastLedBlink = millis();
     netLedFlash(50);
   }
