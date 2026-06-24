@@ -246,6 +246,11 @@ void changeState(RentalState nextState) {
   }
   lastTickMs = millis();
   colonState = true;
+
+  if (nextState == STATE_RUNNING || nextState == STATE_PAUSED) {
+      display.setBrightness(0x07, true);
+  }
+
   applyRelay();
   updateDisplay();
 }
